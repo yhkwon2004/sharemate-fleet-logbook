@@ -1,5 +1,6 @@
 .gradle/
 .idea/
+.kotlin/
 local.properties
 **/build/
 *.jks
@@ -7,4 +8,14 @@ local.properties
 relay/.runtime/
 .env
 .env.local
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.apk
+*.aab
+*.smlog
+*.log
 **/__pycache__/

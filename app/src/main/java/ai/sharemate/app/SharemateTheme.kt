@@ -1,11 +1,17 @@
 package ai.sharemate.app
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextStyle
@@ -16,65 +22,111 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+// Asta Sans is the Pleos Connect system typeface (42dot, SIL OFL 1.1).
 @OptIn(ExperimentalTextApi::class)
-private val Pretendard = FontFamily((300..800 step 100).map { weight ->
-    Font(R.font.pretendard_variable, weight = FontWeight(weight),
+private val AstaSans = FontFamily((300..800 step 100).map { weight ->
+    Font(R.font.asta_sans_variable, weight = FontWeight(weight),
         variationSettings = FontVariation.Settings(FontVariation.weight(weight)))
 })
 
 private fun type(size: Int, line: Int, weight: FontWeight = FontWeight.Normal, tracking: Double = -0.2) =
-    TextStyle(fontFamily = Pretendard, fontWeight = weight, fontSize = size.sp,
-        lineHeight = line.sp, letterSpacing = tracking.sp)
+    TextStyle(fontFamily = AstaSans, fontWeight = weight, fontSize = size.sp, lineHeight = line.sp, letterSpacing = tracking.sp)
 
-private val SharemateTypography = Typography(
-    displayLarge = type(56, 64, FontWeight.SemiBold, -1.5),
-    displayMedium = type(46, 56, FontWeight.SemiBold, -1.2),
-    displaySmall = type(40, 50, FontWeight.SemiBold, -1.0),
-    headlineLarge = type(34, 44, FontWeight.SemiBold, -0.8),
+// Car text sizes stay above the Pleos minimum (12 sp, 18 px line) with room for viewing distance.
+private val CarTypography = Typography(
+    displayLarge = type(72, 80, FontWeight.Medium, -2.0),
+    displayMedium = type(56, 64, FontWeight.Medium, -1.5),
+    displaySmall = type(44, 52, FontWeight.Medium, -1.0),
+    headlineLarge = type(36, 46, FontWeight.SemiBold, -0.8),
     headlineMedium = type(30, 40, FontWeight.SemiBold, -0.6),
-    headlineSmall = type(27, 36, FontWeight.SemiBold, -0.5),
-    titleLarge = type(25, 34, FontWeight.SemiBold, -0.5),
+    headlineSmall = type(26, 36, FontWeight.SemiBold, -0.4),
+    titleLarge = type(24, 32, FontWeight.SemiBold, -0.3),
     titleMedium = type(21, 30, FontWeight.SemiBold),
-    titleSmall = type(18, 26, FontWeight.SemiBold),
+    titleSmall = type(19, 28, FontWeight.SemiBold),
     bodyLarge = type(20, 30),
-    bodyMedium = type(17, 26),
-    bodySmall = type(15, 22),
-    labelLarge = type(18, 26, FontWeight.SemiBold),
-    labelMedium = type(15, 22, FontWeight.Medium, 0.0),
-    labelSmall = type(13, 18, FontWeight.Medium, 0.2),
+    bodyMedium = type(18, 27),
+    bodySmall = type(16, 24),
+    labelLarge = type(19, 26, FontWeight.SemiBold, 0.0),
+    labelMedium = type(16, 22, FontWeight.Medium, 0.0),
+    labelSmall = type(14, 20, FontWeight.Medium, 0.2),
 )
 
-private val DarkColors = darkColorScheme(
-    primary = Color(0xFF65D995), onPrimary = Color(0xFF092817),
-    primaryContainer = Color(0xFF173224), onPrimaryContainer = Color(0xFFB6F2CD),
-    inversePrimary = Color(0xFF006B70),
-    secondary = Color(0xFFC0CBD9), onSecondary = Color(0xFF25313F),
-    secondaryContainer = Color(0xFF1E3A2B), onSecondaryContainer = Color(0xFFB6F2CD),
-    tertiary = Color(0xFFA4D0C8), onTertiary = Color(0xFF173D37),
-    tertiaryContainer = Color(0xFF294C45), onTertiaryContainer = Color(0xFFC8EEE5),
-    background = Color(0xFF07090B), onBackground = Color(0xFFF2F4F5),
-    surface = Color(0xFF101316), onSurface = Color(0xFFF2F4F5),
-    surfaceVariant = Color(0xFF1A2024), onSurfaceVariant = Color(0xFFAEB7BD),
-    surfaceTint = Color.Transparent, inverseSurface = Color(0xFFE6EAF0), inverseOnSurface = Color(0xFF252A33),
-    outline = Color(0xFF737E8D), outlineVariant = Color(0xFF2B3339),
-    error = Color(0xFFFFB4AC), onError = Color(0xFF680D0D),
-    errorContainer = Color(0xFF572B2B), onErrorContainer = Color(0xFFFFDAD6),
-    scrim = Color.Black, surfaceBright = Color(0xFF2F363C), surfaceDim = Color(0xFF07090B),
-    surfaceContainerLowest = Color(0xFF101318), surfaceContainerLow = Color(0xFF101619),
-    surfaceContainer = Color(0xFF191E22), surfaceContainerHigh = Color(0xFF22282D),
-    surfaceContainerHighest = Color(0xFF2B3339),
+/** Pleos Connect status colors that Material has no slot for. */
+@Immutable
+data class PleosColors(
+    val active: Color, val positive: Color, val negative: Color,
+    val gleoBubble: Color, val gleoBubbleSecondary: Color, val gleoSpeaker: Color, val gleoSurface: Color,
+    val surfaceHigh: Color, val surfaceAccent: Color, val textTertiary: Color,
 )
 
+// Grayscale basic_00..basic_900 and informative tokens from the Pleos Connect design guide (Foundations > Colors).
+private val DarkPleos = PleosColors(
+    active = Color(0xFF00E074), positive = Color(0xFF0082FF), negative = Color(0xFFFF4C28),
+    gleoBubble = Color(0xFF545F93), gleoBubbleSecondary = Color(0xFF3E4976), gleoSpeaker = Color(0xFFB6C1F3), gleoSurface = Color(0xFF44464E),
+    surfaceHigh = Color(0xFF313236), surfaceAccent = Color(0xFF44464E), textTertiary = Color(0xFFA4A8AE),
+)
+private val LightPleos = PleosColors(
+    active = Color(0xFF02C265), positive = Color(0xFF0064FF), negative = Color(0xFFFE3D16),
+    gleoBubble = Color(0xFF9BA8E2), gleoBubbleSecondary = Color(0xFF8896D3), gleoSpeaker = Color(0xFF3F4B81), gleoSurface = Color(0xFFFFFFFF),
+    surfaceHigh = Color(0xFFEDEEF2), surfaceAccent = Color(0xFFE0E1E6), textTertiary = Color(0xFF686A72),
+)
+
+// Neutral, high-contrast primary like Pleos filled buttons; color is kept for status only.
+private val DarkColors: ColorScheme = darkColorScheme(
+    primary = Color(0xFFFFFFFF), onPrimary = Color(0xFF131417),
+    primaryContainer = Color(0xFF313236), onPrimaryContainer = Color(0xFFFFFFFF),
+    secondary = Color(0xFF0082FF), onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFF12304F), onSecondaryContainer = Color(0xFFD6E8FF),
+    tertiary = Color(0xFF00E074), onTertiary = Color(0xFF00391C),
+    tertiaryContainer = Color(0xFF0F3A24), onTertiaryContainer = Color(0xFFB4F5D0),
+    background = Color(0xFF131417), onBackground = Color(0xFFFFFFFF),
+    surface = Color(0xFF1D1E21), onSurface = Color(0xFFFFFFFF),
+    surfaceVariant = Color(0xFF313236), onSurfaceVariant = Color(0xFFC7C9CE),
+    surfaceTint = Color.Transparent, inverseSurface = Color(0xFFF7F8FA), inverseOnSurface = Color(0xFF131417),
+    outline = Color(0xFF686A72), outlineVariant = Color(0xFF313236),
+    error = Color(0xFFFF4C28), onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFF4A1A10), onErrorContainer = Color(0xFFFFDAD1),
+    scrim = Color.Black, surfaceBright = Color(0xFF313236), surfaceDim = Color(0xFF131417),
+    surfaceContainerLowest = Color(0xFF131417), surfaceContainerLow = Color(0xFF1D1E21),
+    surfaceContainer = Color(0xFF1D1E21), surfaceContainerHigh = Color(0xFF313236), surfaceContainerHighest = Color(0xFF44464E),
+)
+private val LightColors: ColorScheme = lightColorScheme(
+    primary = Color(0xFF131417), onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFE0E1E6), onPrimaryContainer = Color(0xFF131417),
+    secondary = Color(0xFF0064FF), onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFE3EEFF), onSecondaryContainer = Color(0xFF00296B),
+    tertiary = Color(0xFF02C265), onTertiary = Color(0xFFFFFFFF),
+    tertiaryContainer = Color(0xFFDDF7E9), onTertiaryContainer = Color(0xFF004222),
+    background = Color(0xFFF7F8FA), onBackground = Color(0xFF131417),
+    surface = Color(0xFFFFFFFF), onSurface = Color(0xFF131417),
+    surfaceVariant = Color(0xFFEDEEF2), onSurfaceVariant = Color(0xFF44464E),
+    surfaceTint = Color.Transparent, inverseSurface = Color(0xFF1D1E21), inverseOnSurface = Color(0xFFFFFFFF),
+    outline = Color(0xFFA4A8AE), outlineVariant = Color(0xFFE0E1E6),
+    error = Color(0xFFFE3D16), onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFFFE6E0), onErrorContainer = Color(0xFF5C1305),
+    scrim = Color.Black, surfaceBright = Color(0xFFFFFFFF), surfaceDim = Color(0xFFEDEEF2),
+    surfaceContainerLowest = Color(0xFFFFFFFF), surfaceContainerLow = Color(0xFFF7F8FA),
+    surfaceContainer = Color(0xFFFFFFFF), surfaceContainerHigh = Color(0xFFEDEEF2), surfaceContainerHighest = Color(0xFFE0E1E6),
+)
+
+val LocalPleosColors = staticCompositionLocalOf { DarkPleos }
+
+/** Follows the vehicle day/night mode, as Pleos Connect adjusts brightness and contrast to lighting. */
 @Composable
-fun SharemateTheme(compact: Boolean = false, content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = DarkColors,
-        typography = if (!compact) SharemateTypography else SharemateTypography.copy(
-            bodyLarge = type(16, 24), bodyMedium = type(14, 22), bodySmall = type(12, 18),
-            titleLarge = type(22, 30, FontWeight.SemiBold), titleMedium = type(18, 26, FontWeight.SemiBold),
-            titleSmall = type(16, 24, FontWeight.SemiBold), labelLarge = type(15, 22, FontWeight.SemiBold)),
-        shapes = Shapes(extraSmall = RoundedCornerShape(8.dp), small = RoundedCornerShape(12.dp),
-            medium = RoundedCornerShape(16.dp), large = RoundedCornerShape(24.dp), extraLarge = RoundedCornerShape(28.dp)),
-        content = content,
-    )
+fun SharemateTheme(compact: Boolean = false, dark: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
+    CompositionLocalProvider(LocalPleosColors provides if (dark) DarkPleos else LightPleos) {
+        MaterialTheme(
+            colorScheme = if (dark) DarkColors else LightColors,
+            typography = if (!compact) CarTypography else CarTypography.copy(
+                displayLarge = type(52, 60, FontWeight.Medium, -1.5), displayMedium = type(40, 48, FontWeight.Medium, -1.0),
+                headlineLarge = type(28, 36, FontWeight.SemiBold, -0.5), headlineMedium = type(24, 32, FontWeight.SemiBold, -0.4),
+                headlineSmall = type(22, 30, FontWeight.SemiBold), bodyLarge = type(16, 24), bodyMedium = type(15, 22), bodySmall = type(13, 19),
+                titleLarge = type(21, 29, FontWeight.SemiBold), titleMedium = type(18, 26, FontWeight.SemiBold),
+                titleSmall = type(16, 24, FontWeight.SemiBold), labelLarge = type(15, 22, FontWeight.SemiBold),
+                labelMedium = type(13, 18, FontWeight.Medium), labelSmall = type(12, 16, FontWeight.Medium)),
+            shapes = Shapes(extraSmall = RoundedCornerShape(8.dp), small = RoundedCornerShape(12.dp),
+                medium = RoundedCornerShape(16.dp), large = RoundedCornerShape(24.dp), extraLarge = RoundedCornerShape(32.dp)),
+            content = content,
+        )
+    }
 }

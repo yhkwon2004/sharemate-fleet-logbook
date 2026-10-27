@@ -10,7 +10,6 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -22,23 +21,22 @@ data class DrivingUiState(
 )
 
 class MainActivity : ComponentActivity() {
-    private val model: MainViewModel by viewModels()
     private var driving by mutableStateOf(DrivingUiState(automotive = true))
     private var car: Car? = null
     private var restrictions: CarUxRestrictionsManager? = null
     private var foreground = false
     private var connectionGeneration = 0
     private val permissionRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        if (foreground) {
-            model.setForeground(false)
-            model.setForeground(true)
-        }
+        // Restart recording so newly granted vehicle permissions take effect.
+        stopService(android.content.Intent(this, TripLogService::class.java))
+        TripLogService.start(this)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         driving = DrivingUiState(packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE))
-        setContent { SharemateApp(model, driving, ::requestDataPermissions) }
+        TripLogService.start(this)
+        setContent { LogbookApp(driving, ::requestDataPermissions) }
     }
 
     private fun requestDataPermissions() {
@@ -57,7 +55,6 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         foreground = true
-        model.setForeground(true)
         if (driving.automotive) connectRestrictions()
     }
 
@@ -102,7 +99,6 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         foreground = false
         connectionGeneration++
-        model.setForeground(false)
         runCatching { restrictions?.unregisterListener() }
         runCatching { car?.disconnect() }
         restrictions = null

@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <queries>
+        <intent><action android:name="android.intent.action.CREATE_DOCUMENT" /><data android:mimeType="*/*" /></intent>
         <intent><action android:name="android.media.action.IMAGE_CAPTURE" /></intent>
         <intent><action android:name="android.media.action.VIDEO_CAPTURE" /></intent>
         <intent><action android:name="android.intent.action.VIEW" /><data android:mimeType="video/*" /></intent>
@@ -10,6 +12,9 @@
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="pleos.car.permission.CAR_DRIVE" />
     <uses-permission android:name="pleos.car.permission.CAR_ENERGY" />
     <uses-permission android:name="pleos.car.permission.CAR_DOORS" />
@@ -43,6 +48,32 @@
         </activity>
         <activity android:name=".MainActivity" android:exported="false" android:resizeableActivity="true" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".PhoneActivity" android:exported="false" android:resizeableActivity="true" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".PhoneLogbookActivity" android:exported="true" android:resizeableActivity="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" android:mimeType="application/vnd.sharemate.logbook+json" />
+            </intent-filter>
+        </activity>
+        <service android:name=".TripLogService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Records corporate vehicle trips from gear and odometer signals for the statutory driving logbook" />
+        </service>
+        <receiver android:name=".TripLogBootReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+        <!-- External voice dispatch stays closed until the approved Gleo sender can be authenticated. -->
+        <receiver android:name=".GleoActionReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="SET_TRIP_PURPOSE" />
+                <action android:name="ADD_TRIP_EXPENSE" />
+                <action android:name="GET_DRIVING_LOG_SUMMARY" />
+            </intent-filter>
+        </receiver>
         <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.evidence" android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/evidence_paths" />
         </provider>

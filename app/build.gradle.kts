@@ -13,8 +13,8 @@ android {
         applicationId = "ai.sharemate.app"
         minSdk = 28
         targetSdk = 34
-        versionCode = 7
-        versionName = "1.5.0"
+        versionCode = 10
+        versionName = "2.1.0"
     }
 
     buildFeatures { compose = true }
@@ -40,4 +40,6 @@ dependencies {
     implementation("ai.pleos.playground:NaviHelper:3.0.5")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
+    // Android's org.json is a stub in local unit tests; the Gleo parameter parser needs the real implementation.
+    testImplementation("org.json:json:20260814")
 }
