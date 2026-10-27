@@ -402,7 +402,7 @@ class DemoVehicleSource : VehicleSource {
             parked = available(true, now), rangeKm = available(if (pet) 142f else 286f, now),
             odometerKm = available(12_345.6f, now),
         )
-        routeState.value = RouteEstimate("demo-return-hub", "데모 반납 장소", if (pet) 2_100 else 1_500, now)
+        routeState.value = RouteEstimate("demo-return-hub", "데모 반납 장소", if (pet) 2_100 else 1_500, now, if (pet) 18_700 else 12_400)
     }
     override fun stop() { polling?.cancel(); polling = null; routeState.value = null }
     override fun close() { stop(); scope.cancel() }
@@ -458,7 +458,7 @@ internal fun destinationEstimate(destination: DestinationInfo, revision: Int, no
     // The SDK has no request IDs. Invalidation changes identity, requiring the user to bind a new route.
     val id = "$revision|${destination.poiProvider}|${destination.poiId}|${destination.poiSubId.orEmpty()}|${destination.latitude}|${destination.longitude}"
     if (id.length > 500) return null
-    return RouteEstimate(id, destination.name, destination.remainTime.toLong(), now)
+    return RouteEstimate(id, destination.name, destination.remainTime.toLong(), now, destination.remainDistance.toLong().takeIf { it >= 0 })
 }
 
 private fun areaLabel(name: String): String = when (name) {

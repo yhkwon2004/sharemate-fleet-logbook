@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.util.UUID
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -127,7 +128,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun requirePhoneInspection(session: RentalSession, field: String, label: String) {
         val config = withContext(Dispatchers.IO) { deviceLink.load() } ?: return
-        val remote = deviceLink.request(config, "/v1/state")
+        val remote = try { deviceLink.request(config, "/v1/state") } catch (_: IOException) {
+            throw IllegalArgumentException("연결 서버에 접속하지 못해 휴대폰 $label 기록을 확인할 수 없어요. 서버를 다시 켜거나 맞춤 → 주차·휴대폰에서 연결 상태를 확인해 주세요.")
+        }
         val report = remote.optJSONObject("inspection")
         require(report?.optString("sessionId") == session.id && report.optBoolean(field)) {
             "연결된 휴대폰에서 $label 네 방향 사진·둘레 영상을 촬영하고 기록을 마무리해 주세요."

@@ -38,7 +38,11 @@ internal class SessionStore(context: Context) {
             startedAt = if (json.has("startedAt")) json.integer("startedAt") else 0,
             startingOdometerKm = if (json.isNull("startingOdometerKm")) null else json.getDouble("startingOdometerKm"),
             odometerSource = if (json.has("odometerSource")) SourceMode.valueOf(json.string("odometerSource")) else SourceMode.PLEOS,
-            rates = if (json.isNull("rates")) null else json.getJSONObject("rates").let { RentalRates(it.integer("baseWon"), it.integer("perMinuteWon"), it.integer("perKmWon")) },
+            rates = if (json.isNull("rates")) null else json.getJSONObject("rates").let { rates ->
+                // 1.4.0 and earlier stored per-minute tariffs; those cannot be converted, so the user re-enters the fare.
+                if (rates.has("perMinuteWon")) null
+                else RentalRates(rates.integer("rentalWon"), rates.integer("insuranceWon"), rates.integer("perKmWon"), rates.integer("latePer10MinWon"))
+            },
         )
         validateSession(session)
         return session
@@ -64,7 +68,7 @@ internal class SessionStore(context: Context) {
             put("startedAt", session.startedAt)
             put("startingOdometerKm", session.startingOdometerKm ?: JSONObject.NULL)
             put("odometerSource", session.odometerSource.name)
-            put("rates", session.rates?.let { JSONObject().put("baseWon", it.baseWon).put("perMinuteWon", it.perMinuteWon).put("perKmWon", it.perKmWon) } ?: JSONObject.NULL)
+            put("rates", session.rates?.let { JSONObject().put("rentalWon", it.rentalWon).put("insuranceWon", it.insuranceWon).put("perKmWon", it.perKmWon).put("latePer10MinWon", it.latePer10MinWon) } ?: JSONObject.NULL)
         }
         val bytes = json.toString().toByteArray(Charsets.UTF_8)
         require(bytes.size <= 32_768) { "이용 기록이 너무 큽니다." }

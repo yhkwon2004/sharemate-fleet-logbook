@@ -36,6 +36,7 @@ data class RouteEstimate(
     val destinationName: String,
     val remainingSeconds: Long,
     val receivedAt: Long,
+    val remainingMeters: Long? = null,
 )
 
 data class RentalSession(

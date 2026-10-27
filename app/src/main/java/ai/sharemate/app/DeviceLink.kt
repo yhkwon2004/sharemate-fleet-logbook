@@ -101,7 +101,8 @@ internal fun telemetry(state: AppState): JSONObject {
         put("odometerKm", state.snapshot.odometerKm.current())
         put("distanceKm", session?.let { rentalDistance(it, state.snapshot, now) } ?: JSONObject.NULL)
         put("startedAt", session?.startedAt?.takeIf { it > 0 } ?: JSONObject.NULL)
-        put("rates", session?.rates?.let { JSONObject().put("baseWon", it.baseWon).put("perMinuteWon", it.perMinuteWon).put("perKmWon", it.perKmWon) } ?: JSONObject.NULL)
+        // The relay still validates the 1.4.0 per-minute tariff shape, and the phone shows only costWon.
+        put("rates", JSONObject.NULL)
         put("costWon", cost?.totalWon ?: JSONObject.NULL); put("costAt", if (cost?.totalWon != null) now else JSONObject.NULL)
     }
 }

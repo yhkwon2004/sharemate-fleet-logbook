@@ -36,6 +36,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.text.NumberFormat
@@ -161,53 +162,50 @@ fun SharemateApp(model: MainViewModel, driving: DrivingUiState, requestPermissio
     val s = state.session!!
     var pickup by rememberSaveable(s.id) { mutableStateOf(false) }
     var details by rememberSaveable(s.id) { mutableStateOf(false) }
+    var editingRates by rememberSaveable(s.id) { mutableStateOf(false) }
     val link by model.link.collectAsState()
     val available = returnAvailableMillis(s, state.route, state.now)
     val overdue = s.returnAt <= state.now
     val battery = state.snapshot.soc.takeIf { it.isFresh(state.now) }?.value?.takeIf { it in 0..100 }
-    val distance = rentalDistance(s, state.snapshot, state.now)
-    val cost = rentalCost(s, state.snapshot, state.now)
-    if (overdue) Notice("반납 예정시각이 지났어요", "운영사에서 이용 시간을 확인해 주세요.")
+    if (overdue) Notice("반납 예정시각이 지났어요", "지연 요금이 붙을 수 있어요. 운영사에서 이용 시간을 확인해 주세요.")
     else if (available != null && available <= 0) Notice("복귀 준비가 필요해요", "복귀 경로와 15분의 여유를 고려하면 출발할 시간입니다.")
     if (state.snapshot.warnings.isFresh(state.now) && !state.snapshot.warnings.value.isNullOrBlank()) Notice("차량 알림", state.snapshot.warnings.value!!)
-    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text(when(s.phase) { Phase.CHECK_IN -> "출발을 준비하는 시간"; Phase.ACTIVE -> "당신의 이동에 집중하세요"; Phase.RETURN -> "마지막까지, 편안하게" },
-                style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-            Tag(state.snapshot.parked.display(state.now) { if (it) "P · 주차 중" else "주차 상태 아님" })
-        }
-        Row(Modifier.widthIn(max = 650.dp).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(28.dp)) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Text(when(s.phase) { Phase.CHECK_IN -> "출발을 준비하는 시간"; Phase.ACTIVE -> "당신의 이동에 집중하세요"; Phase.RETURN -> "마지막까지, 편안하게" },
+            style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+        Tag(state.snapshot.parked.display(state.now) { if (it) "P · 주차 중" else "주차 상태 아님" })
+    }
+    val vehicle: @Composable ColumnScope.() -> Unit = {
+        Row(Modifier.widthIn(max = 560.dp).fillMaxWidth().align(Alignment.CenterHorizontally), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
             StatusDial("배터리", battery?.let { "$it%" } ?: state.snapshot.soc.display(state.now),
                 battery?.div(100f), Modifier.weight(1f))
             StatusDial(if (overdue) "반납시각 초과" else "반납까지", duration(remainingMillis(if(overdue) state.now else s.returnAt, if(overdue) s.returnAt else state.now)),
                 rentalRemainingFraction(s.startedAt, s.returnAt, state.now), Modifier.weight(1f), overdue)
         }
-        VehicleDrawing(Modifier.widthIn(max = 820.dp).fillMaxWidth().height(168.dp))
-        Text("차량 연출 이미지 · 실제 차종과 다를 수 있어요", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(Modifier.widthIn(max = 820.dp).fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                Muted("이번 주행")
-                Text(distance?.let { String.format(Locale.KOREA,"%.1f km",it) } ?: "확인 불가", style = MaterialTheme.typography.titleLarge)
-            }
-            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                Muted("예상 요금")
-                Text(cost?.totalWon?.let { "${NumberFormat.getIntegerInstance(Locale.KOREA).format(it)}원" }
-                    ?: if(s.rates == null) "요금 미설정" else "정보 확인 필요", style = MaterialTheme.typography.titleLarge)
-            }
+        VehicleDrawing(Modifier.fillMaxWidth().height(150.dp))
+        Text("차량 연출 이미지 · 실제 차종과 다를 수 있어요", style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.align(Alignment.CenterHorizontally))
+    }
+    val ride: @Composable ColumnScope.() -> Unit = {
+        SurfaceCard {
+            Eyebrow("THIS RIDE · 거리와 요금")
+            FareSummary(state) { editingRates = true }
         }
-        Text("${dateTime(s.returnAt)}  ·  ${s.returnPlace}", color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.bodyMedium)
-        PrimaryButton(when(s.phase) { Phase.CHECK_IN -> "출발 전 점검"; Phase.ACTIVE -> "반납 준비"; Phase.RETURN -> "반납 점검 이어가기" }, Modifier.widthIn(max = 440.dp)) {
-            if (s.phase == Phase.CHECK_IN) pickup = true else prepareReturn()
-        }
-        TextButton(onClick = { details = true }, modifier = Modifier.heightIn(min = 56.dp)) { Text("차량 상태 · 요금 상세", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        if (link.configured) {
-            Text(link.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            // Keep inspection alerts on the home screen even when the details are collapsed.
-            InspectionSummary(link.remote?.optJSONObject("inspection"), compact = true)
+        SurfaceCard {
+            Text("${dateTime(s.returnAt)}  ·  ${s.returnPlace}", style = MaterialTheme.typography.titleMedium)
+            Muted(when { available == null -> "반납 경로를 연결하면 출발 시각을 알려드려요"; available <= 0 -> "지금 복귀를 준비하세요"; else -> "${duration(available)} 더 머물 수 있어요" })
+            PrimaryButton(when(s.phase) { Phase.CHECK_IN -> "출발 전 점검"; Phase.ACTIVE -> "반납 준비"; Phase.RETURN -> "반납 점검 이어가기" }) {
+                if (s.phase == Phase.CHECK_IN) pickup = true else prepareReturn()
+            }
+            TextButton(onClick = { details = true }, modifier = Modifier.heightIn(min = 56.dp)) { Text("차량 상태 · 요금 상세", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            if (link.configured) {
+                Muted(link.message)
+                // Keep inspection alerts on the home screen even when the details are collapsed.
+                InspectionSummary(link.remote?.optJSONObject("inspection"), compact = true)
+            }
         }
     }
+    TwoPane(vehicle, ride, breakpoint = 1000.dp)
     if (pickup && s.phase == Phase.CHECK_IN) DetailDialog("출발 전, 세 가지만 확인해요", { pickup = false }) {
         CheckLine("외관과 기존 손상을 직접 확인했어요", "pickup_exterior", s, model)
         CheckLine("필요한 비품과 소지품을 확인했어요", "pickup_supplies", s, model)
@@ -215,14 +213,45 @@ fun SharemateApp(model: MainViewModel, driving: DrivingUiState, requestPermissio
         if (link.configured) Muted("연결한 휴대폰의 탑승 전 촬영도 완료해 주세요.")
         PrimaryButton("점검 완료 · 이용 시작", enabled = pickupChecks.all { it in s.checks }) { pickup = false; model.completeCheckIn() }
     }
-    if (details) DetailDialog("이번 이용 상세", { details = false }) {
-        RentalMetricsPanel(state, model)
-        VehicleStatusCard(state)
-        Muted("충전: ${state.snapshot.charging.display(state.now) { if(it) "충전 중" else "충전 중 아님" }}")
-        if(state.snapshot.rangeKm.isFresh(state.now)) Muted("차량 표시 주행 가능거리 ${state.snapshot.rangeKm.display(state.now) { "${it.toInt()} km" }}")
-        ChargeEstimate(state)
-        Text(when { available == null -> "반납 경로 확인 필요"; available <= 0 -> "지금 복귀 준비"; else -> "${duration(available)} 더 머물 수 있어요" })
-        returnDepartureAt(s,state.route,state.now)?.let { Muted("복귀 출발 필요시각 ${dateTime(it)}") }
+    if (details) DetailDialog("이번 이용 상세", { details = false }, wide = true) {
+        TwoPane({ FareDetails(state, model) { details = false; editingRates = true } }, {
+            VehicleStatusCard(state)
+            Muted("충전: ${state.snapshot.charging.display(state.now) { if(it) "충전 중" else "충전 중 아님" }}")
+            if(state.snapshot.rangeKm.isFresh(state.now)) Muted("차량 표시 주행 가능거리 ${state.snapshot.rangeKm.display(state.now) { "${it.toInt()} km" }}")
+            ChargeEstimate(state)
+            returnDepartureAt(s,state.route,state.now)?.let { Muted("복귀 출발 필요시각 ${dateTime(it)}") }
+        })
+    }
+    if (editingRates) RatesDialog(s, model) { editingRates = false }
+}
+
+@Composable private fun RatesDialog(s:RentalSession, model:MainViewModel, close:()->Unit) = DetailDialog("카셰어 요금 입력", close) {
+    RateEditor(s) { rates -> model.updateSession { it.copy(rates = rates) }; close() }
+}
+
+// Side-by-side panes keep each page within one screen on the car display; narrow windows stack them.
+@Composable private fun TwoPane(left:@Composable ColumnScope.()->Unit, right:@Composable ColumnScope.()->Unit, breakpoint:Dp = 900.dp) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (maxWidth >= breakpoint) Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(20.dp), content = left)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(20.dp), content = right)
+        } else Column(verticalArrangement = Arrangement.spacedBy(20.dp)) { left(); right() }
+    }
+}
+
+@Composable private fun SubTabs(labels:List<String>, selected:Int, onSelect:(Int)->Unit) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        labels.forEachIndexed { index, label ->
+            val active = index == selected
+            OutlinedButton(onClick = { onSelect(index) }, modifier = Modifier.weight(1f).heightIn(min = 56.dp).semantics { this.selected = active },
+                shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 6.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = if (active) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                    contentColor = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant),
+                border = androidx.compose.foundation.BorderStroke(1.dp, if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)) {
+                Text(label, fontSize = 17.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium, maxLines = 1)
+            }
+        }
     }
 }
 
@@ -244,10 +273,10 @@ fun SharemateApp(model: MainViewModel, driving: DrivingUiState, requestPermissio
     }
 }
 
-@Composable private fun DetailDialog(title:String, close:()->Unit, content:@Composable ColumnScope.()->Unit) {
+@Composable private fun DetailDialog(title:String, close:()->Unit, wide:Boolean = false, content:@Composable ColumnScope.()->Unit) {
     val maxHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() } * .88f
     androidx.compose.ui.window.Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.widthIn(max = 820.dp).fillMaxWidth(.94f).heightIn(max = maxHeight), shape = RoundedCornerShape(28.dp)) {
+        Surface(Modifier.widthIn(max = if (wide) 1240.dp else 820.dp).fillMaxWidth(.94f).heightIn(max = maxHeight), shape = RoundedCornerShape(28.dp)) {
             Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
@@ -261,14 +290,18 @@ fun SharemateApp(model: MainViewModel, driving: DrivingUiState, requestPermissio
 
 @Composable private fun PersonalizePage(state:AppState,model:MainViewModel) {
     val s=state.session!!
+    var section by rememberSaveable(s.id) { mutableIntStateOf(0) }
+    var records by rememberSaveable(s.id) { mutableStateOf(false) }
+    val link by model.link.collectAsState()
     PageHeading("오늘의 이동에 맞추세요","목적과 동반 조건에 맞춰 필요한 안내를 모았어요.")
-    SurfaceCard {
+    SubTabs(listOf("목적·동반","충전·시간","주차·휴대폰"),section) { section=it }
+    when(section) {
+    0 -> TwoPane({ SurfaceCard {
         Text("이번 이용",style=MaterialTheme.typography.titleLarge)
         PurposeSelector(s.purpose) { selected -> model.updateSession { it.copy(purpose=selected) } }
         CompanionSelector(s.family,{ selected -> model.updateSession { it.copy(family=selected) } },s.pet,{ selected -> model.updateSession { it.copy(pet=selected) } })
         SessionNoteField("이번 목적지 메모",s.destinationNote,s.id) { text -> model.updateSession { it.copy(destinationNote=text) } }
-    }
-    SurfaceCard {
+    } }, { SurfaceCard {
         Text("${s.purpose.label} 준비",style=MaterialTheme.typography.titleLarge)
         val items=when(s.purpose) {
             Purpose.COMMUTE -> listOf("commute_bag" to "가방과 업무 물품 챙기기","commute_route" to "목적지와 일정을 직접 확인하기")
@@ -290,8 +323,8 @@ fun SharemateApp(model: MainViewModel, driving: DrivingUiState, requestPermissio
             Muted("공조: ${state.snapshot.hvac.display(state.now)}")
             Muted("표시된 공조 상태만으로 실내 환경의 안전을 판단하지 마세요.")
         }
-    }
-    SurfaceCard {
+    } })
+    1 -> TwoPane({ SurfaceCard {
         Text("충전하는 동안",style=MaterialTheme.typography.titleLarge)
         Text("${state.snapshot.soc.display(state.now) { "$it%" }}  ·  ${state.snapshot.charging.display(state.now) { if(it) "충전 중" else "충전 중 아님" }}",fontSize=24.sp)
         ChargeEstimate(state)
@@ -302,8 +335,7 @@ fun SharemateApp(model: MainViewModel, driving: DrivingUiState, requestPermissio
         }
         if(state.snapshot.soc.isFresh(state.now) && (state.snapshot.soc.value?:-1)>=s.targetSoc) Tag("설정한 목표 SOC에 도달했어요")
         Muted("목표는 나의 확인 기준이며 차량의 충전 설정을 바꾸지 않습니다.")
-    }
-    SurfaceCard {
+    } }, { SurfaceCard {
         Text("쉬어 가는 시간 · 업무 시간",style=MaterialTheme.typography.titleLarge)
         if(s.timerEnd==null) Text("종료 목표시각을 정해 보세요.")
         else {
@@ -319,33 +351,69 @@ fun SharemateApp(model: MainViewModel, driving: DrivingUiState, requestPermissio
         }
         if(s.timerEnd!=null) TextButton(onClick={model.updateSession { it.copy(timerEnd=null) }}) { Text("시간 목표 해제") }
         Muted("이 화면에서 남은 시간을 안내합니다. 앱 밖에서는 정시 알림을 보내지 않습니다.")
-    }
-    SurfaceCard {
+    } })
+    else -> TwoPane({ SurfaceCard {
         Text("주차 위치 기억하기",style=MaterialTheme.typography.titleLarge)
         SessionNoteField("층·구역·찾아가는 설명",s.parkingNote,s.id) { text -> model.updateSession { it.copy(parkingNote=text) } }
         Muted("도어 잠금: ${state.snapshot.doorLocks.display(state.now)}")
     }
-    CarConnectionPanel(model)
-    FutureCameraCard()
+    FutureCameraCard() }, { CarConnectionPanel(model) { records = true } })
+    }
+    if (records) DetailDialog("휴대폰 촬영 기록", { records = false }) { InspectionSummary(link.remote?.optJSONObject("inspection")) }
 }
 
+// Car-share steps a first-time renter needs at each moment, phrased as actions rather than policy.
+internal val guideTopics = listOf(
+    Triple("출발 전", "출발 전에 확인해요", listOf(
+        "휴대폰 SHAREMATE로 앞·오른쪽·뒤·왼쪽 사진과 둘레 영상을 남겨 기존 손상을 기록하세요.",
+        "기존 손상이나 청결 문제가 있으면 출발 전에 운영사 앱으로 알리세요.",
+        "좌석·미러·안전벨트와 계기판 경고를 직접 확인하세요.",
+        "낯선 조작은 정차 상태에서 차량 설정과 공식 설명서로 확인하세요.")),
+    Triple("사고 시", "사고나 문제가 생기면", listOf(
+        "비상등을 켜고, 가능하면 차를 안전한 곳으로 옮긴 뒤 차 밖의 안전한 장소로 피하세요.",
+        "다친 사람이 있으면 119, 사고 신고는 112에 연락하세요.",
+        "현장과 차량 손상 부위를 휴대폰으로 촬영해 두세요. 상대 차량이 있으면 번호판도 함께 남기세요.",
+        "대여 운영사 고객센터에 바로 알리고 안내에 따르세요. 보험·면책 처리는 운영사 약관을 따릅니다.")),
+    Triple("충전", "충전할 때", listOf(
+        "차량과 충전기의 안내를 먼저 확인하세요.",
+        "SHAREMATE는 지원되는 충전 상태만 보여주며 충전을 시작하거나 멈추지 않습니다.",
+        "충전이 끝나면 케이블과 충전구 덮개를 정리하세요.")),
+    Triple("경고 표시", "경고 표시가 나타나면", listOf(
+        "차량의 경고 표시와 공식 설명서를 우선 확인하세요.",
+        "주행에 영향이 있을 수 있으면 안전한 장소에 정차하세요.",
+        "필요하면 대여 운영사에 문의하세요. SHAREMATE의 경고 표시는 종합 진단이 아닙니다.")),
+    Triple("반납", "반납할 때", listOf(
+        "운영사가 정한 반납 구역에 주차하고 기어를 P에 두세요.",
+        "좌석·콘솔·트렁크의 소지품과 쓰레기를 정리하세요.",
+        "휴대폰으로 이용 후 네 면 사진과 둘레 영상을 남기세요.",
+        "운영사 앱에서 정식 반납 절차를 완료하세요. SHAREMATE 종료는 반납 완료가 아닙니다.")),
+)
+
 @Composable private fun GuidePage(state:AppState) {
-    PageHeading("낯선 차도 편하게","확인된 차량 상태와 공통 이용 안내입니다.")
-    SurfaceCard { Text("차량 정보",style=MaterialTheme.typography.titleLarge); Text(state.snapshot.carName.display(state.now),fontSize=24.sp)
-        Muted("차종별 세부 조작은 차량의 공식 설명서를 확인해 주세요.") }
-    VehicleStatusCard(state)
-    listOf("출발 전" to "좌석·미러·안전벨트와 차량 경고 표시를 직접 확인하세요. 조작 방법이 낯설다면 정차 상태에서 차량 설정과 공식 설명서를 확인하세요.",
-        "충전할 때" to "차량과 충전기의 안내를 확인하세요. SHAREMATE는 지원되는 충전 상태만 보여주며 충전을 시작하거나 중지하지 않습니다.",
-        "경고가 나타나면" to "차량의 경고 표시와 공식 설명서를 우선 확인하세요. 안전한 장소에 정차한 뒤 필요한 경우 대여 운영사에 문의하세요.",
-        "반납할 때" to "소지품·외관·실내를 직접 확인하고 대여 운영사의 정식 반납 절차를 진행하세요.")
-        .forEach { (title,body) -> SurfaceCard { Text(title,style=MaterialTheme.typography.titleLarge); Text(body) } }
+    var topic by rememberSaveable { mutableIntStateOf(0) }
+    PageHeading("낯선 차도 편하게","확인된 차량 상태와 카셰어 이용 안내입니다.")
+    TwoPane({ VehicleStatusCard(state, showCarName = true) }, {
+        SubTabs(guideTopics.map { it.first }, topic) { topic = it }
+        val (_, title, steps) = guideTopics[topic]
+        SurfaceCard {
+            Text(title, style = MaterialTheme.typography.titleLarge)
+            steps.forEachIndexed { index, step ->
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text("${index + 1}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(24.dp))
+                    Text(step, modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    })
 }
 
 @Composable private fun ReturnPage(state:AppState,model:MainViewModel,end:()->Unit) {
     val s=state.session!!
-    PageHeading("마지막까지 가볍게","차량 상태와 내 물건을 확인하고 이번 이용을 마무리해요.")
-    PairedInspectionStatus(model)
-    SurfaceCard {
+    var records by rememberSaveable(s.id) { mutableStateOf(false) }
+    var editingRates by rememberSaveable(s.id) { mutableStateOf(false) }
+    val link by model.link.collectAsState()
+    PageHeading("마지막까지 가볍게","반납 시간과 예상 비용을 확인하고 이번 이용을 마무리해요.")
+    TwoPane({ SurfaceCard {
         Text("반납 일정",style=MaterialTheme.typography.titleLarge)
         SessionNoteField("반납 장소",s.returnPlace,s.id,maxLength=200) { text -> model.updateSession { it.copy(returnPlace=text) } }
         DateTimePicker("반납 예정",s.returnAt) { at -> model.updateSession { it.copy(returnAt=at) } }
@@ -361,7 +429,11 @@ fun SharemateApp(model: MainViewModel, driving: DrivingUiState, requestPermissio
         returnDepartureAt(s,state.route,state.now)?.let { Muted("복귀 출발 필요시각 ${dateTime(it)}") }
         Muted("복귀 소요시간에 15분의 여유를 더해 계산합니다. 내비 목적지는 앱에서 변경하지 않습니다.")
     }
-    VehicleStatusCard(state)
+    SurfaceCard {
+        Text("반납 시 예상 비용",style=MaterialTheme.typography.titleLarge)
+        FareSummary(state) { editingRates = true }
+    } }, {
+    PairedInspectionStatus(model) { records = true }
     if(s.phase==Phase.CHECK_IN) SurfaceCard { Text("먼저 홈에서 인수 점검을 완료해 주세요.") }
     else if(s.phase!=Phase.RETURN) PrimaryButton("반납 준비 시작",onClick=model::beginReturn)
     else SurfaceCard {
@@ -370,9 +442,12 @@ fun SharemateApp(model: MainViewModel, driving: DrivingUiState, requestPermissio
         CheckLine("실내 정리와 청결 상태를 확인했어요","return_clean",s,model)
         CheckLine("외관과 차량 상태를 직접 확인했어요","return_exterior",s,model)
         CheckLine("운영사의 정식 반납 절차를 확인했어요","return_operator",s,model)
+        Muted("창문: ${state.snapshot.windows.display(state.now)} · 도어 잠금: ${state.snapshot.doorLocks.display(state.now)}")
         Muted("종료하면 이번 이용의 장소·메모·설정을 삭제합니다. 이 앱의 종료가 대여 계약의 반납 완료를 의미하지 않습니다.")
         PrimaryButton("SHAREMATE 이용 종료",enabled=returnChecks.all { it in s.checks },onClick=end)
-    }
+    } })
+    if (records) DetailDialog("휴대폰 촬영 기록", { records = false }) { InspectionSummary(link.remote?.optJSONObject("inspection")) }
+    if (editingRates) RatesDialog(s, model) { editingRates = false }
 }
 
 @Composable private fun ChargeEstimate(state:AppState) {
@@ -383,8 +458,12 @@ fun SharemateApp(model: MainViewModel, driving: DrivingUiState, requestPermissio
     }
 }
 
-@Composable private fun VehicleStatusCard(state:AppState) = SurfaceCard {
+@Composable private fun VehicleStatusCard(state:AppState, showCarName:Boolean = false) = SurfaceCard {
     Text("차량에서 확인한 상태",style=MaterialTheme.typography.titleLarge)
+    if(showCarName) {
+        Text(state.snapshot.carName.display(state.now),fontSize=22.sp)
+        Muted("차종별 세부 조작은 차량의 공식 설명서를 확인해 주세요.")
+    }
     val v=state.snapshot
     listOf("도어" to v.doors,"창문" to v.windows,"도어 잠금" to v.doorLocks,"타이어" to v.tires,"안전벨트" to v.belts,"공조" to v.hvac).forEachIndexed { index,(label,reading) ->
         if(index>0) HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant)
@@ -397,14 +476,11 @@ fun SharemateApp(model: MainViewModel, driving: DrivingUiState, requestPermissio
 }
 
 @Composable private fun FutureCameraCard() = SurfaceCard {
-    Text("차량 카메라로 더 편하게",style=MaterialTheme.typography.titleLarge)
-    Tag("개발 예정")
-    listOf("하차 전 소지품 확인" to "여행·휴식·업무 후 놓고 내린 물건을 재확인하는 구상",
-        "인수·반납 실내 상태 비교" to "가족·반려동물 동반 이용 전후의 실내 상태 기록 구상",
-        "주차 위치 사진 카드" to "낯선 주차장의 위치와 주변 표지를 기억하는 구상").forEach { (title,body) ->
-        Column(verticalArrangement=Arrangement.spacedBy(4.dp)) { Text(title,fontWeight=FontWeight.SemiBold); Muted(body) }
+    Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+        Text("차량 카메라로 더 편하게",style=MaterialTheme.typography.titleMedium,modifier=Modifier.weight(1f)); Tag("개발 예정")
     }
-    Muted("차량에 내장된 카메라의 촬영·분석은 개발 예정입니다. 공식 차량 카메라 지원과 권한 확인 후 연계합니다.")
+    Muted("하차 전 소지품 확인 · 인수·반납 실내 상태 비교 · 주차 위치 사진 카드")
+    Muted("공식 차량 카메라 지원과 권한을 확인한 뒤 연계합니다. 지금은 촬영·분석하지 않습니다.")
 }
 
 @Composable private fun PurposeSelector(value:Purpose,onChange:(Purpose)->Unit) {

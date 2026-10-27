@@ -29,55 +29,118 @@ private fun won(amount: Long) = "${NumberFormat.getIntegerInstance(Locale.KOREA)
 private fun km(value: Double) = "${String.format(Locale.KOREA, "%.1f", value)} km"
 private fun time(at: Long) = SimpleDateFormat("HH:mm:ss", Locale.KOREA).format(Date(at))
 
+private fun clock(at: Long) = SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(at))
+private fun distanceText(session: RentalSession, value: Double?) = value?.let(::km) ?: if (session.startingOdometerKm == null) "거리 기준 필요" else "확인 불가"
+private fun costText(session: RentalSession, total: Long?) = total?.let(::won) ?: if (session.rates == null) "요금 입력 전" else "거리 확인 필요"
+private fun forecastNote(forecast: CostForecast) =
+    if (forecast.routeIncluded) "반납지까지 ${km(forecast.remainingKm!!)} · ${clock(forecast.arrivalAt!!)} 도착 예상 기준"
+    else "반납 경로를 연결하면 남은 거리와 도착 시각까지 예상해요"
+
+@Composable private fun FareFigure(label: String, value: String, modifier: Modifier, highlight: Boolean = false) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, maxLines = 1,
+            color = if (highlight) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+    }
+}
+
+// Distance, cost so far, and the expected total on return: the three numbers a car-share user checks while driving.
 @Composable
-fun RentalMetricsPanel(state: AppState, model: MainViewModel) {
+fun FareSummary(state: AppState, editRates: () -> Unit) {
     val session = state.session ?: return
-    var editing by rememberSaveable(session.id) { mutableStateOf(false) }
-    val distance = rentalDistance(session, state.snapshot, state.now)
     val cost = rentalCost(session, state.snapshot, state.now)
-    val link by model.link.collectAsState()
+    val forecast = costForecast(session, state.snapshot, state.route, state.now)
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            FareFigure("이번 주행", distanceText(session, rentalDistance(session, state.snapshot, state.now)), Modifier.weight(1f))
+            FareFigure("지금까지 비용", costText(session, cost?.totalWon), Modifier.weight(1f))
+            FareFigure("반납 시 예상", costText(session, forecast?.totalWon), Modifier.weight(1f), highlight = true)
+        }
+        if (cost != null) Text("대여·보험 ${won(cost.fixedWon)} · 주행 ${cost.distanceWon?.let(::won) ?: "확인 불가"} · 지연 ${won(cost.lateWon)}",
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (forecast != null) Text(forecastNote(forecast), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (session.rates == null) Button(onClick = editRates, modifier = Modifier.heightIn(min = 56.dp)) { Text("카셰어 요금 입력") }
+        else TextButton(onClick = editRates, modifier = Modifier.heightIn(min = 48.dp)) { Text("요금 수정") }
+    }
+}
+
+@Composable private fun FareRow(label: String, now: String, expected: String, emphasis: Boolean = false) {
+    val weight = if (emphasis) FontWeight.SemiBold else FontWeight.Normal
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(label, Modifier.weight(1.2f), color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = weight)
+        Text(now, Modifier.weight(1f), fontWeight = weight)
+        Text(expected, Modifier.weight(1f), fontWeight = weight, color = if (emphasis) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+    }
+}
+
+@Composable
+fun FareDetails(state: AppState, model: MainViewModel, editRates: () -> Unit) {
+    val session = state.session ?: return
+    val cost = rentalCost(session, state.snapshot, state.now)
+    val forecast = costForecast(session, state.snapshot, state.route, state.now)
     OutlinedCard(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("이동과 이용 요금", style = MaterialTheme.typography.titleLarge)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                Column(Modifier.weight(1f)) { Text("이번 주행거리"); Text(distance?.let(::km) ?: "확인 불가", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }
-                Column(Modifier.weight(1f)) { Text("현재 예상 금액"); Text(cost?.totalWon?.let(::won) ?: if (session.rates == null) "요금 입력 전" else "정보 확인 필요", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary) }
+        Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("이번 이용 요금", style = MaterialTheme.typography.titleLarge)
+            if (cost == null || forecast == null) {
+                Text("카셰어 앱의 예약 화면에 나온 대여요금·보험료·km당 주행요금을 입력하면 지금까지 비용과 반납 시 예상 비용을 계산해요.")
+                Button(onClick = editRates, modifier = Modifier.heightIn(min = 56.dp)) { Text("카셰어 요금 입력") }
+            } else {
+                FareRow("", "지금까지", "반납 시 예상")
+                FareRow("대여·보험", won(cost.fixedWon), won(cost.fixedWon))
+                FareRow("주행", "${cost.distanceWon?.let(::won) ?: "확인 불가"}\n${distanceText(session, cost.distanceKm)}",
+                    "${forecast.distanceWon?.let(::won) ?: "확인 불가"}\n${distanceText(session, forecast.distanceKm)}")
+                FareRow("반납 지연", won(cost.lateWon), won(forecast.lateWon))
+                HorizontalDivider()
+                FareRow("합계", costText(session, cost.totalWon), costText(session, forecast.totalWon), emphasis = true)
+                Text(forecastNote(forecast), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = editRates, modifier = Modifier.heightIn(min = 48.dp)) { Text("요금 수정") }
             }
             if (state.snapshot.odometerKm.isFresh(state.now)) Text("차량 누적 주행거리 ${km(state.snapshot.odometerKm.value!!.toDouble())}", style = MaterialTheme.typography.bodyMedium)
-            if (cost != null) Text("${cost.elapsedMinutes}분 · 기본·시간 요금 ${won(cost.timeWon)} · 거리 요금 ${cost.distanceWon?.let(::won) ?: "확인 불가"}")
-            Text("입력한 요금으로 계산한 예상액입니다. 분 단위 올림, 거리 요금은 원 단위 올림. 보험·할인·연체료는 포함하지 않습니다.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (session.startingOdometerKm == null && session.phase == Phase.CHECK_IN) OutlinedButton(onClick = model::captureStartingDistance, modifier = Modifier.heightIn(min = 56.dp)) { Text("출발 전 거리 기준 설정") }
-            TextButton(onClick = { editing = !editing }, modifier = Modifier.heightIn(min = 48.dp)) { Text(if (editing) "요금 설정 닫기" else "예상 요금표 입력") }
-            if (editing) RateEditor(session) { rates -> model.updateSession { it.copy(rates = rates) }; editing = false }
-            if (link.configured) {
-                HorizontalDivider()
-                Text(link.message, style = MaterialTheme.typography.bodyMedium)
-                InspectionSummary(link.remote?.optJSONObject("inspection"))
-            }
+            Text("주행요금은 원 단위 올림, 지연 요금은 시작된 10분마다 더합니다. 할인·쿠폰·추가 과금은 포함하지 않으며 운영사 확정 청구액이 아닙니다.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
-@Composable private fun RateEditor(session: RentalSession, save: (RentalRates) -> Unit) {
-    var base by rememberSaveable(session.id) { mutableStateOf(session.rates?.baseWon?.toString() ?: "") }
-    var minute by rememberSaveable(session.id) { mutableStateOf(session.rates?.perMinuteWon?.toString() ?: "") }
-    var distance by rememberSaveable(session.id) { mutableStateOf(session.rates?.perKmWon?.toString() ?: "") }
-    val fields = listOf(Triple("기본료 · 원", base, { text: String -> base = text }), Triple("분당 · 원", minute, { text: String -> minute = text }), Triple("km당 · 원", distance, { text: String -> distance = text }))
-    fields.forEach { (label, value, change) -> OutlinedTextField(value, { if (it.length <= 7 && it.all(Char::isDigit)) change(it) }, label = { Text(label) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.fillMaxWidth()) }
-    val numbers = listOf(base, minute, distance).map { it.toLongOrNull()?.takeIf { value -> value in 0..1_000_000 } }
-    Button(onClick = { save(RentalRates(numbers[0]!!, numbers[1]!!, numbers[2]!!)) }, enabled = numbers.all { it != null }, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("예상 요금표 적용") }
+@Composable private fun RateField(label: String, value: String, digits: Int, change: (String) -> Unit, modifier: Modifier) =
+    OutlinedTextField(value, { if (it.length <= digits && it.all(Char::isDigit)) change(it) }, label = { Text(label) },
+        suffix = { Text("원") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = modifier)
+
+@Composable
+fun RateEditor(session: RentalSession, save: (RentalRates) -> Unit) {
+    var rental by rememberSaveable(session.id) { mutableStateOf(session.rates?.rentalWon?.toString() ?: "") }
+    var insurance by rememberSaveable(session.id) { mutableStateOf(session.rates?.insuranceWon?.toString() ?: "") }
+    var perKm by rememberSaveable(session.id) { mutableStateOf(session.rates?.perKmWon?.toString() ?: "") }
+    var late by rememberSaveable(session.id) { mutableStateOf(session.rates?.latePer10MinWon?.toString() ?: "") }
+    Text("카셰어 앱의 예약·요금 화면에 나온 금액을 입력하세요. 주행요금이 없는 차량이나 지연 요금을 모르면 0을 입력합니다.", style = MaterialTheme.typography.bodyMedium)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        RateField("대여요금 · 예약 금액", rental, 8, { rental = it }, Modifier.weight(1f))
+        RateField("보험 · 보장상품", insurance, 7, { insurance = it }, Modifier.weight(1f))
+    }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        RateField("주행요금 · km당", perKm, 7, { perKm = it }, Modifier.weight(1f))
+        RateField("반납 지연 · 10분당", late, 7, { late = it }, Modifier.weight(1f))
+    }
+    val numbers = listOf(rental, insurance, perKm, late).map { it.toLongOrNull() }
+    val rates = if (numbers.any { it == null }) null
+        else RentalRates(numbers[0]!!, numbers[1]!!, numbers[2]!!, numbers[3]!!).takeIf { runCatching { validateRates(it) }.isSuccess }
+    Button(onClick = { save(rates!!) }, enabled = rates != null, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("요금 적용") }
 }
 
-@Composable fun CarConnectionPanel(model: MainViewModel) {
+@Composable fun CarConnectionPanel(model: MainViewModel, showRecords: () -> Unit) {
     val status by model.link.collectAsState()
     OutlinedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("휴대폰과 이어지는 이용", style = MaterialTheme.typography.titleLarge)
             Text(status.message)
-            Text("휴대폰의 탑승 전·후 촬영 결과를 여기서 확인하고, 차량의 주행거리·예상 요금을 휴대폰으로 전달합니다.", style = MaterialTheme.typography.bodyMedium)
+            Text("휴대폰의 탑승 전·후 촬영 결과를 여기서 확인하고, 차량의 주행거리·비용을 휴대폰으로 전달합니다.", style = MaterialTheme.typography.bodyMedium)
             if (status.configured) {
-                InspectionSummary(status.remote?.optJSONObject("inspection"))
-                OutlinedButton(onClick = model::disconnectPhone, modifier = Modifier.heightIn(min = 56.dp)) { Text("공유 정보 삭제 후 연결 해제") }
+                InspectionSummary(status.remote?.optJSONObject("inspection"), compact = true)
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TextButton(onClick = showRecords, modifier = Modifier.heightIn(min = 56.dp)) { Text("촬영 기록 자세히") }
+                    OutlinedButton(onClick = model::disconnectPhone, modifier = Modifier.heightIn(min = 56.dp)) { Text("공유 정보 삭제 후 연결 해제") }
+                }
             } else LinkEntry("차량용 연결 정보", model::configureLink)
             Text("연결 서버가 필요합니다. 앱 실행 중 약 3초마다 공유하며, 차량 값은 SDK 수신 주기에 따라 갱신됩니다.", style = MaterialTheme.typography.bodySmall)
         }
@@ -138,14 +201,15 @@ fun RentalMetricsPanel(state: AppState, model: MainViewModel) {
     Text("원본 사진·영상은 촬영한 휴대폰에서 확인하세요. AI 판독과 사진 비교는 손상 여부·발생 시점·책임을 확정하지 않습니다.", style = MaterialTheme.typography.bodySmall)
 }
 
-@Composable fun PairedInspectionStatus(model: MainViewModel) {
+@Composable fun PairedInspectionStatus(model: MainViewModel, showRecords: () -> Unit) {
     val link by model.link.collectAsState()
     if (link.configured) OutlinedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("휴대폰 촬영으로 마무리", style = MaterialTheme.typography.titleLarge)
             Text(link.message)
-            InspectionSummary(link.remote?.optJSONObject("inspection"))
+            InspectionSummary(link.remote?.optJSONObject("inspection"), compact = true)
             Text("연결된 휴대폰에서 이용 후 네 방향 사진과 둘레 영상을 남긴 뒤 기록을 마무리해 주세요.", style = MaterialTheme.typography.bodyMedium)
+            TextButton(onClick = showRecords, modifier = Modifier.heightIn(min = 56.dp)) { Text("촬영 기록 자세히") }
         }
     }
 }
@@ -205,11 +269,11 @@ fun RentalMetricsPanel(state: AppState, model: MainViewModel) {
                     Text(if (vehicle.optString("source") == "DEMO") "시연 데이터 · 실제 차량 정보 아님" else "Pleos 차량 수신 정보", style = MaterialTheme.typography.labelLarge)
                     if (!status.current) Text("마지막 수신 기록 · 현재 거리·요금·배터리가 아닙니다", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelLarge)
                     Text("${if (status.current) "이번 주행" else "마지막 주행거리"} ${if (vehicle.isNull("distanceKm")) "확인 불가" else km(vehicle.optDouble("distanceKm"))}", style = MaterialTheme.typography.headlineSmall)
-                    Text("${if (status.current) "예상 금액" else "마지막 예상 금액"} ${if (vehicle.isNull("costWon")) "요금·거리 설정 확인" else won(vehicle.optLong("costWon"))}", style = MaterialTheme.typography.headlineSmall)
+                    Text("${if (status.current) "지금까지 비용" else "마지막 수신 비용"} ${if (vehicle.isNull("costWon")) "요금·거리 설정 확인" else won(vehicle.optLong("costWon"))}", style = MaterialTheme.typography.headlineSmall)
                     Text("배터리 ${if (vehicle.isNull("soc")) "확인 불가" else "${vehicle.optInt("soc")}%"} · 누적 ${if (vehicle.isNull("odometerKm")) "확인 불가" else km(vehicle.optDouble("odometerKm"))}")
                     Text("반납 장소 ${vehicle.optString("returnPlace").ifBlank { "이용 시작 전" }}")
                     if (!vehicle.isNull("returnAt")) Text("반납 ${SimpleDateFormat("M/d HH:mm", Locale.KOREA).format(Date(vehicle.optLong("returnAt")))}")
-                    Text("차량 전송 ${time(vehicle.optLong("sentAt"))} · 요금은 입력한 기준의 예상액", style = MaterialTheme.typography.bodySmall)
+                    Text("차량 전송 ${time(vehicle.optLong("sentAt"))} · 입력한 카셰어 요금 기준이며 확정 청구액이 아닙니다", style = MaterialTheme.typography.bodySmall)
                 }
                 Text("촬영 요약·사고 메모만 연결된 차량에 공유합니다. 원본은 이 휴대폰에 보관합니다.", style = MaterialTheme.typography.bodySmall)
                 TextButton(onClick = { scope.launch { withContext(Dispatchers.IO) { link.clear() }; config = null; status = LinkStatus(message = "차량 연결 해제됨"); callback(null) } }) { Text("휴대폰 연결 해제") }

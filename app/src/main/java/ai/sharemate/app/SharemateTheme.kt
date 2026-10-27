@@ -49,7 +49,7 @@ private val DarkColors = darkColorScheme(
     primaryContainer = Color(0xFF173224), onPrimaryContainer = Color(0xFFB6F2CD),
     inversePrimary = Color(0xFF006B70),
     secondary = Color(0xFFC0CBD9), onSecondary = Color(0xFF25313F),
-    secondaryContainer = Color(0xFF303C4A), onSecondaryContainer = Color(0xFFDCE6F2),
+    secondaryContainer = Color(0xFF1E3A2B), onSecondaryContainer = Color(0xFFB6F2CD),
     tertiary = Color(0xFFA4D0C8), onTertiary = Color(0xFF173D37),
     tertiaryContainer = Color(0xFF294C45), onTertiaryContainer = Color(0xFFC8EEE5),
     background = Color(0xFF07090B), onBackground = Color(0xFFF2F4F5),
