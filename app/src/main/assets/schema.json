@@ -1,14 +1,14 @@
 {
   "packageName": "ai.sharemate.app",
-  "appDescription": "An automatic corporate vehicle logbook that records each trip from the vehicle's gear and odometer for business tax records.",
+  "appDescription": "An automatic corporate vehicle logbook that records gear and odometer based trips, their business purposes and driving expenses.",
   "invokeWord": "운행일지",
-  "version": "2.0.0",
+  "version": "2.2.0",
   "actionCalls": [
     {
       "type": "function",
       "function": {
         "name": "SET_TRIP_PURPOSE",
-        "description": "Set the purpose of the trip being recorded now, or of the most recent trip, in the vehicle logbook.",
+        "description": "Set the purpose and an optional note of the current trip or the most recently completed trip within twelve hours.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -19,7 +19,7 @@
             },
             "note": {
               "type": "string",
-              "description": "Short remark about the trip such as the visited client or task."
+              "description": "Additional trip remark of up to 200 characters, appended to the existing note up to 300 characters in total."
             }
           },
           "required": ["purpose"]
@@ -31,18 +31,18 @@
       "type": "function",
       "function": {
         "name": "ADD_TRIP_EXPENSE",
-        "description": "Attach a driving expense to the trip being recorded now, or to the most recent trip.",
+        "description": "Record a driving expense on the current trip or the most recently completed trip within twelve hours, without performing payment.",
         "parameters": {
           "type": "object",
           "properties": {
             "expenseType": {
               "type": "string",
               "enum": ["fuel", "toll", "parking", "other"],
-              "description": "Category of the driving expense."
+              "description": "Category of the driving expense; fuel includes charging expenses."
             },
             "amount": {
               "type": "number",
-              "description": "Expense amount in Korean won."
+              "description": "Whole expense amount in Korean won, from 1 to 10000000."
             }
           },
           "required": ["expenseType", "amount"]
@@ -54,7 +54,7 @@
       "type": "function",
       "function": {
         "name": "GET_DRIVING_LOG_SUMMARY",
-        "description": "Report total distance, business distance, business use ratio, and trips without a purpose for a period.",
+        "description": "Report trip and business distances, registered expense totals and categories, review counts and configured mileage reimbursement estimates for a period.",
         "parameters": {
           "type": "object",
           "properties": {

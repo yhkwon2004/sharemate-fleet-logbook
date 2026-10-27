@@ -1,6 +1,7 @@
 package ai.sharemate.app
 
 import ai.pleos.playground.navi.data.CurrentLocationInfo
+import ai.pleos.playground.navi.constants.NaviErrorCode
 import ai.pleos.playground.navi.data.DestinationArrivedInfo
 import ai.pleos.playground.navi.data.DestinationInfo
 import ai.pleos.playground.navi.data.RouteStartInfo
@@ -62,6 +63,9 @@ internal fun driveSignalsFresh(gear: GearState, odometer: Double?, gearAgeMillis
     gear != GearState.UNKNOWN && odometer != null && odometer.isFinite() && odometer in 0.0..10_000_000.0 &&
         gearAgeMillis in 0..45_000 && odometerAgeMillis in 0..45_000
 
+internal fun freshNavigationAddress(address: String?, ageMillis: Long): String? =
+    address?.trim()?.take(120)?.takeIf { it.isNotEmpty() && ageMillis in 0..45_000 }
+
 /** Reads the connected Pleos vehicle only; it never writes vehicle settings or changes the navigation route. */
 class PleosDriveSignals(context: Context) : DriveSignals {
     private val context = context.applicationContext
@@ -82,7 +86,9 @@ class PleosDriveSignals(context: Context) : DriveSignals {
     private var gear = GearState.UNKNOWN
     private var odometer: Double? = null
     private var address: String? = null
+    private var addressAt = -1L
     private var destination: String? = null
+    private var naviReady = false
     private var active = false
     private var odometerAt = -1L
     private var gearAt = -1L
@@ -211,6 +217,7 @@ class PleosDriveSignals(context: Context) : DriveSignals {
         if (value == gear) return
         gear = value
         gearGeneration++
+        invalidateLocation()
         // A cached distance from before P would omit the last segment of the trip.
         waitingForParkDistance = value == GearState.PARK
         readOdometer()
@@ -226,7 +233,13 @@ class PleosDriveSignals(context: Context) : DriveSignals {
             navi = helper
             val listener = object : NaviHelperEventListener {
                 override fun onCurrentLocationInfo(currentLocationInfo: CurrentLocationInfo) {
-                    scope.launch { if (active) { address = currentLocationInfo.address.trim().take(120).ifBlank { null }; emit() } }
+                    scope.launch {
+                        if (!active || !naviReady) return@launch
+                        address = currentLocationInfo.address
+                        // SDK callbacks expose no acquisition timestamp; this bounds reception age only.
+                        addressAt = SystemClock.elapsedRealtime()
+                        emit()
+                    }
                 }
                 override fun onDestinationInfo(destinationInfo: DestinationInfo) {
                     scope.launch { if (active) { destination = destinationInfo.name.trim().take(80).ifBlank { null }; emit() } }
@@ -238,20 +251,52 @@ class PleosDriveSignals(context: Context) : DriveSignals {
                     scope.launch {
                         if (!active) return@launch
                         destination = destinationArrivedInfo.name.trim().take(80).ifBlank { destination }
-                        destinationArrivedInfo.address.trim().take(120).ifBlank { null }?.let { address = it }
+                        // A destination's POI address is route context, not a measured arrival position.
+                        requestLocation()
                         emit()
                     }
                 }
-                override fun onRouteCancelled() { scope.launch { if (active) destination = null } }
+                override fun onRouteCancelled() {
+                    scope.launch {
+                        if (!active) return@launch
+                        destination = null
+                        invalidateLocation()
+                        emit()
+                        requestLocation()
+                    }
+                }
+                override fun onError(errorCode: NaviErrorCode) {
+                    scope.launch { if (active) { invalidateNavigation(); emit() } }
+                }
             }
             naviListener = listener
-            helper.initialize(onConnected = { scope.launch { if (active) { helper.addListener(listener); requestLocation() } } }, onFailed = {})
+            helper.initialize(onConnected = {
+                scope.launch {
+                    if (!active) return@launch
+                    naviReady = true
+                    runCatching { helper.addListener(listener); requestLocation() }
+                        .onFailure { naviReady = false; invalidateNavigation(); emit() }
+                }
+            }, onFailed = {
+                scope.launch { if (active) { naviReady = false; invalidateNavigation(); emit() } }
+            })
         } catch (_: Exception) {
             navi = null
+            naviReady = false
+            invalidateNavigation()
+            emit()
         }
     }
 
-    private fun requestLocation() { runCatching { navi?.getCurrentLocationInfo() } }
+    private fun invalidateLocation() { address = null; addressAt = -1L }
+
+    private fun invalidateNavigation() { invalidateLocation(); destination = null }
+
+    private fun requestLocation() {
+        if (!naviReady) { invalidateLocation(); return }
+        runCatching { navi?.getCurrentLocationInfo() }
+            .onFailure { invalidateNavigation(); emit() }
+    }
 
     private fun emit() {
         val now = SystemClock.elapsedRealtime()
@@ -261,11 +306,13 @@ class PleosDriveSignals(context: Context) : DriveSignals {
         mutableStatus.value = if (fresh) SignalStatus.READY else gearFailure ?: odometerFailure ?:
             if (gearAt < 0 || odometerAt < 0 || waitingForParkDistance) SignalStatus.STARTING else SignalStatus.ERROR
         mutableSamples.value = DriveSample(System.currentTimeMillis(), if (fresh) gear else GearState.UNKNOWN,
-            if (fresh) distance else null, address, destination)
+            if (fresh) distance else null, freshNavigationAddress(address, if (addressAt < 0) Long.MAX_VALUE else now - addressAt), destination)
     }
 
     override fun stop() {
         active = false
+        naviReady = false
+        invalidateNavigation()
         heartbeat?.cancel(); heartbeat = null
         runCatching { properties?.unregisterCallback(gearCallback) }
         distanceListener?.let { listener -> runCatching { vehicle?.getOdometer()?.unregisterDistanceDriven(listener) } }

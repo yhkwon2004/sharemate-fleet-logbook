@@ -122,10 +122,14 @@ class TripLogRepository private constructor(context: Context) {
         else -> throw IllegalArgumentException("운행 기록을 찾지 못했어요.")
     }
 
-    suspend fun classify(id: String, purpose: TripPurpose, source: EditSource) = mutate { data ->
+    suspend fun classify(id: String, purpose: TripPurpose, source: EditSource, appendNote: String = "") = mutate { data ->
+        require(appendNote.length <= 200) { "추가 메모는 200자 이하로 입력해 주세요." }
         data.editTrip(id) { trip ->
-            if (trip.purpose == purpose && trip.purposeSource == source) trip
-            else withHistory(trip.copy(purpose = purpose, purposeSource = source), "목적 ${trip.purpose.label} → ${purpose.label} (${source.label})", System.currentTimeMillis())
+            val note = if (appendNote.isBlank()) trip.note else (trip.note + " " + appendNote.trim()).trim()
+            require(note.length <= 300) { "메모는 300자 이하로 입력해 주세요." }
+            if (trip.purpose == purpose && trip.purposeSource == source && trip.note == note) trip
+            else withHistory(trip.copy(purpose = purpose, purposeSource = source, note = note),
+                "목적 ${trip.purpose.label} → ${purpose.label} (${source.label})" + if (trip.note != note) " · 비고 추가" else "", System.currentTimeMillis())
         }
     }
 

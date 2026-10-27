@@ -102,7 +102,7 @@ internal fun advanceTrip(open: Trip?, sample: DriveSample, driverId: String?, ne
     }
     // The odometer only grows; a lower reading is a stale or faulty value and is ignored.
     val latest = if (odometer >= open.endOdometerKm) odometer else open.endOdometerKm
-    val updated = open.copy(endOdometerKm = latest, endAddress = sample.address ?: open.endAddress,
+    val updated = open.copy(endOdometerKm = latest, endAddress = if (sample.gear == GearState.PARK) sample.address else sample.address ?: open.endAddress,
         destination = sample.destination ?: open.destination, updatedAt = maxOf(open.updatedAt, sample.at))
     if (sample.gear != GearState.PARK) return listOf(TripChange.Progress(updated))
     val finished = updated.copy(endAt = maxOf(open.startAt, sample.at))
@@ -256,6 +256,19 @@ internal fun reimbursements(trips: List<Trip>, perKmWon: Long): List<Reimburseme
         val km = round1(list.sumOf { round1(it.distanceKm) })
         Reimbursement(driverId, km, BigDecimal.valueOf(km).multiply(BigDecimal.valueOf(perKmWon)).setScale(0, RoundingMode.HALF_UP).longValueExact())
     }.sortedByDescending { it.businessKm }
+}
+
+data class EmployeeUsage(val driver: Driver?, val totals: LogbookTotals, val fuelWon: Long, val reimbursementWon: Long)
+
+/** Registered expenses and company-rate estimates stay separate to avoid paying fuel twice. */
+internal fun employeeUsage(trips: List<Trip>, drivers: List<Driver>, perKmWon: Long): List<EmployeeUsage> {
+    require(perKmWon in 0..100_000)
+    val knownDrivers = drivers.associateBy { it.id }
+    return trips.filterNot { it.open }.groupBy { it.driverId?.takeIf(knownDrivers::containsKey) }.map { (id, records) ->
+        EmployeeUsage(knownDrivers[id], logbookTotals(records),
+            records.sumOf { trip -> trip.expenses.filter { it.type == ExpenseType.FUEL }.sumOf { it.amountWon } },
+            if (id == null) 0 else reimbursements(records, perKmWon).sumOf { it.amountWon })
+    }.sortedByDescending { it.totals.totalKm }
 }
 
 internal fun historyStamp(at: Long, zone: ZoneId = ZoneId.systemDefault()): String =
