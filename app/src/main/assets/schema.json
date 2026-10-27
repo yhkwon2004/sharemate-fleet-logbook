@@ -2,7 +2,7 @@
   "packageName": "ai.sharemate.app",
   "appDescription": "An automatic corporate vehicle logbook that records gear and odometer based trips, their business purposes and driving expenses.",
   "invokeWord": "운행일지",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "actionCalls": [
     {
       "type": "function",

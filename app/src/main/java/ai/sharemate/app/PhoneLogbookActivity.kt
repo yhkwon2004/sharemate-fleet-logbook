@@ -1,13 +1,12 @@
 package ai.sharemate.app
 
-import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -19,6 +18,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -31,7 +32,6 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 import java.time.Instant
-import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -111,12 +111,14 @@ class PhoneLogbookActivity : ComponentActivity() {
     val pick: () -> Unit = { importer.launch(arrayOf(LOGBOOK_MIME, "application/json", "application/octet-stream")) }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(Modifier.fillMaxSize().safeDrawingPadding()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("SHAREMATE", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                    Muted("법인차 운행 · 경비")
+                    Text("SHAREMATE", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(if (data.trips.isEmpty()) "법인차 운행 · 경비" else listOf(data.profile.plateNumber.ifBlank { "차량번호 미입력" }, data.profile.companyName).filter { it.isNotBlank() }.joinToString(" · "),
+                        style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                TextButton(onClick = pick, enabled = !busy) { Text("가져오기") }
+                OutlinedButton(onClick = pick, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), shape = RoundedCornerShape(16.dp)) { Text("파일 갱신") }
             }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (!state.loaded) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -126,24 +128,27 @@ class PhoneLogbookActivity : ComponentActivity() {
                     Text("운행일지를\n휴대폰으로 가져오세요", style = MaterialTheme.typography.headlineLarge)
                     VehicleDrawing(Modifier.fillMaxWidth().height(150.dp))
                 } }
-                Muted("차량 앱의 리포트에서 ‘휴대폰용 운행파일 저장’을 선택하세요. 파일을 이 휴대폰으로 옮긴 후 한 번만 가져오면 조회와 Excel 저장이 가능합니다.")
+                Muted("차량 앱의 월간현황에서 ‘휴대폰에서 이어 보기 · 운행파일 저장’을 선택하세요. 이 휴대폰으로 파일을 옮겨 가져오면 조회와 Excel 저장이 가능합니다.")
                 Button(onClick = pick, enabled = !busy && !state.loadFailed, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("운행파일 가져오기") }
                 if (state.loadFailed) Text("저장된 사본을 읽지 못했어요. 기존 파일을 보존하고 있습니다.", color = MaterialTheme.colorScheme.error)
             } else {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = { month = period.minusMonths(1).toString() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("‹ 이전") }
                     Text("${period.year}년 ${period.monthValue}월", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center)
                     TextButton(onClick = { month = period.plusMonths(1).toString() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("다음 ›") }
                 }
-                Muted("${data.profile.plateNumber.ifBlank { "차량번호 미입력" }} · ${data.profile.companyName}", Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
-                Text(if (data.profile.demoMode) "시연 기록 사본 · 파일로 갱신" else "가져온 기록 사본 · 파일로 갱신", style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 8.dp))
+                Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 2.dp, bottom = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.size(5.dp).background(MaterialTheme.colorScheme.onSurfaceVariant, RoundedCornerShape(50)))
+                    Text(if (data.profile.demoMode) "시연 기록 사본 · 파일로 갱신" else "가져온 기록 사본 · 파일로 갱신", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
                     Segmented(listOf("월간 요약", "운행 ${trips.size}건"), tab, Modifier.weight(1f)) { tab = it }
                 }
                 Box(Modifier.padding(horizontal = 16.dp)) {
-                    TextButton(onClick = { employeeMenu = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("$filterLabel ▾", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    TextButton(onClick = { employeeMenu = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("직원 · $filterLabel ▾", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     DropdownMenu(expanded = employeeMenu, onDismissRequest = { employeeMenu = false }) {
                         DropdownMenuItem(text = { Text("전체 직원") }, onClick = { employeeFilter = null; employeeMenu = false })
                         employees.forEach { employee ->
@@ -153,32 +158,40 @@ class PhoneLogbookActivity : ComponentActivity() {
                         }
                     }
                 }
-                if (tab == 0) Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                    SharemateTheme(compact = true, dark = true) { Panel {
-                        Box(Modifier.width(32.dp).height(3.dp).background(Color(0xFFE1B69C), RoundedCornerShape(2.dp)))
-                        Eyebrow(if (data.profile.demoMode) "시연 기록 · 월간 거리" else "이번 달 운행 거리")
-                        Text("%.1f km".format(Locale.KOREA, totals.totalKm), style = MaterialTheme.typography.displayMedium)
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                            RatioRing(totals.ratio, 112.dp, "업무 비율")
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                                Stat("업무 거리", "%.1f km".format(Locale.KOREA, totals.businessKm))
-                                Stat("완료 운행", "${totals.trips}건")
+                if (tab == 0) Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    SharemateTheme(compact = true, dark = true) {
+                        Panel(Modifier.clip(RoundedCornerShape(24.dp)).background(Brush.linearGradient(listOf(Color(0xFF302B29), Color(0xFF17191D)))), color = Color.Transparent, padding = 22.dp) {
+                            Eyebrow(if (data.profile.demoMode) "DEMO / 시연 월간 현황" else "MONTHLY / 이달의 이동", Color(0xFFE1B69C))
+                            BoxWithConstraints {
+                                val metric: @Composable (Modifier) -> Unit = { modifier ->
+                                    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("%.1f".format(Locale.KOREA, totals.totalKm), style = MaterialTheme.typography.displayMedium)
+                                        Text("km · 전체 운행", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("업무 %.1f km".format(Locale.KOREA, totals.businessKm), style = MaterialTheme.typography.labelLarge, color = Color(0xFFE1B69C))
+                                    }
+                                }
+                                if (maxWidth >= 300.dp && totals.totalKm < 10_000) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                    metric(Modifier.weight(1f))
+                                    RatioRing(totals.ratio, 100.dp, "업무 비율")
+                                } else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                    metric(Modifier.fillMaxWidth())
+                                    RatioRing(totals.ratio, 100.dp, "업무 비율")
+                                }
+                            }
+                            HorizontalDivider(color = Color.White.copy(alpha = .12f))
+                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Stat("완료 운행", "${totals.trips}건", Modifier.weight(1f))
+                                Stat("등록 경비", formatWon(totals.expenseWon), Modifier.weight(1f))
                             }
                         }
-                    } }
-                    Panel {
-                        Eyebrow("운행 목적")
-                        listOf("출·퇴근" to totals.commuteKm, "일반 업무" to totals.generalKm, "개인" to totals.personalKm, "미분류" to totals.unclassifiedKm).forEach { (label, km) ->
-                            Row { Text(label, Modifier.weight(1f)); Text("%.1f km".format(Locale.KOREA, km), fontWeight = FontWeight.SemiBold) }
-                        }
                     }
-                    Panel {
-                        Eyebrow("경비 · 정산 참고")
-                        Text(formatWon(totals.expenseWon), style = MaterialTheme.typography.headlineLarge)
+                    Panel(padding = 22.dp) {
+                        Eyebrow("등록 경비 · 종류별 내역")
                         ExpenseType.entries.forEach { type ->
-                            Row {
+                            val amount = trips.sumOf { trip -> trip.expenses.filter { it.type == type }.sumOf { it.amountWon } }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(type.label, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text(formatWon(trips.sumOf { trip -> trip.expenses.filter { it.type == type }.sumOf { it.amountWon } }))
+                                Text(formatWon(amount), style = MaterialTheme.typography.titleMedium)
                             }
                         }
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -188,7 +201,16 @@ class PhoneLogbookActivity : ComponentActivity() {
                         } else Muted("차량에서 km당 지급 단가를 설정하면 업무 거리 정산액을 함께 볼 수 있어요.")
                         Muted("입력한 경비 내역입니다. 영수증·회사 지급 기준은 별도로 확인하세요.")
                     }
-                    if (employees.isNotEmpty()) Panel {
+                    Panel(padding = 22.dp) {
+                        Eyebrow("운행 목적별 거리")
+                        listOf("출·퇴근" to totals.commuteKm, "일반 업무" to totals.generalKm, "개인" to totals.personalKm, "미분류" to totals.unclassifiedKm).forEach { (label, km) ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(label, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("%.1f km".format(Locale.KOREA, km), style = MaterialTheme.typography.titleMedium)
+                            }
+                        }
+                    }
+                    if (employees.isNotEmpty()) Panel(padding = 22.dp) {
                         Eyebrow("이번 달 전체 직원 · 선택하면 운행 보기")
                         employees.forEach { employee ->
                             Surface(onClick = { employeeFilter = employee.driver?.id.orEmpty(); tab = 1 }, shape = RoundedCornerShape(14.dp), color = Color.Transparent) {
@@ -204,21 +226,25 @@ class PhoneLogbookActivity : ComponentActivity() {
                     }
                     Muted("Excel에는 선택한 월 · $filterLabel 기록과 직원별 요약, 경비·검토 내역을 담아요. 신고·지급 확정 자료가 아니에요.")
                     Muted("최신 기록은 차량에서 새 파일을 가져와 갱신하세요. 자동 동기화 기능은 아직 제공하지 않아요.")
-                } else LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 24.dp), contentPadding = PaddingValues(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                } else LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 20.dp), contentPadding = PaddingValues(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (trips.isEmpty()) item { Muted("이 달의 운행이 없어요. 다른 달을 선택해 주세요.") }
                     items(trips.reversed(), key = { it.id }) { trip ->
-                        Surface(onClick = { selected = trip }, shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surface) {
+                        Surface(onClick = { selected = trip }, shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))) {
                             Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Column(Modifier.weight(1f)) {
-                                        Text(Instant.ofEpochMilli(trip.startAt).atZone(zone).format(DateTimeFormatter.ofPattern("M월 d일 · HH:mm")), style = MaterialTheme.typography.labelMedium)
-                                        Text("%.1f km".format(Locale.KOREA, trip.distanceKm), style = MaterialTheme.typography.headlineMedium)
-                                    }
+                                    Text(Instant.ofEpochMilli(trip.startAt).atZone(zone).format(DateTimeFormatter.ofPattern("M월 d일 · HH:mm")),
+                                        Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     PurposeChip(trip.purpose)
                                 }
-                                Text(data.drivers.firstOrNull { it.id == trip.driverId }?.label ?: "직원 미지정", style = MaterialTheme.typography.labelMedium)
+                                Text("%.1f km".format(Locale.KOREA, trip.distanceKm), style = MaterialTheme.typography.headlineLarge)
                                 Text(trip.destination ?: trip.endAddress ?: "주소 미기록", maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                if (trip.expenses.isNotEmpty()) Muted("기록 경비 ${formatWon(trip.expenseWon)}")
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Text(data.drivers.firstOrNull { it.id == trip.driverId }?.label ?: "직원 미지정", Modifier.weight(1f),
+                                        style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(if (trip.expenses.isNotEmpty()) formatWon(trip.expenseWon) else "상세 보기  ›", style = MaterialTheme.typography.labelMedium)
+                                }
                             }
                         }
                     }

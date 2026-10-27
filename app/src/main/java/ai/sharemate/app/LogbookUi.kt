@@ -25,9 +25,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -254,16 +256,19 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 
 @Composable private fun NavRail(labels: List<String>, badges: List<Int>, selected: Int, onSelect: (Int) -> Unit) {
     val colors = MaterialTheme.colorScheme
-    val pleos = LocalPleosColors.current
-    Column(Modifier.width(128.dp).fillMaxHeight().padding(start = 20.dp, top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val icons = listOf(R.drawable.ic_dashboard, R.drawable.ic_journal, R.drawable.ic_report, R.drawable.ic_tune)
+    Column(Modifier.width(128.dp).fillMaxHeight().padding(start = 20.dp, top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         labels.forEachIndexed { index, label ->
             val active = index == selected
-            Box(Modifier.fillMaxWidth().heightIn(min = 76.dp).clip(RoundedCornerShape(22.dp))
-                .background(if (active) colors.surface else Color.Transparent)
+            Box(Modifier.fillMaxWidth().heightIn(min = 104.dp).clip(RoundedCornerShape(22.dp))
+                .background(if (active) colors.primary else Color.Transparent)
                 .semantics { this.selected = active; role = Role.Tab }.clickable { onSelect(index) }, contentAlignment = Alignment.Center) {
-                Text(label, style = MaterialTheme.typography.titleMedium, color = if (active) colors.onSurface else colors.onSurfaceVariant)
-                if (badges[index] > 0) Box(Modifier.align(Alignment.TopEnd).padding(10.dp).size(24.dp).clip(CircleShape).background(pleos.negative), contentAlignment = Alignment.Center) {
-                    Text("${badges[index].coerceAtMost(99)}", style = MaterialTheme.typography.labelSmall, color = Color.White)
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(painterResource(icons[index]), contentDescription = null, modifier = Modifier.size(28.dp), tint = if (active) colors.onPrimary else colors.onSurfaceVariant)
+                    Text(label, style = MaterialTheme.typography.labelLarge, color = if (active) colors.onPrimary else colors.onSurfaceVariant)
+                }
+                if (badges[index] > 0) Box(Modifier.align(Alignment.TopEnd).padding(8.dp).size(24.dp).clip(CircleShape).background(colors.errorContainer), contentAlignment = Alignment.Center) {
+                    Text("${badges[index].coerceAtMost(99)}", style = MaterialTheme.typography.labelSmall, color = colors.onErrorContainer)
                 }
             }
         }
@@ -272,13 +277,12 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 
 @Composable internal fun Segmented(labels: List<String>, selected: Int, modifier: Modifier = Modifier, onSelect: (Int) -> Unit) {
     val colors = MaterialTheme.colorScheme
-    val pleos = LocalPleosColors.current
     Row(modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(colors.surface).padding(5.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
         labels.forEachIndexed { index, label ->
             val active = index == selected
-            Box(Modifier.weight(1f).heightIn(min = 56.dp).clip(RoundedCornerShape(16.dp)).background(if (active) pleos.surfaceAccent else Color.Transparent)
+            Box(Modifier.weight(1f).heightIn(min = 56.dp).clip(RoundedCornerShape(16.dp)).background(if (active) colors.primary else Color.Transparent)
                 .semantics { this.selected = active; role = Role.Tab }.clickable { onSelect(index) }, contentAlignment = Alignment.Center) {
-                Text(label, style = MaterialTheme.typography.labelLarge, color = if (active) colors.onSurface else colors.onSurfaceVariant,
+                Text(label, style = MaterialTheme.typography.labelLarge, color = if (active) colors.onPrimary else colors.onSurfaceVariant,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 8.dp))
             }
         }
@@ -286,7 +290,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 }
 
 @Composable internal fun Panel(modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.surface, padding: Dp = 28.dp, content: @Composable ColumnScope.() -> Unit) {
-    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = color,
+    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = color, contentColor = MaterialTheme.colorScheme.onSurface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))) {
         Column(Modifier.padding(padding), verticalArrangement = Arrangement.spacedBy(16.dp), content = content)
     }
@@ -312,18 +316,20 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 @Composable internal fun Stat(label: String, value: String, modifier: Modifier = Modifier, valueColor: Color = MaterialTheme.colorScheme.onSurface, large: Boolean = false) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = if (large) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleLarge, color = valueColor, maxLines = 1)
+        Text(value, style = (if (large) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleLarge).copy(fontFeatureSettings = "tnum"), color = valueColor)
     }
 }
 
 @Composable internal fun PurposeChip(purpose: TripPurpose) {
-    val color = purposeColor(purpose)
-    Surface(shape = RoundedCornerShape(14.dp), color = color.copy(alpha = .16f)) {
-        Text(purpose.label, style = MaterialTheme.typography.labelMedium, color = when (purpose) {
-            TripPurpose.PERSONAL -> MaterialTheme.colorScheme.onSurface
-            TripPurpose.BUSINESS -> MaterialTheme.colorScheme.onTertiaryContainer
-            else -> color
-        },
+    val colors = MaterialTheme.colorScheme
+    val (container, text) = when (purpose) {
+        TripPurpose.COMMUTE -> colors.secondaryContainer to colors.onSecondaryContainer
+        TripPurpose.BUSINESS -> colors.tertiaryContainer to colors.onTertiaryContainer
+        TripPurpose.UNCLASSIFIED -> colors.errorContainer to colors.onErrorContainer
+        TripPurpose.PERSONAL -> colors.surfaceVariant to colors.onSurfaceVariant
+    }
+    Surface(shape = RoundedCornerShape(12.dp), color = container) {
+        Text(purpose.label, style = MaterialTheme.typography.labelMedium, color = text,
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp), maxLines = 1)
     }
 }
@@ -332,7 +338,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     val pleos = LocalPleosColors.current
     Box(Modifier.size(diameter).semantics { contentDescription = "$caption ${ratioText(ratio)}" }, contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
-            val stroke = size.minDimension * .075f
+            val stroke = size.minDimension * .045f
             val inset = stroke / 2
             val arc = Size(size.width - stroke, size.height - stroke)
             drawArc(pleos.surfaceHigh, -90f, 360f, false, Offset(inset, inset), arc, style = Stroke(stroke, cap = StrokeCap.Round))
@@ -368,26 +374,34 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
             setupNeeded -> SetupCard(data, goSettings) { openDriver(null) }
             else -> Panel {
                 val driver = data.drivers.firstOrNull { it.id == data.currentDriverId }
-                Eyebrow("CURRENT DRIVER / 이용 직원")
-                Text(driver?.label ?: "직원을 선택해 주세요", style = MaterialTheme.typography.headlineMedium)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Box(Modifier.size(60.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+                        Text(driver?.name?.take(1) ?: "–", style = MaterialTheme.typography.headlineSmall)
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Eyebrow("현재 이용 직원")
+                        Text(driver?.label ?: "직원을 선택해 주세요", style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 val mine = data.trips.filter { it.driverId == data.currentDriverId }.filter { localDate(it.startAt) == localDate(now) }
                 Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                     Stat("오늘 직원 운행", "${mine.size}건", Modifier.weight(1f))
                     Stat("오늘 등록 경비", formatWon(mine.sumOf { it.expenseWon }), Modifier.weight(1f))
                 }
-                Muted("목적 확인 완료 · 다음 운행도 자동으로 기록합니다.")
+                Text("목적 확인 완료 · 다음 운행도 자동 기록", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
-    if (wide) Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-        Column(Modifier.weight(1.08f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-            StatusHero(state, now, false, requestPermissions)
-            MonthCard(data, now)
+    if (wide) Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+            Box(Modifier.weight(1.12f)) { StatusHero(state, now, false, requestPermissions) }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                task()
+                HomeActions(data, navigate, expense)
+            }
         }
-        Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-            task()
-            HomeActions(data, navigate, expense)
-        }
+        MonthCard(data, now)
     } else Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         StatusHero(state, now, true, requestPermissions)
         task()
@@ -398,10 +412,25 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 
 @Composable private fun HomeActions(data: TripLogData, navigate: (Int) -> Unit, expense: () -> Unit) {
     Panel {
-        Eyebrow("운행 관리, 한곳에서")
-        QuietAction("운행기록 · 직원과 이동 내역", Modifier.fillMaxWidth()) { navigate(1) }
-        QuietAction("경비 등록 · 최근 운행에 연결", Modifier.fillMaxWidth(), enabled = data.trips.isNotEmpty(), onClick = expense)
-        PrimaryAction("이번 달 현황 · Excel", Modifier.fillMaxWidth()) { navigate(2) }
+        Eyebrow("빠른 관리")
+        HomeActionRow("운행기록", "직원별 이동 내역", R.drawable.ic_journal) { navigate(1) }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        HomeActionRow("경비 등록", "최근 운행에 연결", R.drawable.ic_receipt, data.trips.isNotEmpty(), expense)
+        PrimaryAction("월간 현황 · Excel 내보내기", Modifier.fillMaxWidth()) { navigate(2) }
+    }
+}
+
+@Composable private fun HomeActionRow(title: String, subtitle: String, icon: Int, enabled: Boolean = true, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+        .heightIn(min = 72.dp).padding(horizontal = 4.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+        Icon(painterResource(icon), null, Modifier.size(28.dp), tint = colors.onSurfaceVariant)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, color = if (enabled) colors.onSurface else colors.onSurfaceVariant)
+            Text(if (enabled) subtitle else "첫 운행을 마친 뒤 등록", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+        }
+        Text("›", style = MaterialTheme.typography.headlineSmall, color = colors.onSurfaceVariant)
     }
 }
 
@@ -413,8 +442,14 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     val moving by DemoDrive.moving.collectAsState()
     SharemateTheme(dark = true) {
     val pleos = LocalPleosColors.current
-    Panel(padding = if (compact) 24.dp else 32.dp) {
-        Eyebrow("YOUR BUSINESS, IN MOTION", Color(0xFFE4BFA6))
+    Surface(shape = RoundedCornerShape(24.dp), color = Color(0xFF1D1E21), border = BorderStroke(1.dp, Color.White.copy(alpha = .08f))) {
+    Column(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(Color(0xFF29282A), Color(0xFF17181B))))
+        .padding(if (compact) 24.dp else 32.dp), verticalArrangement = Arrangement.spacedBy(if (compact) 16.dp else 22.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Eyebrow("FLEET JOURNAL", Color(0xFFE4BFA6))
+            Spacer(Modifier.weight(1f))
+            Text(if (demo) "시연 데이터" else "차량 데이터", style = MaterialTheme.typography.labelMedium, color = Color(0xFFC7C9CE))
+        }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(Modifier.size(14.dp).clip(CircleShape).background(if (open != null) pleos.active else if (state.signal == SignalStatus.READY || demo) pleos.active.copy(alpha = .5f) else pleos.negative))
             Text(if (state.error != null || state.loadFailed) "기록 저장 확인 필요" else if (state.signal !in setOf(SignalStatus.READY, SignalStatus.DEMO)) state.signal.label else if (open != null) "운행 기록 중" else if (demo) "시연 모드 · 자동 기록 대기" else state.signal.label, style = MaterialTheme.typography.titleLarge)
@@ -422,10 +457,14 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Column(Modifier.weight(1.1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Eyebrow(if (open != null) "이번 운행" else "오늘 주행거리")
-                Text(kmText(open?.distanceKm ?: todayKm), style = MaterialTheme.typography.displaySmall.copy(fontFeatureSettings = "tnum"), maxLines = 1)
+                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(String.format(Locale.KOREA, "%,.1f", open?.distanceKm ?: todayKm), style = (if (compact) MaterialTheme.typography.displayMedium else MaterialTheme.typography.displayLarge)
+                        .copy(fontFeatureSettings = "tnum"), maxLines = 1)
+                    Text("km", style = MaterialTheme.typography.titleMedium, color = Color(0xFFC7C9CE), modifier = Modifier.padding(bottom = 10.dp))
+                }
                 Muted(if (open != null) "${hm(open.startAt)} 출발 · ${durationText(now - open.startAt)}" else dayLabel(today))
             }
-            if (!compact) VehicleDrawing(Modifier.weight(1f).height(184.dp))
+            if (!compact) VehicleDrawing(Modifier.weight(1.1f).height(234.dp))
         }
         HorizontalDivider(color = pleos.surfaceHigh)
         Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
@@ -435,7 +474,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
         if (open == null) {
             Muted(when {
                 demo -> "시연 주행은 15배속으로 기록되고 ‘시연 데이터’로 구분돼요."
-                state.signal == SignalStatus.READY -> "D 출발 → 자동 기록 · P 주차 → 저장. 운행 후 목적만 확인하세요."
+                state.signal == SignalStatus.READY -> "출발하면 자동 기록, 주차하면 저장돼요."
                 state.signal == SignalStatus.DENIED -> "계기판 누적거리를 읽으려면 차량 정보 권한이 필요해요."
                 state.signal == SignalStatus.STARTING -> "차량과 연결하고 있어요."
                 else -> "차량 데이터를 받을 수 없어요. 연결 상태를 확인해 주세요."
@@ -443,6 +482,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
         }
         if (state.signal == SignalStatus.DENIED) PrimaryAction("차량 정보 권한 허용", onClick = requestPermissions)
         if (demo) PrimaryAction(if (moving) "시연 주차 (P)" else "시연 출발 (D)", Modifier.fillMaxWidth()) { DemoDrive.setMoving(!moving) }
+    }
     }
     }
 }
@@ -466,11 +506,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                 }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            purposeChoices.forEach { purpose ->
-                PurposeTile(purpose, Modifier.weight(1f)) { act { repository.classify(trip.id, purpose, EditSource.DRIVER) } }
-            }
-        }
+        PurposeOptions { purpose -> act { repository.classify(trip.id, purpose, EditSource.DRIVER) } }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Muted("사용자  ${driver?.label ?: "미지정"}", Modifier.weight(1f))
             TextButton(onClick = { openDriver(trip.id) }, modifier = Modifier.heightIn(min = 56.dp)) { Text("변경") }
@@ -487,6 +523,22 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
             Box(Modifier.size(10.dp).clip(CircleShape).background(color))
             Text(purpose.label, style = MaterialTheme.typography.titleMedium, maxLines = 1)
             Text(caption, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable private fun PurposeOptions(selected: TripPurpose? = null, onSelect: (TripPurpose) -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (maxWidth < 480.dp) Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            purposeChoices.forEach { purpose ->
+                Surface(onClick = { onSelect(purpose) }, shape = RoundedCornerShape(16.dp),
+                    color = if (purpose == selected) MaterialTheme.colorScheme.primary else LocalPleosColors.current.surfaceHigh,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).semantics { this.selected = purpose == selected }) {
+                    Text(purpose.label, style = MaterialTheme.typography.titleSmall, textAlign = TextAlign.Center, modifier = Modifier.padding(16.dp))
+                }
+            }
+        } else Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            purposeChoices.forEach { purpose -> PurposeTile(purpose, Modifier.weight(1f), purpose == selected) { onSelect(purpose) } }
         }
     }
 }
@@ -520,23 +572,30 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     val trips = tripsIn(data.trips, today.withDayOfMonth(1), today, zone)
     val totals = logbookTotals(trips)
     Panel {
-        Eyebrow("${today.monthValue}월 운행기록부")
-        BoxWithConstraints {
-        val diameter = if (maxWidth < 450.dp) 112.dp else 156.dp
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-            RatioRing(totals.ratio, diameter, "업무사용비율")
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Stat("총주행 거리 ⑪", kmText(totals.totalKm))
-                Stat("업무용 사용거리 ⑫", kmText(totals.businessKm), valueColor = MaterialTheme.colorScheme.onTertiaryContainer)
-                Stat("운행", "${totals.trips}건")
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Eyebrow("${today.monthValue}월 한눈에 보기")
+            Spacer(Modifier.weight(1f))
+            Text("${totals.trips}건 · 직원 ${trips.mapNotNull { it.driverId }.distinct().size}명", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val diameter = if (maxWidth < 450.dp) 112.dp else 140.dp
+            if (maxWidth >= 900.dp) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(40.dp)) {
+                RatioRing(totals.ratio, 140.dp, "업무사용비율")
+                Stat("총주행 거리", kmText(totals.totalKm), Modifier.weight(1f), large = true)
+                Stat("업무용 거리", kmText(totals.businessKm), Modifier.weight(1f), valueColor = MaterialTheme.colorScheme.onTertiaryContainer, large = true)
+                Stat("등록 경비", formatWon(totals.expenseWon), Modifier.weight(1f), large = true)
+            } else Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                    RatioRing(totals.ratio, diameter, "업무사용비율")
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Stat("총주행 거리", kmText(totals.totalKm))
+                        Stat("업무용 거리", kmText(totals.businessKm), valueColor = MaterialTheme.colorScheme.onTertiaryContainer)
+                    }
+                }
+                Stat("등록 경비", formatWon(totals.expenseWon))
             }
         }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-            Stat("등록 경비", formatWon(totals.expenseWon), Modifier.weight(1f))
-            Stat("이용 직원", "${trips.mapNotNull { it.driverId }.distinct().size}명", Modifier.weight(1f))
-        }
-        Muted(when { trips.isEmpty() -> "이번 달 운행이 아직 없어요."; trips.any { it.purpose == TripPurpose.UNCLASSIFIED } -> "미분류 운행은 업무 합계에서 제외돼요. 목적을 확인해 주세요."; else -> "모든 운행이 분류됐어요. 리포트에서 Excel로 저장할 수 있어요." })
+        Text(when { trips.isEmpty() -> "이번 달 운행이 아직 없어요."; trips.any { it.purpose == TripPurpose.UNCLASSIFIED } -> "미분류 운행은 업무 합계에서 제외돼요. 목적을 확인해 주세요."; else -> "모든 운행의 목적을 확인했어요. 월간 현황에서 Excel로 저장하세요." }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -576,9 +635,9 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     val selected = all.firstOrNull { it.id == selectedId }
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            QuietAction("‹", Modifier.width(64.dp)) { month = period.minusMonths(1).toString() }
+            QuietAction("‹", Modifier.width(64.dp).semantics { contentDescription = "이전 달" }) { month = period.minusMonths(1).toString() }
             Text("${period.year}년 ${period.monthValue}월", style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center, modifier = Modifier.widthIn(min = 180.dp))
-            QuietAction("›", Modifier.width(64.dp), enabled = period < YearMonth.from(localDate(now))) { month = period.plusMonths(1).toString() }
+            QuietAction("›", Modifier.width(64.dp).semantics { contentDescription = "다음 달" }, enabled = period < YearMonth.from(localDate(now))) { month = period.plusMonths(1).toString() }
             Spacer(Modifier.weight(1f))
             if (wide) Muted("총 ${kmText(totals.totalKm)} · 업무 ${ratioText(totals.ratio)} · ${totals.trips}건")
         }
@@ -719,11 +778,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
             Stat("도착", listOfNotNull(trip.destination, trip.endAddress).distinct().joinToString(" · ").ifBlank { if (trip.open) "기록 중" else "주소 미기록" })
         }
         Eyebrow("운행 목적")
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            purposeChoices.forEach { purpose ->
-                PurposeTile(purpose, Modifier.weight(1f), selected = trip.purpose == purpose) { act { repository.classify(trip.id, purpose, EditSource.DRIVER) } }
-            }
-        }
+        PurposeOptions(trip.purpose) { purpose -> act { repository.classify(trip.id, purpose, EditSource.DRIVER) } }
         trip.purposeSource?.let { Muted("목적: ${trip.purpose.label} · ${it.label}") }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Stat("④ 사용자", driver?.label ?: "미지정", Modifier.weight(1f))
