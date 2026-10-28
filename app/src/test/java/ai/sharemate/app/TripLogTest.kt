@@ -25,6 +25,21 @@ class TripLogTest {
         assertEquals("판교", finished.trip.endAddress)
     }
 
+    @Test fun bulkCandidatesAreSameDayUnclassifiedClosedTripsOfTheSameDataSet() {
+        val day = LocalDate.of(2026, 10, 27).atStartOfDay(zone).toInstant().toEpochMilli()
+        val classified = trip("done", day + 3_600_000, 100.0, 110.0, TripPurpose.BUSINESS)
+        val later = trip("b", day + 7_200_000, 110.0, 120.0, TripPurpose.UNCLASSIFIED)
+        val earlier = trip("a", day + 1_800_000, 95.0, 100.0, TripPurpose.UNCLASSIFIED)
+        val excluded = listOf(
+            trip("c", day + 5_000_000, 120.0, 130.0),
+            trip("demo", day + 5_000_000, 1.0, 2.0, TripPurpose.UNCLASSIFIED).copy(demo = true),
+            trip("yesterday", day - 3_600_000, 90.0, 95.0, TripPurpose.UNCLASSIFIED),
+            Trip("open", day + 9_000_000, null, 130.0, 131.0, purpose = TripPurpose.UNCLASSIFIED),
+        )
+        assertEquals(listOf("a", "b"), bulkClassifyCandidates(listOf(classified, later, earlier) + excluded, classified, zone).map { it.id })
+        assertTrue(bulkClassifyCandidates(listOf(classified), classified, zone).isEmpty())
+    }
+
     @Test fun noTripWithoutOdometerOrWhileParked() {
         assertTrue(advanceTrip(null, sample(1, GearState.MOVING, null), null, newId).isEmpty())
         assertTrue(advanceTrip(null, sample(1, GearState.PARK, 10.0), null, newId).isEmpty())

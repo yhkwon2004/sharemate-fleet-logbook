@@ -1,5 +1,9 @@
 package ai.sharemate.app
 
+import android.provider.Settings
+import androidx.compose.animation.core.FiniteAnimationSpec
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
@@ -11,8 +15,11 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
@@ -57,6 +64,8 @@ data class PleosColors(
     val active: Color, val positive: Color, val negative: Color,
     val gleoBubble: Color, val gleoBubbleSecondary: Color, val gleoSpeaker: Color, val gleoSurface: Color,
     val surfaceHigh: Color, val surfaceAccent: Color, val textTertiary: Color,
+    // Rings, bars and dots need 3:1 against surfaces (WCAG 1.4.11); the day-mode active token alone falls short.
+    val chartActive: Color,
 )
 
 // Grayscale basic_00..basic_900 and informative tokens from the Pleos Connect design guide (Foundations > Colors).
@@ -64,12 +73,33 @@ private val DarkPleos = PleosColors(
     active = Color(0xFF00E074), positive = Color(0xFF0082FF), negative = Color(0xFFFF4C28),
     gleoBubble = Color(0xFF545F93), gleoBubbleSecondary = Color(0xFF3E4976), gleoSpeaker = Color(0xFFB6C1F3), gleoSurface = Color(0xFF44464E),
     surfaceHigh = Color(0xFF313236), surfaceAccent = Color(0xFF44464E), textTertiary = Color(0xFFA4A8AE),
+    chartActive = Color(0xFF00E074),
 )
 private val LightPleos = PleosColors(
     active = Color(0xFF02C265), positive = Color(0xFF0064FF), negative = Color(0xFFFE3D16),
     gleoBubble = Color(0xFF9BA8E2), gleoBubbleSecondary = Color(0xFF8896D3), gleoSpeaker = Color(0xFF3F4B81), gleoSurface = Color(0xFFFFFFFF),
     surfaceHigh = Color(0xFFEDEEF2), surfaceAccent = Color(0xFFE0E1E6), textTertiary = Color(0xFF686A72),
+    chartActive = Color(0xFF008A4B),
 )
+
+/** True when the system animator scale is off, so page fades snap instead of animating (reduced motion). */
+val LocalReduceMotion = staticCompositionLocalOf { false }
+
+@Composable
+fun rememberReduceMotion(): Boolean {
+    val context = LocalContext.current
+    return remember(context) {
+        runCatching { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) }.getOrDefault(1f) <= 0f
+    }
+}
+
+/** Page transition for parked screens: 160 ms fade, or an immediate switch when motion is reduced. */
+@Composable
+fun <T> pageFade(): FiniteAnimationSpec<T> = if (LocalReduceMotion.current) snap() else tween(160)
+
+/** Caps display-size numbers so a 1.3x+ font scale still fits one line on the car window. */
+@Composable
+fun scaledDisplay(large: TextStyle, smaller: TextStyle): TextStyle = if (LocalDensity.current.fontScale > 1.25f) smaller else large
 
 // Neutral, high-contrast primary like Pleos filled buttons; color is kept for status only.
 private val DarkColors: ColorScheme = darkColorScheme(
@@ -114,7 +144,7 @@ val LocalPleosColors = staticCompositionLocalOf { DarkPleos }
 /** Follows the vehicle day/night mode, as Pleos Connect adjusts brightness and contrast to lighting. */
 @Composable
 fun SharemateTheme(compact: Boolean = false, dark: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
-    CompositionLocalProvider(LocalPleosColors provides if (dark) DarkPleos else LightPleos) {
+    CompositionLocalProvider(LocalPleosColors provides if (dark) DarkPleos else LightPleos, LocalReduceMotion provides rememberReduceMotion()) {
         MaterialTheme(
             colorScheme = if (dark) DarkColors else LightColors,
             typography = if (!compact) CarTypography else CarTypography.copy(

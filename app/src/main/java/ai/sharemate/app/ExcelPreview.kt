@@ -14,6 +14,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,7 +45,8 @@ internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate,
     val rowsPerPage = ((maxHeight.value - if (compact) 340 else 470) / if (compact) 64 else 72).toInt().coerceIn(1, if (compact) 3 else 6)
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("업무용승용차 운행기록부", style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge)
+            Text("업무용승용차 운행기록부", style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
+                modifier = Modifier.semantics { heading() })
             Text(if (data.profile.demoMode) "시연 데이터 · 제출용이 아닙니다" else "${data.profile.companyName.ifBlank { "법인명 미입력" }} · ${data.profile.plateNumber.ifBlank { "차량번호 미입력" }}",
                 style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }

@@ -159,9 +159,29 @@ class TripLogRepository private constructor(context: Context) {
         }
     }
 
+    /** Applies one purpose to several closed trips in a single save, e.g. "the other N unclassified trips too". */
+    suspend fun classifyMany(ids: Collection<String>, purpose: TripPurpose, source: EditSource) = mutate { data ->
+        val targets = ids.toSet()
+        val now = System.currentTimeMillis()
+        data.copy(trips = data.trips.map { trip ->
+            if (trip.id !in targets || trip.open || trip.purpose == purpose) trip
+            else withHistory(trip.copy(purpose = purpose, purposeSource = source), "목적 ${trip.purpose.label} → ${purpose.label} (${source.label} · 일괄)", now)
+        })
+    }
+
     suspend fun deleteTrip(id: String) = mutate { data ->
         require(data.open?.id != id) { "기록 중인 운행은 삭제할 수 없어요." }
         data.copy(trips = data.trips.filterNot { it.id == id })
+    }
+
+    /** Puts back a trip removed by [deleteTrip] (undo); a trip with the same id is never duplicated. */
+    suspend fun restoreTrip(trip: Trip) = mutate { data ->
+        require(!trip.open) { "기록 중인 운행은 되돌릴 수 없어요." }
+        if (data.trips.any { it.id == trip.id }) data
+        else {
+            require(data.trips.size < MAX_TRIPS) { "운행기록이 20,000건에 도달했어요. 먼저 기록을 내보내 주세요." }
+            data.copy(trips = (data.trips + withHistory(trip, "삭제 취소", System.currentTimeMillis())).sortedWith(compareBy({ it.startAt }, { it.startOdometerKm })))
+        }
     }
 
     suspend fun fillGap(previousId: String, nextId: String) = mutate { data ->

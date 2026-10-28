@@ -1,0 +1,17 @@
+<resources>
+    <style name="Theme.SHAREMATE" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#131417</item>
+        <item name="android:navigationBarColor">#131417</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:colorAccent">#0082FF</item>
+        <item name="android:windowBackground">#131417</item>
+    </style>
+    <style name="Theme.SHAREMATE.Launcher" parent="Theme.SHAREMATE">
+        <item name="android:windowBackground">@drawable/launch_background</item>
+        <item name="android:statusBarColor">#17181B</item>
+        <item name="android:navigationBarColor">#17181B</item>
+    </style>
+</resources>

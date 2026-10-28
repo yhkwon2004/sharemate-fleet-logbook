@@ -6,7 +6,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -160,7 +159,7 @@ class PhoneLogbookActivity : ComponentActivity() {
                         }
                     }
                 }
-                Crossfade(targetState = tab, modifier = Modifier.weight(1f).fillMaxWidth(), animationSpec = tween(160), label = "phoneSection") { section ->
+                Crossfade(targetState = tab, modifier = Modifier.weight(1f).fillMaxWidth(), animationSpec = pageFade(), label = "phoneSection") { section ->
                 if (section == 0) Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     SharemateTheme(compact = true, dark = true) {
                         Panel(Modifier.clip(RoundedCornerShape(24.dp)).background(Brush.linearGradient(listOf(Color(0xFF302B29), Color(0xFF17191D)))), color = Color.Transparent, padding = 22.dp) {

@@ -154,6 +154,15 @@ internal fun gapTrip(previous: Trip, next: Trip, id: String, now: Long): Trip = 
     origin = TripOrigin.GAP_FILL, demo = previous.demo, history = listOf("${historyStamp(now)} 누적거리 연속성으로 누락 구간 추가"), updatedAt = now,
 )
 
+/** Other closed, unclassified trips on the same day and data set as [classified], oldest first; offered for bulk classification. */
+internal fun bulkClassifyCandidates(trips: List<Trip>, classified: Trip, zone: ZoneId): List<Trip> {
+    val day = Instant.ofEpochMilli(classified.startAt).atZone(zone).toLocalDate()
+    return trips.filter {
+        it.id != classified.id && !it.open && it.demo == classified.demo && it.purpose == TripPurpose.UNCLASSIFIED &&
+            Instant.ofEpochMilli(it.startAt).atZone(zone).toLocalDate() == day
+    }.sortedBy { it.startAt }
+}
+
 internal fun suggestPurpose(trip: Trip, history: List<Trip>): Trip? {
     val key = trip.destination?.takeIf { it.isNotBlank() } ?: trip.endAddress?.takeIf { it.isNotBlank() } ?: return null
     return history.filter { it.id != trip.id && !it.open && it.purpose != TripPurpose.UNCLASSIFIED && it.purposeSource != EditSource.SUGGESTED &&
