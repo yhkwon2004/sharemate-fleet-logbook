@@ -108,4 +108,37 @@ class LogbookExportTest {
         assertFalse(entries.values.any { it.contains("<f>") })
         File("build/outputs/logbook-demo/SHAREMATE-evidence.xlsx").apply { requireNotNull(parentFile).mkdirs(); writeBytes(bytes) }
     }
+
+    @Test fun previewRowsMatchEveryExportedSheetIncludingExpensesAndMissingDriverChecks() {
+        val original = fixture()
+        val trips = original.trips.mapIndexed { index, trip -> when (index) {
+            0 -> trip.copy(expenses = listOf(TripExpense(ExpenseType.FUEL, 55_000, trip.startAt, EditSource.DRIVER)))
+            1 -> trip.copy(driverId = null, purpose = TripPurpose.UNCLASSIFIED)
+            else -> trip
+        } }
+        val ignored = listOf(trips.first().copy(id = "open", endAt = null), trips.first().copy(id = "real", demo = false),
+            trips.first().copy(id = "outside", startAt = Instant.parse("2026-09-01T00:00:00Z").toEpochMilli()))
+        val from = LocalDate.of(2026, 10, 1); val to = LocalDate.of(2026, 10, 31); val zone = ZoneId.of("Asia/Seoul")
+        val sheets = logbookSheets(original.profile, from, to, trips + ignored, original.drivers, zone)
+        assertEquals(listOf("운행기록부", "직원별 현황", "경비원장", "확인사항"), sheets.map { it.name })
+        assertEquals(3, sheets[0].rows.size)
+        assertEquals(55_000L, sheets[2].rows.single()[5])
+        assertTrue(sheets[3].rows.any { it[0] == IssueType.NO_DRIVER.label })
+        val entries = mutableMapOf<String, ByteArray>()
+        ZipInputStream(ByteArrayInputStream(logbookXlsx(original.profile, from, to, trips + ignored, original.drivers, zone))).use { zip ->
+            while (true) { val entry = zip.nextEntry ?: break; entries[entry.name] = zip.readBytes() }
+        }
+        sheets.forEachIndexed { sheetIndex, sheet ->
+            val xml = DocumentBuilderFactory.newInstance().newDocumentBuilder()
+                .parse(ByteArrayInputStream(entries.getValue("xl/worksheets/sheet${sheetIndex + 1}.xml")))
+            val nodes = xml.getElementsByTagName("row")
+            val byNumber = (0 until nodes.length).map { nodes.item(it) as org.w3c.dom.Element }.associateBy { it.getAttribute("r").toInt() }
+            (listOf(sheet.columns) + sheet.rows).forEachIndexed { rowIndex, row ->
+                val cells = byNumber.getValue(rowIndex + 5).getElementsByTagName("c")
+                assertEquals(row.size, cells.length)
+                row.forEachIndexed { column, value -> assertEquals(value.toString(), cells.item(column).textContent) }
+            }
+            assertEquals(0, xml.getElementsByTagName("f").length)
+        }
+    }
 }

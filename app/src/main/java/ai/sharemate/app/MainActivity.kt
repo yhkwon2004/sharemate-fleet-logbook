@@ -26,6 +26,8 @@ class MainActivity : ComponentActivity() {
     private var restrictions: CarUxRestrictionsManager? = null
     private var foreground = false
     private var connectionGeneration = 0
+    // A queued listener event must not reopen input after disconnect or failed registration.
+    private var restrictionGeneration = 0
     private val permissionRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         // Restart recording so newly granted vehicle permissions take effect.
         stopService(android.content.Intent(this, TripLogService::class.java))
@@ -60,6 +62,7 @@ class MainActivity : ComponentActivity() {
 
     private fun connectRestrictions() {
         val token = ++connectionGeneration
+        restrictionGeneration++
         driving = driving.copy(available = false, restricted = true)
         try {
             car = Car.createCar(this, null, Car.CAR_WAIT_TIMEOUT_DO_NOT_WAIT) { connected, ready ->
@@ -67,30 +70,40 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread {
                     if (!foreground || token != connectionGeneration) return@runOnUiThread
                     if (!ready) {
+                        restrictionGeneration++
+                        runCatching { restrictions?.unregisterListener() }
                         restrictions = null
                         driving = driving.copy(available = false, restricted = true)
                     } else {
+                        val listenerToken = ++restrictionGeneration
                         try {
                             runCatching { restrictions?.unregisterListener() }
                             restrictions = connected.getCarManager(Car.CAR_UX_RESTRICTION_SERVICE) as CarUxRestrictionsManager
-                            restrictions?.registerListener { updateRestrictions(it, token) }
-                            restrictions?.currentCarUxRestrictions?.let { updateRestrictions(it, token) }
+                            restrictions?.registerListener { updateRestrictions(it, token, listenerToken) }
+                            restrictions?.currentCarUxRestrictions?.let { updateRestrictions(it, token, listenerToken) }
                         } catch (_: Exception) {
+                            restrictionGeneration++
+                            runCatching { restrictions?.unregisterListener() }
+                            restrictions = null
                             driving = driving.copy(available = false, restricted = true)
                         }
                     }
                 }
             }
         } catch (_: Exception) {
+            connectionGeneration++
+            restrictionGeneration++
+            runCatching { restrictions?.unregisterListener() }
+            restrictions = null
             driving = driving.copy(available = false, restricted = true)
         }
     }
 
-    private fun updateRestrictions(value: CarUxRestrictions, token: Int) {
+    private fun updateRestrictions(value: CarUxRestrictions, token: Int, listenerToken: Int) {
         runOnUiThread {
-            if (foreground && token == connectionGeneration) driving = driving.copy(
+            if (foreground && token == connectionGeneration && listenerToken == restrictionGeneration) driving = driving.copy(
                 available = true,
-                // This parked-use app restricts all detailed interactions when any UX restriction is active.
+                // Any active restriction switches this activity to a read-only distance/status overview.
                 restricted = value.isRequiresDistractionOptimization || value.activeRestrictions != CarUxRestrictions.UX_RESTRICTIONS_BASELINE,
             )
         }
@@ -99,6 +112,7 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         foreground = false
         connectionGeneration++
+        restrictionGeneration++
         runCatching { restrictions?.unregisterListener() }
         runCatching { car?.disconnect() }
         restrictions = null

@@ -11,11 +11,23 @@ import java.util.zip.ZipOutputStream
 internal const val XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 internal const val LOGBOOK_MIME = "application/vnd.sharemate.logbook+json"
 
+internal data class LogbookSheet(val name: String, val columns: List<String>, val rows: List<List<Any>>)
+private val logbookColumns = listOf("사용일자", "부서", "성명", "주행 전(km)", "주행 후(km)", "주행거리(km)", "출·퇴근(km)", "일반 업무(km)", "비고")
+private fun logbookValues(item: LogbookRow): List<Any> = listOf("${item.date}(${weekday(item.date)})", item.department, item.name,
+    item.beforeKm, item.afterKm, item.distanceKm, item.commuteKm, item.businessKm, item.note)
+
 /** Inline strings keep names and notes as text, including text starting with '='. */
 internal fun logbookXlsx(profile: FleetProfile, from: LocalDate, to: LocalDate, rows: List<LogbookRow>, totals: LogbookTotals): ByteArray =
     logbookWorkbook(profile, from, to, rows, totals, emptyList())
 
 internal fun logbookXlsx(profile: FleetProfile, from: LocalDate, to: LocalDate, trips: List<Trip>, drivers: List<Driver>, zone: ZoneId = ZoneId.systemDefault()): ByteArray {
+    val selected = tripsIn(trips.filter { it.demo == profile.demoMode }, from, to, zone)
+    val supporting = logbookSheets(profile, from, to, selected, drivers, zone).drop(1).map { it.name to (listOf(it.columns) + it.rows) }
+    return logbookWorkbook(profile, from, to, logbookRows(selected, drivers, zone), logbookTotals(selected), supporting)
+}
+
+/** The preview and workbook use the same rows, including filtering and review warnings. */
+internal fun logbookSheets(profile: FleetProfile, from: LocalDate, to: LocalDate, trips: List<Trip>, drivers: List<Driver>, zone: ZoneId = ZoneId.systemDefault()): List<LogbookSheet> {
     require(!to.isBefore(from))
     val selected = tripsIn(trips.filter { it.demo == profile.demoMode }, from, to, zone)
     val byDriver = drivers.associateBy { it.id }
@@ -44,8 +56,10 @@ internal fun logbookXlsx(profile: FleetProfile, from: LocalDate, to: LocalDate, 
     if (profile.demoMode) checkRows += listOf("시연 데이터", "", "", "", "가상 기록입니다. 실제 법인 증빙으로 제출하지 마세요.")
     if (selected.isEmpty()) checkRows += listOf("조회기간 기록 없음", "", "", "", "선택한 기간과 실제/시연 모드를 확인해 주세요.")
     if (checkRows.size == 1) checkRows += listOf("자동 점검", "", "", "", "확인 항목이 발견되지 않았습니다. 증빙의 적정성을 보장하지 않습니다.")
-    return logbookWorkbook(profile, from, to, logbookRows(selected, drivers, zone), logbookTotals(selected),
-        listOf("직원별 현황" to employeeRows, "경비원장" to expenseRows, "확인사항" to checkRows))
+    return listOf(LogbookSheet("운행기록부", logbookColumns, logbookRows(selected, drivers, zone).map(::logbookValues))) +
+        listOf("직원별 현황" to employeeRows, "경비원장" to expenseRows, "확인사항" to checkRows).map { (name, content) ->
+            LogbookSheet(name, content.first().map { it.toString() }, content.drop(1))
+        }
 }
 
 private fun logbookWorkbook(profile: FleetProfile, from: LocalDate, to: LocalDate, rows: List<LogbookRow>, totals: LogbookTotals,
@@ -67,15 +81,14 @@ private fun logbookWorkbook(profile: FleetProfile, from: LocalDate, to: LocalDat
     row(1, listOf("업무용승용차 운행기록부"), 1)
     row(2, listOf("법인", profile.companyName, "차종", profile.carModel, "차량번호", profile.plateNumber))
     row(3, listOf("조회 기간", "$from ~ $to", "사업자등록번호", profile.businessNumber))
-    row(5, listOf("사용일자", "부서", "성명", "주행 전(km)", "주행 후(km)", "주행거리(km)", "출·퇴근(km)", "일반 업무(km)", "비고"), 2)
+    row(5, logbookColumns, 2)
     rows.forEachIndexed { index, item ->
         // shortcut: conservative character widths approximate wrapping; use font metrics if exact print pagination is needed.
         val lines = item.note.lineSequence().map { line ->
             val width = line.fold(0) { count, char -> count + if (char.code >= 0x2E80) 2 else 1 }
             maxOf(1, (width + 51) / 52)
         }.sum()
-        row(index + 6, listOf("${item.date}(${weekday(item.date)})", item.department, item.name,
-            item.beforeKm, item.afterKm, item.distanceKm, item.commuteKm, item.businessKm, item.note), height = (lines * 18).coerceIn(30, 409))
+        row(index + 6, logbookValues(item), height = (lines * 18).coerceIn(30, 409))
     }
     val end = rows.size + 7
     row(end, listOf("조회 기간 합계", "", "", "", "", totals.totalKm, totals.commuteKm, totals.generalKm), 4)

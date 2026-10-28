@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.SHAREMATE.Launcher" parent="Theme.SHAREMATE">
+        <item name="android:windowBackground">#17181B</item>
+        <item name="android:windowSplashScreenBackground">#17181B</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo</item>
+    </style>
+</resources>

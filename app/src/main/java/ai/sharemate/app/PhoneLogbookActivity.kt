@@ -5,6 +5,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -121,7 +123,7 @@ class PhoneLogbookActivity : ComponentActivity() {
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), shape = RoundedCornerShape(16.dp)) { Text("파일 갱신") }
             }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-            if (!state.loaded) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            if (!state.loaded) SharemateSplash(Modifier.weight(1f))
             else if (data.trips.isEmpty()) Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
                 SharemateTheme(compact = true, dark = true) { Panel {
                     Eyebrow("운행은 차량에서, 확인은 어디서든")
@@ -145,7 +147,7 @@ class PhoneLogbookActivity : ComponentActivity() {
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Segmented(listOf("월간 요약", "운행 ${trips.size}건"), tab, Modifier.weight(1f)) { tab = it }
+                    Segmented(listOf("요약", "운행 ${trips.size}건", "Excel"), tab, Modifier.weight(1f)) { tab = it }
                 }
                 Box(Modifier.padding(horizontal = 16.dp)) {
                     TextButton(onClick = { employeeMenu = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("직원 · $filterLabel ▾", maxLines = 1, overflow = TextOverflow.Ellipsis) }
@@ -158,7 +160,8 @@ class PhoneLogbookActivity : ComponentActivity() {
                         }
                     }
                 }
-                if (tab == 0) Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Crossfade(targetState = tab, modifier = Modifier.weight(1f).fillMaxWidth(), animationSpec = tween(160), label = "phoneSection") { section ->
+                if (section == 0) Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     SharemateTheme(compact = true, dark = true) {
                         Panel(Modifier.clip(RoundedCornerShape(24.dp)).background(Brush.linearGradient(listOf(Color(0xFF302B29), Color(0xFF17191D)))), color = Color.Transparent, padding = 22.dp) {
                             Eyebrow(if (data.profile.demoMode) "DEMO / 시연 월간 현황" else "MONTHLY / 이달의 이동", Color(0xFFE1B69C))
@@ -226,7 +229,7 @@ class PhoneLogbookActivity : ComponentActivity() {
                     }
                     Muted("Excel에는 선택한 월 · $filterLabel 기록과 직원별 요약, 경비·검토 내역을 담아요. 신고·지급 확정 자료가 아니에요.")
                     Muted("최신 기록은 차량에서 새 파일을 가져와 갱신하세요. 자동 동기화 기능은 아직 제공하지 않아요.")
-                } else LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 20.dp), contentPadding = PaddingValues(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                } else if (section == 1) LazyColumn(Modifier.fillMaxSize().padding(horizontal = 20.dp), contentPadding = PaddingValues(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (trips.isEmpty()) item { Muted("이 달의 운행이 없어요. 다른 달을 선택해 주세요.") }
                     items(trips.reversed(), key = { it.id }) { trip ->
                         Surface(onClick = { selected = trip }, shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surface,
@@ -248,6 +251,7 @@ class PhoneLogbookActivity : ComponentActivity() {
                             }
                         }
                     }
+                } else ExcelPreview(data, trips, period.atDay(1), period.atEndOfMonth(), Modifier.fillMaxSize().padding(horizontal = 20.dp), compact = true)
                 }
                 Button(onClick = {
                     act {
