@@ -22,6 +22,21 @@ data class TripLogData(
     val currentDriverId: String? = null,
     val trips: List<Trip> = emptyList(),
     val open: Trip? = null,
+    val vehicle: VehicleCard = VehicleCard(),
+    val incidents: List<Incident> = emptyList(),
+    val pendingCharge: ChargeSession? = null,
+)
+
+/** Live-sync status published by the car's sync server for the vehicle screens. */
+data class SyncInfo(
+    val running: Boolean = false,
+    val port: Int = 0,
+    val addresses: List<String> = emptyList(),
+    val pairingCode: String? = null,
+    val pairingExpiresAt: Long = 0,
+    val pairedPhones: Int = 0,
+    val lastPhoneSeenAt: Long = 0,
+    val error: String? = null,
 )
 
 enum class SignalStatus(val label: String) {
@@ -38,6 +53,11 @@ data class TripLogState(
     val vehicleModel: String? = null,
     val lastFinishedId: String? = null,
     val error: String? = null,
+    // Monotonic change counter the phone polls against; bumps on every data or live change.
+    val revision: Long = 0,
+    // Bumps only when the saved log changes, so the phone re-imports the file no more often than needed.
+    val dataRevision: Long = 0,
+    val sync: SyncInfo = SyncInfo(),
 )
 
 /** Single owner of the trip log, shared by the recording service, the car screen, and Gleo voice actions. */
@@ -67,12 +87,17 @@ class TripLogRepository private constructor(context: Context) {
     private suspend fun save(data: TripLogData) {
         if (state.value.loadFailed) throw IOException("손상된 운행일지를 덮어쓰지 않습니다.")
         withContext(Dispatchers.IO) { store.save(data) }
-        mutableState.update { it.copy(data = data) }
+        mutableState.update { it.copy(data = data, revision = it.revision + 1, dataRevision = it.dataRevision + 1) }
     }
 
     fun setSignal(signal: SignalStatus, model: String? = state.value.vehicleModel) {
-        mutableState.update { it.copy(signal = signal, vehicleModel = model) }
+        mutableState.update { it.copy(signal = signal, vehicleModel = model, revision = it.revision + 1) }
     }
+
+    fun setSync(info: SyncInfo) = mutableState.update { it.copy(sync = info) }
+
+    private var chargingSince: Long? = null
+    private var chargingSocFrom: Int? = null
 
     fun clearError() = mutableState.update { it.copy(error = null) }
 
@@ -99,15 +124,89 @@ class TripLogRepository private constructor(context: Context) {
                 is TripChange.Discarded -> next.copy(open = null)
             }
         }
+        // Charging stops become an expense prompt; the car knows when and how much battery, the driver adds the amount.
+        val wasCharging = chargingSince != null
+        if (sample.charging == true && chargingSince == null) { chargingSince = sample.at; chargingSocFrom = sample.socPercent }
+        val session = chargeSessionEnded(chargingSince, chargingSocFrom, sample, wasCharging)
+        if (sample.charging == false) { chargingSince = null; chargingSocFrom = null }
+        if (session != null && next.pendingCharge == null) next = next.copy(pendingCharge = session)
+        // The vehicle card refreshes from live signals so the logbook header always names the real car.
+        val card = next.vehicle
+        val model = state.value.vehicleModel?.takeIf { it.isNotBlank() && !sample.demo }
+        val refreshed = card.copy(model = model ?: card.model, vin = sample.vin ?: card.vin,
+            odometerKm = sample.odometerKm ?: card.odometerKm, socPercent = sample.socPercent ?: card.socPercent, capturedAt = sample.at)
+        val cardChanged = refreshed.model != card.model || refreshed.vin != card.vin
+        if (!sample.demo && (cardChanged || sample.at - card.capturedAt >= 300_000)) next = next.copy(vehicle = refreshed)
         val open = next.open
         // Checkpoint a recording trip every minute or kilometre so an interruption loses little.
         val checkpoint = open != null && data.open != null && (sample.at - persistedAt >= 60_000 || open.endOdometerKm - persistedOdometer >= 1.0)
-        if (next.open?.id != data.open?.id || next.trips.size != data.trips.size || checkpoint) {
+        if (next.open?.id != data.open?.id || next.trips.size != data.trips.size || checkpoint || session != null || cardChanged) {
             save(next)
             persistedAt = sample.at
             persistedOdometer = open?.endOdometerKm ?: 0.0
-        } else mutableState.update { it.copy(data = next) }
+        } else mutableState.update { it.copy(data = next, revision = it.revision + 1) }
         if (finishedId != null) mutableState.update { it.copy(lastFinishedId = finishedId) }
+    }
+
+    /** Records the charge as a fuel/charging expense on the most recent trip, or just clears the prompt. */
+    suspend fun resolveCharge(amountWon: Long?, source: EditSource) = mutate { data ->
+        val session = data.pendingCharge ?: return@mutate data
+        var next = data.copy(pendingCharge = null)
+        if (amountWon != null) {
+            require(amountWon in 1..10_000_000) { "금액은 1원~1,000만 원으로 입력해 주세요." }
+            val target = data.trips.filter { it.demo == session.demo && it.startAt <= session.endAt }.maxByOrNull { it.startAt }
+                ?: throw IllegalArgumentException("충전 비용을 연결할 운행이 아직 없어요. 운행 후 상세에서 등록해 주세요.")
+            val now = System.currentTimeMillis()
+            next = next.editTrip(target.id) { trip ->
+                require(trip.expenses.size < 30) { "한 운행에 비용은 30건까지 기록할 수 있어요." }
+                withHistory(trip.copy(expenses = trip.expenses + TripExpense(ExpenseType.FUEL, amountWon, now, source)),
+                    "충전 ${formatWon(amountWon)} 추가 · 차량 감지 ${session.socFrom ?: "?"}→${session.socTo ?: "?"}% (${source.label})", now)
+            }
+        }
+        next
+    }
+
+    /** One tap at the scene: the car fills time, odometer, place, trip and driver; the note can follow later from either device. */
+    suspend fun reportIncident(kind: IncidentKind, note: String = "", source: EditSource = EditSource.DRIVER): Incident {
+        var created: Incident? = null
+        mutate { data ->
+            require(note.length <= 500) { "메모는 500자 이하로 입력해 주세요." }
+            require(data.incidents.size < 500) { "특이사항 기록이 500건에 도달했어요." }
+            val live = state.value.live
+            val now = System.currentTimeMillis()
+            val demo = data.profile.demoMode
+            val trip = data.open?.takeIf { it.demo == demo } ?: data.trips.filter { it.demo == demo }.maxByOrNull { it.startAt }
+            val incident = Incident(UUID.randomUUID().toString(), now, kind, live?.odometerKm ?: data.vehicle.odometerKm,
+                live?.address?.takeIf { data.profile.storeAddresses }, trip?.id, data.currentDriverId ?: trip?.driverId, note.trim(), demo = demo)
+            created = incident
+            data.copy(incidents = data.incidents + incident)
+        }
+        return created!!
+    }
+
+    suspend fun updateIncident(id: String, note: String? = null, status: IncidentStatus? = null, kind: IncidentKind? = null) = mutate { data ->
+        require(note == null || note.length <= 500) { "메모는 500자 이하로 입력해 주세요." }
+        require(data.incidents.any { it.id == id }) { "특이사항 기록을 찾지 못했어요." }
+        data.copy(incidents = data.incidents.map { item ->
+            if (item.id != id) item
+            else item.copy(note = note?.trim() ?: item.note, status = status ?: item.status, kind = kind ?: item.kind, updatedAt = System.currentTimeMillis())
+        })
+    }
+
+    suspend fun deleteIncident(id: String) = mutate { data -> data.copy(incidents = data.incidents.filterNot { it.id == id }) }
+
+    /** Applies an edit sent by a paired phone; every change is attributed to the phone in the trip history. */
+    suspend fun applyCommand(command: SyncCommand) {
+        when (command) {
+            is SyncCommand.Classify -> classify(command.tripId, command.purpose, EditSource.PHONE)
+            is SyncCommand.Note -> setNote(command.tripId, command.note, EditSource.PHONE)
+            is SyncCommand.AddExpense -> addExpense(command.tripId, command.type, command.amountWon, EditSource.PHONE)
+            is SyncCommand.RemoveExpense -> removeExpense(command.tripId, command.index)
+            is SyncCommand.SetTripDriver -> setTripDriver(command.tripId, command.driverId)
+            is SyncCommand.ResolveCharge -> resolveCharge(command.amountWon, EditSource.PHONE)
+            is SyncCommand.ReportIncident -> reportIncident(command.kind, command.note, EditSource.PHONE)
+            is SyncCommand.UpdateIncident -> updateIncident(command.id, command.note, command.status, command.kind)
+        }
     }
 
     private suspend fun mutate(transform: (TripLogData) -> TripLogData) = mutex.withLock {
@@ -220,8 +319,9 @@ class TripLogRepository private constructor(context: Context) {
         data.copy(profile = profile)
     }
 
-    suspend fun importPhoneCopy(data: TripLogData) = mutex.withLock {
-        require(data.open == null) { "기록 중인 운행은 가져올 수 없어요." }
+    /** A copy from the car: a shared file never carries a trip in progress, a live sync keeps it so the phone can show it. */
+    suspend fun importPhoneCopy(data: TripLogData, live: Boolean = false) = mutex.withLock {
+        require(live || data.open == null) { "기록 중인 운행은 가져올 수 없어요." }
         loadLocked()
         save(data)
     }
@@ -289,12 +389,26 @@ internal object TripLogCodec {
         require(json.getInt("version") == 1)
         val p = json.getJSONObject("profile")
         val profile = FleetProfile(p.getString("companyName"), p.getString("businessNumber"), p.getString("carModel"), p.getString("plateNumber"),
-            if (p.isNull("annualCostWon")) null else p.getLong("annualCostWon"), p.getLong("reimbursePerKmWon"), p.getBoolean("storeAddresses"), p.getBoolean("demoMode"))
+            if (p.isNull("annualCostWon")) null else p.getLong("annualCostWon"), p.getLong("reimbursePerKmWon"), p.getBoolean("storeAddresses"), p.getBoolean("demoMode"),
+            p.optBoolean("phoneSync", false))
         validateProfile(profile)
         val drivers = json.getJSONArray("drivers").objects().map { Driver(it.getString("id"), it.getString("department"), it.getString("name")) }
         val trips = json.getJSONArray("trips").objects().map(::readTrip)
+        // Fields added after 2.3 are optional so older files still load.
+        val vehicle = json.optJSONObject("vehicle")?.let { v ->
+            VehicleCard(v.text("model"), v.text("vin"), if (v.isNull("odometerKm")) null else v.getDouble("odometerKm"),
+                if (v.isNull("socPercent")) null else v.getInt("socPercent"), v.optLong("capturedAt"))
+        } ?: VehicleCard()
+        val incidents = json.optJSONArray("incidents")?.objects()?.map { i ->
+            Incident(i.getString("id"), i.getLong("at"), IncidentKind.valueOf(i.getString("kind")), if (i.isNull("odometerKm")) null else i.getDouble("odometerKm"),
+                i.text("address"), i.text("tripId"), i.text("driverId"), i.getString("note"), IncidentStatus.valueOf(i.getString("status")), i.getLong("updatedAt"), i.optBoolean("demo"))
+        }.orEmpty()
+        val charge = json.optJSONObject("pendingCharge")?.let { c ->
+            ChargeSession(c.getLong("startAt"), c.getLong("endAt"), if (c.isNull("socFrom")) null else c.getInt("socFrom"),
+                if (c.isNull("socTo")) null else c.getInt("socTo"), if (c.isNull("odometerKm")) null else c.getDouble("odometerKm"), c.optBoolean("demo"))
+        }
         val data = TripLogData(profile, drivers, json.optString("currentDriverId").takeIf { it.isNotEmpty() && drivers.any { d -> d.id == it } },
-            trips, if (json.isNull("open")) null else readTrip(json.getJSONObject("open")))
+            trips, if (json.isNull("open")) null else readTrip(json.getJSONObject("open")), vehicle, incidents, charge)
         validate(data)
         return data
     }
@@ -305,11 +419,18 @@ internal object TripLogCodec {
             .put("profile", JSONObject().put("companyName", data.profile.companyName).put("businessNumber", data.profile.businessNumber)
                 .put("carModel", data.profile.carModel).put("plateNumber", data.profile.plateNumber)
                 .put("annualCostWon", data.profile.annualCostWon ?: JSONObject.NULL).put("reimbursePerKmWon", data.profile.reimbursePerKmWon)
-                .put("storeAddresses", data.profile.storeAddresses).put("demoMode", data.profile.demoMode))
+                .put("storeAddresses", data.profile.storeAddresses).put("demoMode", data.profile.demoMode).put("phoneSync", data.profile.phoneSync))
             .put("drivers", JSONArray(data.drivers.map { JSONObject().put("id", it.id).put("department", it.department).put("name", it.name) }))
             .put("currentDriverId", data.currentDriverId ?: "")
             .put("trips", JSONArray(data.trips.map(::writeTrip)))
             .put("open", data.open?.let(::writeTrip) ?: JSONObject.NULL)
+            .put("vehicle", JSONObject().put("model", data.vehicle.model ?: JSONObject.NULL).put("vin", data.vehicle.vin ?: JSONObject.NULL)
+                .put("odometerKm", data.vehicle.odometerKm ?: JSONObject.NULL).put("socPercent", data.vehicle.socPercent ?: JSONObject.NULL).put("capturedAt", data.vehicle.capturedAt))
+            .put("incidents", JSONArray(data.incidents.map { i -> JSONObject().put("id", i.id).put("at", i.at).put("kind", i.kind.name)
+                .put("odometerKm", i.odometerKm ?: JSONObject.NULL).put("address", i.address ?: JSONObject.NULL).put("tripId", i.tripId ?: JSONObject.NULL)
+                .put("driverId", i.driverId ?: JSONObject.NULL).put("note", i.note).put("status", i.status.name).put("updatedAt", i.updatedAt).put("demo", i.demo) }))
+            .put("pendingCharge", data.pendingCharge?.let { c -> JSONObject().put("startAt", c.startAt).put("endAt", c.endAt).put("socFrom", c.socFrom ?: JSONObject.NULL)
+                .put("socTo", c.socTo ?: JSONObject.NULL).put("odometerKm", c.odometerKm ?: JSONObject.NULL).put("demo", c.demo) } ?: JSONObject.NULL)
         return json.toString().toByteArray(Charsets.UTF_8)
     }
 
@@ -338,6 +459,8 @@ internal object TripLogCodec {
         .put("history", JSONArray(t.history)).put("updatedAt", t.updatedAt)
 
     private fun validate(data: TripLogData) {
+        require(data.incidents.size <= 500 && data.incidents.all { validUuid(it.id) && it.at > 0 && it.note.length <= 500 })
+        require(data.vehicle.model.orEmpty().length <= 60 && data.vehicle.vin.orEmpty().length <= 40)
         require(data.drivers.size <= 50 && data.drivers.map { it.id }.distinct().size == data.drivers.size)
         data.drivers.forEach { require(validUuid(it.id) && it.name.isNotBlank() && it.name.length <= 30 && it.department.length <= 30) }
         require(data.trips.size <= TripLogRepository.MAX_TRIPS && data.trips.none { it.open } && (data.open == null || data.open.open))

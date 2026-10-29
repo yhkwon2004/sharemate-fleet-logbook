@@ -31,27 +31,35 @@ internal fun vehicleSampleFresh(state: TripLogState, now: Long): Boolean {
     return driveSignalsFresh(sample.gear, sample.odometerKm, now - sample.at, now - sample.at)
 }
 
-/** A read-only view of the signals already used by automatic recording. */
+/** The vehicle as the app knows it: live signals, identity card, the phone link, and what happened to the car. */
 @Composable
-internal fun VehiclePane(state: TripLogState, now: Long) {
+internal fun VehiclePane(state: TripLogState, now: Long, act: Act, repository: TripLogRepository) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 960.dp
-        val scroll = maxHeight < 740.dp || LocalDensity.current.fontScale > 1.25f
-        val height = if (scroll) 800.dp * LocalDensity.current.fontScale.coerceAtLeast(1f) else maxHeight
+        val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
+        val heroHeight = (if (wide) 520.dp else 360.dp) * fontScale
         val fresh = vehicleSampleFresh(state, now)
         val hero: @Composable (Modifier) -> Unit = { VehicleHero(state, fresh, it) }
         val details: @Composable (Modifier) -> Unit = { VehicleDetails(state, fresh, now, it) }
-        if (wide) {
-            Row(Modifier.fillMaxSize().then(if (scroll) Modifier.verticalScroll(rememberScrollState()) else Modifier)
-                .height(height), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                hero(Modifier.weight(1.15f).fillMaxHeight())
-                details(Modifier.weight(1f).fillMaxHeight())
-            }
-        } else {
-            Column(Modifier.fillMaxSize().then(if (scroll) Modifier.verticalScroll(rememberScrollState()) else Modifier),
-                verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                hero(Modifier.fillMaxWidth().height((height * .48f).coerceIn(300.dp, 430.dp)))
-                details(Modifier.fillMaxWidth().height(height - (height * .48f).coerceIn(300.dp, 430.dp) - 16.dp))
+        val link: @Composable () -> Unit = {
+            PhoneSyncCard(state, now)
+            if (state.data.profile.phoneSync && state.sync.running) PairingCard(state.sync, now, compact = !wide)
+        }
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            if (wide) {
+                Row(Modifier.height(heroHeight), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    hero(Modifier.weight(1.15f).fillMaxHeight())
+                    details(Modifier.weight(1f).fillMaxHeight())
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(20.dp)) { link() }
+                    IncidentHistory(state.data, act, repository, Modifier.weight(1f))
+                }
+            } else {
+                hero(Modifier.fillMaxWidth().height(heroHeight))
+                details(Modifier.fillMaxWidth().height(heroHeight * 1.1f))
+                link()
+                IncidentHistory(state.data, act, repository)
             }
         }
     }
@@ -120,7 +128,11 @@ private fun VehicleDetails(state: TripLogState, fresh: Boolean, now: Long, modif
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 VehicleInfoRow("현재 직원", driver?.label ?: "직원 미지정")
-                VehicleInfoRow(if (sdkModel != null) "SDK 차종" else "등록 차종", sdkModel ?: profile.carModel.ifBlank { "미등록" })
+                VehicleInfoRow(if (sdkModel != null) "차량 수신 차종" else "등록 차종", sdkModel ?: state.data.vehicle.model ?: profile.carModel.ifBlank { "미등록" })
+                validVin(state.data.vehicle.vin)?.let { VehicleInfoRow("차대번호(VIN)", it) }
+                (state.live?.takeIf { it.demo == profile.demoMode }?.socPercent ?: state.data.vehicle.socPercent)?.let { soc ->
+                    VehicleInfoRow("배터리", "$soc%" + if (state.live?.charging == true) " · 충전 중" else "")
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Stat("데이터 연결", if (fresh) "수신 중" else "확인 필요", Modifier.weight(1f),

@@ -1,4 +1,6 @@
-# 현재 개발 버전: SHAREMATE 2.4.0 법인차 자동 운행일지
+# 현재 개발 버전: SHAREMATE 2.5.0 법인차 자동 운행일지
+
+versionCode 15. 2.5.0은 **차량↔휴대폰 실시간 양방향 동기화**(차량이 TLS 서버, 휴대폰이 6자리 번호로 연결, 휴대폰의 목적·경비·특이사항 입력이 차량 기록에 ‘휴대폰’ 출처로 반영), **차량이 읽은 차량 카드**(차종·VIN·배터리·충전 상태), **사고·특이사항 원탭 기록과 즉시 대처 단계**, **충전 종료 자동 감지 후 충전 비용 한 번 입력**을 추가했습니다. 홈은 안전 → 차량이 측정한 비용 → 서류 순서로 "지금 할 일" 한 장만 보여 줍니다. 아래 "모바일은 파일로 갱신하는 사본"이라는 서술은 2.4.0 이하 기준이며, 2.5.0부터는 파일 가져오기와 실시간 연동을 모두 제공합니다. 세부 내용은 [CORPORATE_LOGBOOK.md](CORPORATE_LOGBOOK.md)의 2.5 절을 참고하세요.
 
 versionCode 14. 2.4.0은 WCAG 2.1 AA 기준 접근성 점검을 반영했습니다. 목적 선택 후 **실행 취소**와 같은 날 미분류 운행 **일괄 분류**, 주야간을 따르는 시스템 막대, 주간 모드 그래프 대비 보정, 스크린리더 역할·상태 안내, 애니메이션 축소·큰 글꼴 대응, 목적 선택 햅틱을 추가했습니다. 세부 내용은 [CORPORATE_LOGBOOK.md](CORPORATE_LOGBOOK.md)와 [ACCESSIBILITY.md](ACCESSIBILITY.md)를 참고하세요.
 
@@ -421,7 +423,8 @@ flowchart TD
 | 직원·업무 목적·경비 | 직원 지정, 운행 목적 확인, 경비 종류·금액 입력 | [`TripLogRepository.kt`](app/src/main/java/ai/sharemate/app/TripLogRepository.kt), [`CORPORATE_LOGBOOK.md`](CORPORATE_LOGBOOK.md) |
 | 월간 현황 | 직원별 거리·업무 비율·지출 내역·정산 참고액 | [`LogbookUi.kt`](app/src/main/java/ai/sharemate/app/LogbookUi.kt) |
 | Excel 내보내기 | 실제 `.xlsx` 생성, 4개 시트 | [`LogbookExcel.kt`](app/src/main/java/ai/sharemate/app/LogbookExcel.kt) |
-| 휴대폰 열람 | 완료 운행 `.smlog`를 파일로 가져오는 사본형 모바일 UI | [`PhoneLogbookActivity.kt`](app/src/main/java/ai/sharemate/app/PhoneLogbookActivity.kt) |
+| 휴대폰 열람·실시간 연동 (2.5.0) | `.smlog` 파일 가져오기 + 차량 TLS 서버와 6자리 번호 페어링, 롱폴 미러링, 목적·경비·특이사항 명령 전송 | [`PhoneLogbookActivity.kt`](app/src/main/java/ai/sharemate/app/PhoneLogbookActivity.kt), [`PhoneSync.kt`](app/src/main/java/ai/sharemate/app/PhoneSync.kt), [`SyncServer.kt`](app/src/main/java/ai/sharemate/app/SyncServer.kt), [`SyncProtocol.kt`](app/src/main/java/ai/sharemate/app/SyncProtocol.kt) |
+| 차량 카드·사고 대응·충전 감지 (2.5.0) | 차종·VIN·배터리·충전 상태 기록, 사고·특이사항 원탭 + 대처 단계, 충전 종료 감지 → 비용 한 번 입력 | [`FleetCards.kt`](app/src/main/java/ai/sharemate/app/FleetCards.kt), [`TripLogService.kt`](app/src/main/java/ai/sharemate/app/TripLogService.kt), [`TripLogRepository.kt`](app/src/main/java/ai/sharemate/app/TripLogRepository.kt) |
 | Gleo 기능 준비 | 3개 schema action 및 처리 코드 | [`GLEO_INTEGRATION.md`](GLEO_INTEGRATION.md), [`schema.json`](app/src/main/assets/schema.json) |
 | 독립 튜토리얼 | 실제 운행을 바꾸지 않는 6단계 체험 | [`DemoTutorial.kt`](app/src/main/java/ai/sharemate/app/DemoTutorial.kt) |
 

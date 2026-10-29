@@ -37,7 +37,7 @@ internal class DeviceLink(context: Context, role: String) {
     }
     fun clear() = file.delete()
 
-    suspend fun request(config: LinkConfig, path: String, payload: JSONObject? = null): JSONObject = withContext(Dispatchers.IO) {
+    suspend fun request(config: LinkConfig, path: String, payload: JSONObject? = null, timeoutMillis: Long? = null): JSONObject = withContext(Dispatchers.IO) {
         val trust = object : X509TrustManager {
             override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
             override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) { throw java.security.cert.CertificateException() }
@@ -54,7 +54,7 @@ internal class DeviceLink(context: Context, role: String) {
             connection.sslSocketFactory = ssl.socketFactory
             // The exact certificate is explicitly paired; never trust arbitrary self-signed certificates.
             connection.hostnameVerifier = javax.net.ssl.HostnameVerifier { host, _ -> host == URI(config.endpoint).host }
-            connection.connectTimeout = 4_000; connection.readTimeout = if (path == "/v1/analyze") 75_000 else 4_000
+            connection.connectTimeout = 4_000; connection.readTimeout = timeoutMillis?.toInt() ?: if (path == "/v1/analyze") 75_000 else 4_000
             connection.instanceFollowRedirects = false
             connection.setRequestProperty("Authorization", "Bearer ${config.token}")
             if (payload != null) {

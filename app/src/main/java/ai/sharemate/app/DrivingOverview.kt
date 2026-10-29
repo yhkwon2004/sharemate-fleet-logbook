@@ -79,6 +79,12 @@ internal fun DrivingOverview(state: TripLogState, now: Long, restrictionsAvailab
                 }
                 if (!short) Text("출발일 기준 · ${if (info.demo) "시연값" else if (info.fresh) "차량 수신값" else "마지막 기록값"}",
                     style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+                // Nothing to act on while moving; this only tells the driver whether the car will ask for anything once parked.
+                val pending = state.data.trips.count { it.demo == info.demo && it.purpose == TripPurpose.UNCLASSIFIED }
+                val incidents = openIncidents(state.data).size
+                val later = listOfNotNull(pending.takeIf { it > 0 }?.let { "목적 확인 ${it}건" }, incidents.takeIf { it > 0 }?.let { "특이사항 대응 중 ${it}건" })
+                if (!short) Text(if (later.isEmpty()) "정차 후 할 일 없음" else "정차 후 · " + later.joinToString(" · "),
+                    style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
             }
         }
     }

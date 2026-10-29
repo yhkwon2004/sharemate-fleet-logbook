@@ -13,7 +13,40 @@ enum class TripPurpose(val label: String) {
     UNCLASSIFIED("미분류"), COMMUTE("출·퇴근"), BUSINESS("일반 업무"), PERSONAL("개인");
     val business get() = this == COMMUTE || this == BUSINESS
 }
-enum class EditSource(val label: String) { DRIVER("직접 선택"), VOICE("Gleo 음성"), SUGGESTED("이전 기록 제안") }
+enum class EditSource(val label: String) { DRIVER("직접 선택"), VOICE("Gleo 음성"), SUGGESTED("이전 기록 제안"), PHONE("휴대폰") }
+
+enum class IncidentKind(val label: String) { ACCIDENT("사고"), DAMAGE("파손·긁힘"), BREAKDOWN("고장·경고"), OTHER("특이사항") }
+enum class IncidentStatus(val label: String) { OPEN("대응 중"), CLOSED("처리 완료") }
+
+/** A field report captured from the vehicle at the moment it happened: time, odometer, place, trip and driver come from the car, not memory. */
+data class Incident(
+    val id: String,
+    val at: Long,
+    val kind: IncidentKind,
+    val odometerKm: Double?,
+    val address: String?,
+    val tripId: String?,
+    val driverId: String?,
+    val note: String = "",
+    val status: IncidentStatus = IncidentStatus.OPEN,
+    val updatedAt: Long = at,
+    val demo: Boolean = false,
+)
+
+/** A usable VIN: the emulator answers a quoted "invalid", and a real one is 17 characters without quotes. */
+internal fun validVin(value: String?): String? = value?.trim()?.trim('"')?.take(40)?.takeIf { it.length >= 11 && !it.equals("invalid", ignoreCase = true) }
+
+/** Identity read from the vehicle itself so the logbook header and incident reports carry the real car, not typed text. */
+data class VehicleCard(
+    val model: String? = null,
+    val vin: String? = null,
+    val odometerKm: Double? = null,
+    val socPercent: Int? = null,
+    val capturedAt: Long = 0,
+)
+
+/** A charging stop detected from the vehicle; the amount is the one thing the driver still has to enter. */
+data class ChargeSession(val startAt: Long, val endAt: Long, val socFrom: Int?, val socTo: Int?, val odometerKm: Double?, val demo: Boolean = false)
 enum class ExpenseType(val label: String) { FUEL("주유·충전"), TOLL("통행료"), PARKING("주차"), OTHER("기타") }
 enum class GearState { PARK, MOVING, UNKNOWN }
 enum class TripOrigin { AUTO, GAP_FILL }
@@ -57,6 +90,9 @@ data class DriveSample(
     val address: String? = null,
     val destination: String? = null,
     val demo: Boolean = false,
+    val charging: Boolean? = null,
+    val socPercent: Int? = null,
+    val vin: String? = null,
 )
 
 data class FleetProfile(
@@ -68,7 +104,27 @@ data class FleetProfile(
     val reimbursePerKmWon: Long = 0,
     val storeAddresses: Boolean = true,
     val demoMode: Boolean = false,
+    // Car-hosted live sync for the phone app; off until the fleet manager turns it on in the vehicle.
+    val phoneSync: Boolean = false,
 )
+
+internal const val MIN_CHARGE_MILLIS = 60_000L
+
+/** Closes a charging stop when the plug signal drops after at least a minute; shorter blips are ignored. */
+internal fun chargeSessionEnded(startAt: Long?, socFrom: Int?, sample: DriveSample, wasCharging: Boolean): ChargeSession? {
+    if (!wasCharging || sample.charging != false || startAt == null) return null
+    if (sample.at - startAt < MIN_CHARGE_MILLIS) return null
+    return ChargeSession(startAt, sample.at, socFrom, sample.socPercent, sample.odometerKm, sample.demo)
+}
+
+/** Incident steps shown the moment a report is opened; vehicle data is already captured so the driver only follows these. */
+internal fun incidentSteps(kind: IncidentKind): List<String> = when (kind) {
+    IncidentKind.ACCIDENT -> listOf("비상등을 켜고 안전한 곳으로 이동한 뒤 차 밖의 안전한 장소로 피하세요.", "부상자가 있으면 119, 사고 신고는 112.",
+        "휴대폰 SHAREMATE에서 현장·차량·상대 차량 번호판을 촬영하세요.", "회사 차량 담당자와 보험사에 알리세요. 시각·계기판·위치는 이미 기록됐어요.")
+    IncidentKind.DAMAGE -> listOf("손상 부위를 휴대폰으로 가까이·멀리 각각 촬영하세요.", "주차 중 발견이면 주변 CCTV·블랙박스 보관을 요청하세요.", "회사 차량 담당자에게 공유하세요.")
+    IncidentKind.BREAKDOWN -> listOf("안전한 곳에 정차하고 계기판 경고를 확인하세요.", "주행이 어려우면 보험사 긴급출동을 부르세요.", "경고 표시를 휴대폰으로 촬영해 두세요.")
+    IncidentKind.OTHER -> listOf("상황을 메모로 남기세요.", "필요하면 휴대폰으로 사진을 추가하세요.", "회사 차량 담당자에게 공유하세요.")
+}
 
 sealed interface TripChange {
     data class Started(val trip: Trip) : TripChange

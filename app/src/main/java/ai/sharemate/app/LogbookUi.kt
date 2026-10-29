@@ -91,7 +91,7 @@ private fun durationText(ms: Long): String {
 private fun routeText(trip: Trip) = listOfNotNull(trip.startAddress, trip.destination ?: trip.endAddress)
     .filter { it.isNotBlank() }.joinToString("  →  ").ifBlank { "주소 미기록 · 계기판 거리로 기록" }
 
-private typealias Act = (suspend () -> Unit) -> Unit
+internal typealias Act = (suspend () -> Unit) -> Unit
 private val purposeChoices = listOf(TripPurpose.COMMUTE, TripPurpose.BUSINESS, TripPurpose.PERSONAL)
 
 /** A confirmation shown after a change, with one optional follow-up such as undo or applying the same choice to more trips. */
@@ -246,14 +246,14 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                                         })
                                         1 -> LogPane(state, now, wide, act, repository, openDriver, expenseTripId)
                                         2 -> ReportPane(state, now, wide, pendingExportName != null, export) { tab = 4 }
-                                        3 -> VehiclePane(state, now)
+                                        3 -> VehiclePane(state, now, act, repository)
                                         else -> SettingsPane(state, wide, act, repository) { info = it }
                                     }
                                   }
                                 }
                             }
                             val labels = listOf("홈", "운행기록", "월간·Excel", "차량", "설정")
-                            val badges = listOf(0, state.data.trips.count { it.purpose == TripPurpose.UNCLASSIFIED }, 0, 0, 0)
+                            val badges = listOf(0, state.data.trips.count { it.purpose == TripPurpose.UNCLASSIFIED }, 0, openIncidents(state.data).size, 0)
                             if (wide) Row(Modifier.weight(1f)) { NavRail(labels, badges, tab) { tab = it }; body(Modifier.weight(1f).fillMaxHeight()) }
                             else Column(Modifier.weight(1f)) {
                                 Segmented(listOf("홈", "기록", "Excel", "차량", "설정"), tab, Modifier.padding(horizontal = gutter).padding(bottom = 8.dp)) { tab = it }
@@ -398,13 +398,13 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 @Composable internal fun Muted(text: String, modifier: Modifier = Modifier) =
     Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = modifier)
 
-@Composable private fun PrimaryAction(label: String, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
+@Composable internal fun PrimaryAction(label: String, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
     Button(onClick = onClick, enabled = enabled, modifier = modifier.heightIn(min = 64.dp), shape = RoundedCornerShape(20.dp),
         contentPadding = PaddingValues(horizontal = 28.dp, vertical = 14.dp)) { Text(label, style = MaterialTheme.typography.labelLarge) }
 }
 
 /** [description] replaces a symbolic label such as "‹" for screen readers. */
-@Composable private fun QuietAction(label: String, modifier: Modifier = Modifier, enabled: Boolean = true, color: Color = MaterialTheme.colorScheme.onSurface,
+@Composable internal fun QuietAction(label: String, modifier: Modifier = Modifier, enabled: Boolean = true, color: Color = MaterialTheme.colorScheme.onSurface,
     description: String? = null, onClick: () -> Unit) {
     FilledTonalButton(onClick = onClick, enabled = enabled, shape = RoundedCornerShape(20.dp),
         modifier = modifier.heightIn(min = 60.dp).then(if (description != null) Modifier.semantics { contentDescription = description } else Modifier),
@@ -460,10 +460,17 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     val data = state.data
     val pending = data.trips.filter { it.purpose == TripPurpose.UNCLASSIFIED }.sortedByDescending { it.startAt }
     val setupNeeded = data.drivers.isEmpty() || data.profile.plateNumber.isBlank() || data.profile.companyName.isBlank()
+    val incident = openIncidents(data).firstOrNull()
+    val charge = data.pendingCharge?.takeIf { it.demo == data.profile.demoMode }
+    val pairingNeeded = data.profile.phoneSync && state.sync.running && state.sync.pairedPhones == 0
+    // One card at a time, in the order the moment demands: safety, then money the car already measured, then paperwork.
     val task: @Composable ColumnScope.() -> Unit = {
         when {
+            incident != null -> IncidentCard(incident, data, act, repository)
+            charge != null -> ChargeCard(charge, act, repository)
             pending.isNotEmpty() -> PendingCard(pending.first(), pending.size, data, act, repository, openDriver)
             setupNeeded -> SetupCard(data, goSettings) { openDriver(null) }
+            pairingNeeded -> PairingCard(state.sync, now, compact = !wide)
             else -> Panel {
                 val driver = data.drivers.firstOrNull { it.id == data.currentDriverId }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -487,7 +494,10 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     }
     if (wide) Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-            Box(Modifier.weight(1.12f)) { StatusHero(state, now, false, requestPermissions) }
+            Column(Modifier.weight(1.12f), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                StatusHero(state, now, false, requestPermissions)
+                IncidentQuickRow(data, act, repository)
+            }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 task()
                 HomeActions(data, navigate, expense)
@@ -496,7 +506,8 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
         MonthCard(data, now)
     } else Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         StatusHero(state, now, true, requestPermissions)
-        if (pending.isNotEmpty() || setupNeeded) task()
+        if (incident != null || charge != null || pending.isNotEmpty() || setupNeeded || pairingNeeded) task()
+        IncidentQuickRow(data, act, repository)
         Panel(padding = 22.dp) {
             val today = localDate(now)
             val totals = logbookTotals(tripsIn(data.trips, today.withDayOfMonth(1), today, zone))
@@ -543,6 +554,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     val today = localDate(now)
     val overview = drivingOverviewInfo(state, now, true, zone)
     val moving by DemoDrive.moving.collectAsState()
+    val charging by DemoDrive.charging.collectAsState()
     SharemateTheme(dark = true) {
     val pleos = LocalPleosColors.current
     Surface(shape = RoundedCornerShape(24.dp), color = Color(0xFF1D1E21), border = BorderStroke(1.dp, Color.White.copy(alpha = .08f))) {
@@ -557,6 +569,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
             Box(Modifier.size(14.dp).clip(CircleShape).background(if (overview.fresh) pleos.active.copy(alpha = if (open != null) 1f else .5f) else pleos.negative))
             Text(overview.status, style = MaterialTheme.typography.titleLarge)
         }
+        VehicleChips(state, Modifier.horizontalScroll(rememberScrollState()))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Column(Modifier.weight(1.1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Eyebrow(if (open != null) "이번 운행" else "오늘 주행거리")
@@ -585,7 +598,10 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
             })
         }
         if (state.signal == SignalStatus.DENIED) PrimaryAction("차량 정보 권한 허용", onClick = requestPermissions)
-        if (demo) PrimaryAction(if (moving) "시연 주차 (P)" else "시연 출발 (D)", Modifier.fillMaxWidth()) { DemoDrive.setMoving(!moving) }
+        if (demo) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            PrimaryAction(if (moving) "시연 주차 (P)" else "시연 출발 (D)", Modifier.weight(1.3f)) { DemoDrive.setMoving(!moving) }
+            QuietAction(if (charging) "충전 종료" else "충전 시작", Modifier.weight(1f), enabled = !moving) { DemoDrive.setCharging(!charging) }
+        }
     }
     }
     }
@@ -1158,8 +1174,8 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
             GleoCard(compact = !wide)
             Panel {
                 Eyebrow("PLEOS SDK / 필요한 신호만 사용")
-                Text("${state.signal.label} · 기어와 계기판 누적거리", style = MaterialTheme.typography.titleMedium)
-                Muted("Vehicle SDK로 거리를, AAOS로 기어를 읽습니다. NaviHelper 주소는 수신한 경우에만 기록합니다.")
+                Text("${state.signal.label} · 기어·누적거리·충전상태·배터리·VIN", style = MaterialTheme.typography.titleMedium)
+                Muted("Vehicle SDK로 거리·배터리·VIN을, AAOS로 기어와 충전 상태를 읽습니다. NaviHelper 주소는 수신한 경우에만 기록합니다.")
                 Muted("권한·미지원·수신 지연은 확인 필요로 표시합니다. 차량 제어와 내비 목적지 변경은 하지 않습니다.")
             }
         }
@@ -1273,8 +1289,11 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
         SwitchRow("출발·도착 주소 저장", "끄면 계기판 거리와 시각만 남기고 내비 주소는 저장하지 않아요.", saved.storeAddresses) { value ->
             act { repository.updateProfile(saved.copy(storeAddresses = value)) }
         }
+        SwitchRow("휴대폰 실시간 연동", "같은 Wi-Fi·핫스팟의 휴대폰 SHAREMATE와 암호화 연결로 운행·경비·특이사항을 실시간 공유해요. 휴대폰에서 바꾼 내용은 ‘휴대폰’ 출처로 차량에 기록돼요.", saved.phoneSync) { value ->
+            act { repository.updateProfile(saved.copy(phoneSync = value)) }
+        }
         SwitchRow("시연 모드", "실제 차량 대신 15배속 시연 주행으로 기록해요. 시연 기록은 따로 표시되고 실제 기록과 섞이지 않아요.", saved.demoMode) { value ->
-            if (!value) DemoDrive.setMoving(false)
+            if (!value) { DemoDrive.setMoving(false); DemoDrive.setCharging(false) }
             act { repository.updateProfile(saved.copy(demoMode = value)) }
         }
         HorizontalDivider(color = LocalPleosColors.current.surfaceHigh)

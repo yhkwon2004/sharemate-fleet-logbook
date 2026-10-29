@@ -9,6 +9,7 @@ import ai.pleos.playground.navi.helper.NaviHelper
 import ai.pleos.playground.navi.helper.listener.NaviHelperEventListener
 import ai.pleos.playground.vehicle.Vehicle
 import ai.pleos.playground.vehicle.listener.DistanceDrivenListener
+import ai.pleos.playground.vehicle.listener.EvBatteryStateOfChargeListener
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -19,6 +20,7 @@ import android.car.VehicleGear
 import android.car.VehiclePropertyIds
 import android.car.hardware.CarPropertyValue
 import android.car.hardware.property.CarPropertyManager
+import android.car.hardware.property.EvChargeState
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -82,9 +84,14 @@ class PleosDriveSignals(context: Context) : DriveSignals {
     private var navi: NaviHelper? = null
     private var naviListener: NaviHelperEventListener? = null
     private var distanceListener: DistanceDrivenListener? = null
+    private var socListener: EvBatteryStateOfChargeListener? = null
     private var heartbeat: Job? = null
     private var gear = GearState.UNKNOWN
     private var odometer: Double? = null
+    // Vehicle card and charge-session inputs; optional, so a car without them still records trips.
+    private var charging: Boolean? = null
+    private var soc: Int? = null
+    private var vin: String? = null
     private var address: String? = null
     private var addressAt = -1L
     private var destination: String? = null
@@ -106,6 +113,13 @@ class PleosDriveSignals(context: Context) : DriveSignals {
         }
     }
 
+    private val chargeCallback = object : CarPropertyManager.CarPropertyEventCallback {
+        override fun onChangeEvent(value: CarPropertyValue<*>) {
+            scope.launch { if (active) onChargeState(if (value.status == CarPropertyValue.STATUS_AVAILABLE) value.value as? Int else null) }
+        }
+        override fun onErrorEvent(propertyId: Int, zone: Int) { scope.launch { if (active) onChargeState(null) } }
+    }
+
     override fun start() {
         if (active) return
         active = true
@@ -124,6 +138,7 @@ class PleosDriveSignals(context: Context) : DriveSignals {
                 // Listeners carry changes; the heartbeat refreshes values a platform may not push and keeps the trip alive.
                 readGear()
                 if (ticks % 2 == 0) readOdometer()
+                if (ticks % 2 == 1) readChargeState()
                 if (gear == GearState.MOVING && ticks % 4 == 0) requestLocation()
                 emit()
             }
@@ -145,9 +160,62 @@ class PleosDriveSignals(context: Context) : DriveSignals {
                     readOdometer()
                 }
             }, { error -> scope.launch { if (active) onOdometerFailure(error) } })
+            connectVehicleCard(v)
         } catch (error: Exception) {
             onOdometerFailure(error)
         }
+    }
+
+    /** Battery level and VIN fill the vehicle card; neither is required for trip detection, so failures are silent. */
+    private fun connectVehicleCard(v: Vehicle) {
+        runCatching {
+            v.getEvBattery().checkEvBatteryStateOfChargeCapabilities({
+                scope.launch {
+                    if (!active) return@launch
+                    val listener = object : EvBatteryStateOfChargeListener {
+                        override fun onEvBatteryStateOfChargeUpdated(value: Int?) { scope.launch { if (active) onSoc(value) } }
+                        override fun onFailed(e: Exception) { scope.launch { if (active) onSoc(null) } }
+                    }
+                    runCatching { v.getEvBattery().registerEvBatteryStateOfCharge(listener); socListener = listener }
+                    runCatching { v.getEvBattery().getEvBatteryStateOfCharge({ value -> scope.launch { if (active) onSoc(value) } }, {}) }
+                }
+            }, {})
+        }
+        runCatching {
+            v.getCarInfo().checkVINInfoCapabilities({
+                scope.launch {
+                    if (!active) return@launch
+                    runCatching { v.getCarInfo().getVINInfo({ value ->
+                        scope.launch { if (active) { vin = validVin(value); emit() } }
+                    }, {}) }
+                }
+            }, {})
+        }
+    }
+
+    private fun onSoc(value: Int?) {
+        soc = value?.takeIf { it in 0..100 }
+        emit()
+    }
+
+    private fun readChargeState() {
+        val manager = properties ?: return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        runCatching {
+            val value = manager.getProperty(Int::class.javaObjectType, VehiclePropertyIds.EV_CHARGE_STATE, 0)
+            onChargeState(if (value?.status == CarPropertyValue.STATUS_AVAILABLE) value.value else null)
+        }.onFailure { onChargeState(null) }
+    }
+
+    private fun onChargeState(value: Int?) {
+        val next = when (value) {
+            EvChargeState.STATE_CHARGING -> true
+            EvChargeState.STATE_NOT_CHARGING, EvChargeState.STATE_FULLY_CHARGED -> false
+            else -> null
+        }
+        if (next == charging) return
+        charging = next
+        emit()
     }
 
     private fun readOdometer() {
@@ -190,6 +258,11 @@ class PleosDriveSignals(context: Context) : DriveSignals {
                     readGear()
                     runCatching { manager.getProperty(String::class.java, VehiclePropertyIds.INFO_MODEL, 0)?.value?.takeIf { it.isNotBlank() } }
                         .getOrNull()?.let { mutableModel.value = it.take(60) }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        @Suppress("DEPRECATION")
+                        runCatching { manager.registerCallback(chargeCallback, VehiclePropertyIds.EV_CHARGE_STATE, CarPropertyManager.SENSOR_RATE_ONCHANGE) }
+                        readChargeState()
+                    }
                 }
             }
         } catch (error: Exception) {
@@ -306,7 +379,8 @@ class PleosDriveSignals(context: Context) : DriveSignals {
         mutableStatus.value = if (fresh) SignalStatus.READY else gearFailure ?: odometerFailure ?:
             if (gearAt < 0 || odometerAt < 0 || waitingForParkDistance) SignalStatus.STARTING else SignalStatus.ERROR
         mutableSamples.value = DriveSample(System.currentTimeMillis(), if (fresh) gear else GearState.UNKNOWN,
-            if (fresh) distance else null, freshNavigationAddress(address, if (addressAt < 0) Long.MAX_VALUE else now - addressAt), destination)
+            if (fresh) distance else null, freshNavigationAddress(address, if (addressAt < 0) Long.MAX_VALUE else now - addressAt), destination,
+            charging = charging, socPercent = soc, vin = vin)
     }
 
     override fun stop() {
@@ -315,7 +389,9 @@ class PleosDriveSignals(context: Context) : DriveSignals {
         invalidateNavigation()
         heartbeat?.cancel(); heartbeat = null
         runCatching { properties?.unregisterCallback(gearCallback) }
+        runCatching { properties?.unregisterCallback(chargeCallback) }
         distanceListener?.let { listener -> runCatching { vehicle?.getOdometer()?.unregisterDistanceDriven(listener) } }
+        socListener?.let { listener -> runCatching { vehicle?.getEvBattery()?.unregisterEvBatteryStateOfCharge(listener) } }
         naviListener?.let { listener -> runCatching { navi?.removeListener(listener) } }
         runCatching { navi?.release() }
         runCatching { vehicle?.release() }
@@ -328,8 +404,11 @@ class PleosDriveSignals(context: Context) : DriveSignals {
 /** Presentation drive at 15x speed, always labelled as demo data and kept on its own odometer chain. */
 object DemoDrive {
     private val mutableMoving = MutableStateFlow(false)
+    private val mutableCharging = MutableStateFlow(false)
     val moving: StateFlow<Boolean> = mutableMoving.asStateFlow()
-    fun setMoving(value: Boolean) { mutableMoving.value = value }
+    val charging: StateFlow<Boolean> = mutableCharging.asStateFlow()
+    fun setMoving(value: Boolean) { mutableMoving.value = value; if (value) mutableCharging.value = false }
+    fun setCharging(value: Boolean) { mutableCharging.value = value; if (value) mutableMoving.value = false }
 }
 
 private val demoPlaces = listOf(
@@ -351,16 +430,19 @@ class DemoDriveSignals(private val startOdometerKm: Double, private val tripCoun
             var odometer = startOdometerKm
             var leg = tripCount
             var moving = false
+            var soc = 68.0
             while (isActive) {
                 val nowMoving = DemoDrive.moving.value
+                val charging = DemoDrive.charging.value
                 if (nowMoving && !moving) leg++
                 moving = nowMoving
-                // 60 km/h at 15x speed: 0.25 km per second while moving.
-                if (moving) odometer += 0.25
+                // 60 km/h at 15x speed: 0.25 km per second while moving; the battery follows at a visible pace.
+                if (moving) { odometer += 0.25; soc = (soc - 0.05).coerceAtLeast(5.0) }
+                if (charging) soc = (soc + 0.5).coerceAtMost(100.0)
                 val (from, _) = demoPlaces[(leg - 1).mod(demoPlaces.size)]
                 val (to, name) = demoPlaces[leg.mod(demoPlaces.size)]
                 mutableSamples.value = DriveSample(System.currentTimeMillis(), if (moving) GearState.MOVING else GearState.PARK,
-                    odometer, if (moving) from else to, name, demo = true)
+                    odometer, if (moving) from else to, name, demo = true, charging = charging, socPercent = soc.toInt(), vin = "KMHDEMO0000000001")
                 delay(1_000)
             }
         }
@@ -375,6 +457,7 @@ class TripLogService : Service() {
     private var signals: DriveSignals? = null
     private var signalJobs: List<Job> = emptyList()
     private var demoMode: Boolean? = null
+    private var syncServer: SyncServer? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
@@ -390,6 +473,14 @@ class TripLogService : Service() {
         scope.launch {
             repository.ensureLoaded()
             repository.state.map { it.data.profile.demoMode }.distinctUntilChanged().collect { demo -> switchSignals(demo) }
+        }
+        scope.launch {
+            repository.ensureLoaded()
+            // The phone link lives with the recording service, so it is up whenever the car is.
+            repository.state.map { it.loaded && it.data.profile.phoneSync }.distinctUntilChanged().collect { enabled ->
+                if (enabled) { syncServer = SyncServer(this@TripLogService, repository).also { it.start() } }
+                else { syncServer?.stop(); syncServer = null }
+            }
         }
         scope.launch {
             repository.state.map { notificationText(it) }.distinctUntilChanged().collect { text ->
@@ -450,6 +541,7 @@ class TripLogService : Service() {
     override fun onDestroy() {
         signalJobs.forEach { it.cancel() }
         signals?.stop()
+        syncServer?.stop(); syncServer = null
         scope.cancel()
         super.onDestroy()
     }

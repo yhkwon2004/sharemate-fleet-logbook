@@ -23,6 +23,7 @@
     <uses-permission android:name="pleos.car.permission.CAR_CLIMATE" />
     <uses-permission android:name="pleos.car.permission.CAR_SAFETY" />
     <uses-permission android:name="pleos.car.permission.NAVI_ROUTE" />
+    <uses-permission android:name="pleos.car.permission.CAR_INFO" />
     <uses-permission android:name="android.car.permission.CAR_POWERTRAIN" />
     <uses-permission android:name="android.car.permission.CAR_ENERGY" />
     <uses-permission android:name="android.car.permission.CAR_INFO" />
