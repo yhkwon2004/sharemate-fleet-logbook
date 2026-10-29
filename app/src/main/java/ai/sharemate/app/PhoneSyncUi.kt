@@ -96,13 +96,19 @@ private fun phoneTime(at: Long, pattern: String = "HH:mm") = Instant.ofEpochMill
 }
 
 /** An open report mirrored from the car: the phone adds the words and the photos the car cannot. */
-@Composable internal fun PhoneIncidentCard(incident: Incident, data: TripLogData, busy: Boolean, send: (SyncCommand) -> Unit) {
+@Composable internal fun PhoneIncidentCard(incident: Incident, data: TripLogData, busy: Boolean, send: (SyncCommand) -> Unit,
+    photos: PhotoStore, photoVersion: Int, capture: (String) -> Unit, fetch: (String) -> Unit) {
     var note by rememberSaveable(incident.id, incident.note) { mutableStateOf(incident.note) }
     Panel(color = MaterialTheme.colorScheme.errorContainer.copy(alpha = .35f), padding = 20.dp) {
         Eyebrow("${incident.kind.label} · 대응 중 · ${phoneTime(incident.at, "M/d HH:mm")}", MaterialTheme.colorScheme.error)
         incidentSteps(incident.kind).forEachIndexed { index, step -> Text("${index + 1}. $step", style = MaterialTheme.typography.bodyMedium) }
         Muted(listOfNotNull(incident.odometerKm?.let { "계기판 %,.1f km".format(Locale.KOREA, it) }, incident.address,
             data.drivers.firstOrNull { it.id == incident.driverId }?.label).joinToString(" · ").ifBlank { "차량 정보 수신 대기" })
+        PhotoStrip(incident.photos, photos, photoVersion, size = 88.dp, missing = fetch, onRemove = { photo -> send(SyncCommand.RemovePhoto(incident.id, photo.id)) })
+        OutlinedButton(onClick = { capture(incident.id) }, enabled = !busy && incident.photos.size < MAX_INCIDENT_PHOTOS,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = RoundedCornerShape(14.dp)) {
+            Text(if (incident.photos.isEmpty()) "현장 사진 촬영 · 차량에 저장" else "사진 추가 촬영 (${incident.photos.size}/$MAX_INCIDENT_PHOTOS)")
+        }
         OutlinedTextField(note, { if (it.length <= 500) note = it }, Modifier.fillMaxWidth(), label = { Text("메모 · 상대 차량번호, 상황") }, minLines = 2, shape = RoundedCornerShape(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(onClick = { send(SyncCommand.UpdateIncident(incident.id, note, null, null)) }, enabled = !busy && note != incident.note,

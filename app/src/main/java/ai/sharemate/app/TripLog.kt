@@ -18,6 +18,14 @@ enum class EditSource(val label: String) { DRIVER("직접 선택"), VOICE("Gleo 
 enum class IncidentKind(val label: String) { ACCIDENT("사고"), DAMAGE("파손·긁힘"), BREAKDOWN("고장·경고"), OTHER("특이사항") }
 enum class IncidentStatus(val label: String) { OPEN("대응 중"), CLOSED("처리 완료") }
 
+internal const val MAX_INCIDENT_PHOTOS = 12
+internal const val MAX_PHOTO_BYTES = 1_500_000
+
+/** A JPEG kept beside the log under `<id>.jpg`; the bytes travel car↔phone separately from the JSON. */
+data class IncidentPhoto(val id: String, val at: Long, val source: EditSource, val bytes: Int)
+
+internal fun looksLikeJpeg(bytes: ByteArray) = bytes.size in 3..MAX_PHOTO_BYTES && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte()
+
 /** A field report captured from the vehicle at the moment it happened: time, odometer, place, trip and driver come from the car, not memory. */
 data class Incident(
     val id: String,
@@ -31,6 +39,7 @@ data class Incident(
     val status: IncidentStatus = IncidentStatus.OPEN,
     val updatedAt: Long = at,
     val demo: Boolean = false,
+    val photos: List<IncidentPhoto> = emptyList(),
 )
 
 /** A usable VIN: the emulator answers a quoted "invalid", and a real one is 17 characters without quotes. */

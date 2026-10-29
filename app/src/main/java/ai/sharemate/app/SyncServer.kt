@@ -149,17 +149,18 @@ class SyncServer(context: Context, private val repository: TripLogRepository) {
         val path = target.substringBefore('?')
         val query = target.substringAfter('?', "").split('&').filter { it.isNotEmpty() }.associate { it.substringBefore('=') to it.substringAfter('=', "") }
         val length = headers["content-length"]?.toIntOrNull() ?: 0
-        if (length > SYNC_MAX_BODY) throw IOException("Body too large")
+        if (length > (if (path == "/v2/photo") SYNC_MAX_PHOTO_BODY else SYNC_MAX_BODY)) throw IOException("Body too large")
         val body = ByteArray(length)
         var read = 0
         while (read < length) { val n = input.read(body, read, length - read); if (n < 0) throw IOException("Truncated body"); read += n }
         return Request(parts[0], path, query, headers, body)
     }
 
-    private fun respond(socket: Socket, status: Int, json: JSONObject) {
-        val bytes = json.toString().toByteArray(Charsets.UTF_8)
+    private fun respond(socket: Socket, status: Int, json: JSONObject) = respondBytes(socket, status, json.toString().toByteArray(Charsets.UTF_8), "application/json; charset=utf-8")
+
+    private fun respondBytes(socket: Socket, status: Int, bytes: ByteArray, contentType: String) {
         val reason = when (status) { 200 -> "OK"; 400 -> "Bad Request"; 401 -> "Unauthorized"; 404 -> "Not Found"; 429 -> "Too Many Requests"; else -> "Error" }
-        val head = "HTTP/1.1 $status $reason\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
+        val head = "HTTP/1.1 $status $reason\r\nContent-Type: $contentType\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
         socket.getOutputStream().apply { write(head.toByteArray()); write(bytes); flush() }
     }
 
@@ -189,6 +190,23 @@ class SyncServer(context: Context, private val repository: TripLogRepository) {
                     } catch (e: IllegalArgumentException) {
                         respond(socket, 400, JSONObject().put("error", "rejected").put("message", e.message ?: ""))
                     }
+                }
+                request.method == "POST" && request.path == "/v2/photo" -> {
+                    lastPhoneSeenAt = System.currentTimeMillis()
+                    val json = JSONObject(request.body.toString(Charsets.UTF_8))
+                    val jpeg = java.util.Base64.getDecoder().decode(json.getString("jpeg"))
+                    try {
+                        repository.attachPhoto(json.getString("incidentId"), json.getString("photoId"), jpeg, EditSource.PHONE)
+                        respond(socket, 200, JSONObject().put("ok", true).put("revision", repository.state.value.revision))
+                    } catch (e: IllegalArgumentException) {
+                        respond(socket, 400, JSONObject().put("error", "rejected").put("message", e.message ?: ""))
+                    }
+                }
+                request.method == "GET" && request.path == "/v2/photo" -> {
+                    val id = request.query["id"]?.takeIf(::validUuid)
+                    val known = id != null && repository.state.value.data.incidents.any { i -> i.photos.any { it.id == id } }
+                    val bytes = if (known) repository.photos.load(id!!) else null
+                    if (bytes == null) respond(socket, 404, JSONObject().put("error", "not_found")) else respondBytes(socket, 200, bytes, "image/jpeg")
                 }
                 request.method == "POST" && request.path == "/v2/unpair" -> {
                     tokens = tokens.filterNot { it == token }

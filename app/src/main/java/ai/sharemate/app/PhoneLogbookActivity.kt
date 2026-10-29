@@ -87,6 +87,28 @@ class PhoneLogbookActivity : ComponentActivity() {
     // Edits go to the car and come back through the live copy, so the phone never writes the log on its own.
     val send: (SyncCommand) -> Unit = { command -> act { sync.send(command) } }
     LaunchedEffect(Unit) { sync.start() }
+    val photoVersion by sync.photoVersion.collectAsState()
+    // The camera writes a full-size capture into the evidence folder; it is shrunk, stored under a fresh id, sent to the car, and the original deleted.
+    var captureFor by rememberSaveable { mutableStateOf<String?>(null) }
+    val captureFile = remember { File(File(context.filesDir, "evidence").apply { mkdirs() }, "incident-capture.jpg") }
+    val camera = androidx.activity.compose.rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val incidentId = captureFor
+        captureFor = null
+        if (ok && incidentId != null) act {
+            val id = java.util.UUID.randomUUID().toString()
+            val bytes = withContext(Dispatchers.IO) { try { shrinkJpeg(captureFile) } finally { captureFile.delete() } }
+            withContext(Dispatchers.IO) { repository.photos.save(id, bytes) }
+            try { sync.uploadPhoto(incidentId, id, bytes) }
+            catch (e: Exception) { withContext(Dispatchers.IO) { repository.photos.delete(id) }; throw e }
+            sync.photoVersion.value += 1
+        } else captureFile.delete()
+    }
+    val capture: (String) -> Unit = { incidentId ->
+        captureFor = incidentId
+        runCatching { camera.launch(androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.evidence", captureFile)) }
+            .onFailure { captureFor = null; error = "카메라를 열 수 없어요. 카메라 앱이 있는지 확인해 주세요." }
+    }
+    val fetchPhoto: (String) -> Unit = { id -> scope.launch { sync.fetchPhoto(id) } }
     val import: (Uri) -> Unit = { uri -> act {
         val copy = withContext(Dispatchers.IO) {
             val bytes = context.contentResolver.openInputStream(uri)?.use { stream ->
@@ -182,7 +204,7 @@ class PhoneLogbookActivity : ComponentActivity() {
                     if (paired) {
                         // What the car is asking for right now, mirrored so the passenger or the office can answer it.
                         data.open?.let { open -> PhoneOpenTripCard(open, link) }
-                        openIncidents(data).forEach { incident -> PhoneIncidentCard(incident, data, busy, send) }
+                        openIncidents(data).forEach { incident -> PhoneIncidentCard(incident, data, busy, send, repository.photos, photoVersion, capture, fetchPhoto) }
                         data.pendingCharge?.takeIf { it.demo == data.profile.demoMode }?.let { session -> PhoneChargeCard(session, busy, send) }
                         PhoneIncidentButtons(busy, send)
                     }

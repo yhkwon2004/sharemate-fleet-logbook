@@ -20,6 +20,7 @@ class SyncProtocolTest {
             SyncCommand.ReportIncident(IncidentKind.ACCIDENT, ""),
             SyncCommand.UpdateIncident(otherId, "상대 차량 12가 3456", IncidentStatus.CLOSED, null),
             SyncCommand.UpdateIncident(otherId, null, null, IncidentKind.DAMAGE),
+            SyncCommand.RemovePhoto(otherId, tripId),
         )
         commands.forEach { command -> assertEquals(command, parseSyncCommand(JSONObject(encodeSyncCommand(command).toString()))) }
     }
@@ -76,13 +77,24 @@ class SyncProtocolTest {
     }
 
     @Test fun codecKeepsVehicleCardIncidentsAndPendingCharge() {
-        val incident = Incident("0b2d4f6a-8c1e-4a3b-9d7f-1e2c3b4a5d6e", 10_000, IncidentKind.DAMAGE, 321.0, "서울 중구", null, null, "주차 중 긁힘", IncidentStatus.CLOSED, 11_000)
+        val incident = Incident("0b2d4f6a-8c1e-4a3b-9d7f-1e2c3b4a5d6e", 10_000, IncidentKind.DAMAGE, 321.0, "서울 중구", null, null, "주차 중 긁힘", IncidentStatus.CLOSED, 11_000,
+            photos = listOf(IncidentPhoto("6f1c9c2e-0d8a-4b4e-9f1e-0a3c2b1d4e5f", 10_500, EditSource.PHONE, 240_000)))
         val data = TripLogData(profile = FleetProfile(phoneSync = true), vehicle = VehicleCard("IONIQ 5", "KMH0000000000001", 321.0, 77, 9_000),
             incidents = listOf(incident), pendingCharge = ChargeSession(1_000, 70_000, 30, 55, 320.0))
         val copy = TripLogCodec.decode(TripLogCodec.encode(data))
         assertEquals(data.vehicle, copy.vehicle); assertEquals(listOf(incident), copy.incidents); assertEquals(data.pendingCharge, copy.pendingCharge)
         assertTrue(copy.profile.phoneSync)
         assertEquals(listOf("사고"), IncidentKind.entries.filter { incidentSteps(it).any { step -> step.contains("112") } }.map { it.label })
+    }
+
+    @Test fun duplicatePhotoIdsAndNonJpegBytesAreRejected() {
+        val photo = IncidentPhoto("6f1c9c2e-0d8a-4b4e-9f1e-0a3c2b1d4e5f", 1, EditSource.PHONE, 10)
+        val a = Incident("0b2d4f6a-8c1e-4a3b-9d7f-1e2c3b4a5d6e", 10_000, IncidentKind.DAMAGE, null, null, null, null, photos = listOf(photo))
+        val b = a.copy(id = "7c3e5a1b-2d4f-4e6a-8b9c-0d1e2f3a4b5c")
+        assertThrows(Exception::class.java) { TripLogCodec.decode(TripLogCodec.encode(TripLogData(incidents = listOf(a, b)))) }
+        assertTrue(looksLikeJpeg(byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0)))
+        assertFalse(looksLikeJpeg(byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47)))
+        assertFalse(looksLikeJpeg(ByteArray(0)))
     }
 
     @Test fun emulatorPlaceholderVinIsNotAVin() {

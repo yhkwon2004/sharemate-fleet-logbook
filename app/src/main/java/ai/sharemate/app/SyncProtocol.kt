@@ -37,7 +37,15 @@ sealed interface SyncCommand {
     data class ResolveCharge(val amountWon: Long?) : SyncCommand
     data class ReportIncident(val kind: IncidentKind, val note: String) : SyncCommand
     data class UpdateIncident(val id: String, val note: String?, val status: IncidentStatus?, val kind: IncidentKind?) : SyncCommand
+    data class RemovePhoto(val incidentId: String, val photoId: String) : SyncCommand
 }
+
+/*
+ * Photos are binary, so they bypass the command channel:
+ *   POST /v2/photo   {incidentId, photoId, jpeg: base64}   -> {ok, revision}   phone-generated UUID, JPEG ≤ 1.5 MB
+ *   GET  /v2/photo?id=<photoId>                             -> image/jpeg      for a phone that joined after the photo was taken
+ */
+internal const val SYNC_MAX_PHOTO_BODY = 2_200_000
 
 private fun JSONObject.id(key: String): String = getString(key).also { require(validUuid(it)) { "식별자가 올바르지 않아요." } }
 
@@ -54,6 +62,7 @@ internal fun parseSyncCommand(json: JSONObject): SyncCommand = when (val type = 
     "updateIncident" -> SyncCommand.UpdateIncident(json.id("id"), if (json.isNull("note")) null else json.getString("note").also { require(it.length <= 500) },
         if (json.isNull("status")) null else IncidentStatus.valueOf(json.getString("status")),
         if (json.isNull("kind")) null else IncidentKind.valueOf(json.getString("kind")))
+    "removePhoto" -> SyncCommand.RemovePhoto(json.id("incidentId"), json.id("photoId"))
     else -> throw IllegalArgumentException("Unknown command: $type")
 }
 
@@ -67,6 +76,7 @@ internal fun encodeSyncCommand(command: SyncCommand): JSONObject = when (command
     is SyncCommand.ReportIncident -> JSONObject().put("type", "reportIncident").put("kind", command.kind.name).put("note", command.note)
     is SyncCommand.UpdateIncident -> JSONObject().put("type", "updateIncident").put("id", command.id).put("note", command.note ?: JSONObject.NULL)
         .put("status", command.status?.name ?: JSONObject.NULL).put("kind", command.kind?.name ?: JSONObject.NULL)
+    is SyncCommand.RemovePhoto -> JSONObject().put("type", "removePhoto").put("incidentId", command.incidentId).put("photoId", command.photoId)
 }
 
 /** What the phone sees of the car: the whole log only when the saved log moved, live signals every time. */

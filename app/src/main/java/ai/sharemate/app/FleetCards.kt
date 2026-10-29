@@ -1,8 +1,18 @@
 package ai.sharemate.app
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.Dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -138,12 +148,43 @@ private fun incidentCaption(kind: IncidentKind) = when (kind) {
             Stat("계기판", km(incident.odometerKm), Modifier.weight(1f))
             Stat("사용자", driver?.name ?: "미지정", Modifier.weight(1f))
         }
-        Muted(incident.address?.let { "위치 · $it" } ?: "위치 · 내비 주소 미수신 (휴대폰 사진에 위치가 남아요)")
+        Muted(incident.address?.let { "위치 · $it" } ?: "위치 · 내비 주소 미수신")
         if (incident.note.isNotBlank()) Text(incident.note, style = MaterialTheme.typography.bodyMedium)
-        Muted(if (data.profile.phoneSync) "휴대폰 SHAREMATE에 같은 기록이 떠 있어요. 사진과 메모는 휴대폰에서 덧붙이세요." else "사진·메모는 휴대폰에서 덧붙일 수 있어요. 설정에서 휴대폰 실시간 연동을 켜 주세요.")
+        PhotoStrip(incident.photos, repository.photos, size = 112.dp, onRemove = { photo -> act { repository.removePhoto(incident.id, photo.id) } })
+        Muted(when {
+            incident.photos.isNotEmpty() -> "사진 ${incident.photos.size}장 · 휴대폰에서 촬영해 차량에 저장됐어요."
+            data.profile.phoneSync -> "휴대폰 SHAREMATE에 같은 기록이 떠 있어요. 현장 사진과 메모는 휴대폰에서 덧붙이세요."
+            else -> "사진·메모는 휴대폰에서 덧붙일 수 있어요. 설정에서 휴대폰 실시간 연동을 켜 주세요."
+        })
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             PrimaryAction("처리 완료", Modifier.weight(1f)) { act { repository.updateIncident(incident.id, status = IncidentStatus.CLOSED) } }
             QuietAction("기록 삭제", Modifier.weight(1f), color = pleos.negative) { act { repository.deleteIncident(incident.id) } }
+        }
+    }
+}
+
+/**
+ * Thumbnails for a report's photos. A photo whose file is not on this device yet shows a placeholder and asks [missing]
+ * to fetch it; [version] bumps when a fetch lands so the strip re-reads the files.
+ */
+@Composable internal fun PhotoStrip(photos: List<IncidentPhoto>, store: PhotoStore, version: Int = 0, size: Dp = 96.dp,
+    missing: ((String) -> Unit)? = null, onRemove: ((IncidentPhoto) -> Unit)? = null) {
+    if (photos.isEmpty()) return
+    val pleos = LocalPleosColors.current
+    Row(Modifier.horizontalScroll(rememberScrollState()).semantics { contentDescription = "첨부 사진 ${photos.size}장" }, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        photos.forEach { photo ->
+            val file = store.file(photo.id)
+            val bitmap by produceState<android.graphics.Bitmap?>(null, photo.id, version) { value = withContext(Dispatchers.IO) { thumbnail(file) } }
+            LaunchedEffect(photo.id, version) { if (!file.exists()) missing?.invoke(photo.id) }
+            Box(Modifier.size(size).clip(RoundedCornerShape(14.dp)).background(pleos.surfaceHigh)) {
+                bitmap?.let { Image(it.asImageBitmap(), "사진 ${clock(photo.at)} · ${photo.source.label}", Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                    ?: Text(if (missing != null) "받는 중" else "사진 없음", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.align(Alignment.Center))
+                if (onRemove != null) Surface(onClick = { onRemove(photo) }, shape = CircleShape, color = Color.Black.copy(alpha = .55f), contentColor = Color.White,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(28.dp).semantics { role = Role.Button; contentDescription = "사진 삭제" }) {
+                    Text("×", textAlign = TextAlign.Center, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 2.dp))
+                }
+            }
         }
     }
 }
@@ -162,7 +203,7 @@ private fun incidentCaption(kind: IncidentKind) = when (kind) {
                 Box(Modifier.size(10.dp).clip(CircleShape).background(if (open) pleos.negative else pleos.chartActive))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text("${incident.kind.label} · ${SimpleDateFormat("M/d HH:mm", Locale.KOREA).format(Date(incident.at))}", style = MaterialTheme.typography.titleSmall)
-                    Text(listOfNotNull(incident.odometerKm?.let(::km), incident.address, incident.note.ifBlank { null }).joinToString(" · ").ifBlank { "상세 없음" },
+                    Text(listOfNotNull(incident.odometerKm?.let(::km), incident.address, incident.photos.size.takeIf { it > 0 }?.let { "사진 ${it}장" }, incident.note.ifBlank { null }).joinToString(" · ").ifBlank { "상세 없음" },
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 TextButton(onClick = { act { repository.updateIncident(incident.id, status = if (open) IncidentStatus.CLOSED else IncidentStatus.OPEN) } },

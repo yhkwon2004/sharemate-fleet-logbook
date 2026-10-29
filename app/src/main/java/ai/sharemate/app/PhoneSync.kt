@@ -34,6 +34,8 @@ class PhoneSyncClient private constructor(context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mutableLink = MutableStateFlow(PhoneLink())
     val link: StateFlow<PhoneLink> = mutableLink.asStateFlow()
+    /** Bumps whenever a photo file lands on this phone, so thumbnails re-read the store. */
+    val photoVersion = MutableStateFlow(0)
     private var job: Job? = null
     @Volatile private var config: LinkConfig? = runCatching { store.load() }.getOrNull()
     val paired get() = config != null
@@ -133,6 +135,21 @@ class PhoneSyncClient private constructor(context: Context) {
     }
 
     fun stop() { job?.cancel(); job = null }
+
+    /** Uploads a JPEG the phone already stored under [photoId]; the car records it and the entry comes back through the mirror. */
+    suspend fun uploadPhoto(incidentId: String, photoId: String, jpeg: ByteArray) {
+        val current = config ?: throw IllegalArgumentException("차량과 먼저 연결해 주세요.")
+        val payload = JSONObject().put("incidentId", incidentId).put("photoId", photoId).put("jpeg", java.util.Base64.getEncoder().encodeToString(jpeg))
+        val result = store.request(current, "/v2/photo", payload, timeoutMillis = 20_000)
+        require(result.optBoolean("ok")) { result.optString("message").ifBlank { "차량이 사진을 받지 않았어요." } }
+    }
+
+    /** Pulls a photo another device attached, so every paired phone can see the whole report. */
+    suspend fun fetchPhoto(photoId: String): ByteArray? {
+        val current = config ?: return null
+        return runCatching { store.download(current, "/v2/photo?id=$photoId") }.getOrNull()?.takeIf(::looksLikeJpeg)
+            ?.also { bytes -> withContext(Dispatchers.IO) { repository.photos.save(photoId, bytes) }; photoVersion.update { it + 1 } }
+    }
 
     /** Sends one edit to the car and waits for the next revision so the phone screen updates right away. */
     suspend fun send(command: SyncCommand) {

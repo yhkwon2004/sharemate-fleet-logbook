@@ -63,6 +63,7 @@ data class TripLogState(
 /** Single owner of the trip log, shared by the recording service, the car screen, and Gleo voice actions. */
 class TripLogRepository private constructor(context: Context) {
     private val store = TripStore(context)
+    internal val photos = PhotoStore(context)
     private val mutex = Mutex()
     private val mutableState = MutableStateFlow(TripLogState())
     val state: StateFlow<TripLogState> = mutableState.asStateFlow()
@@ -193,7 +194,36 @@ class TripLogRepository private constructor(context: Context) {
         })
     }
 
-    suspend fun deleteIncident(id: String) = mutate { data -> data.copy(incidents = data.incidents.filterNot { it.id == id }) }
+    suspend fun deleteIncident(id: String) {
+        val orphaned = state.value.data.incidents.firstOrNull { it.id == id }?.photos.orEmpty()
+        mutate { data -> data.copy(incidents = data.incidents.filterNot { it.id == id }) }
+        withContext(Dispatchers.IO) { orphaned.forEach { photos.delete(it.id) } }
+    }
+
+    /** Stores the JPEG first, then records it; a crash between the two leaves an unreferenced file, never a dangling entry. */
+    suspend fun attachPhoto(incidentId: String, photoId: String, jpeg: ByteArray, source: EditSource): IncidentPhoto {
+        require(validUuid(photoId)) { "사진 식별자가 올바르지 않아요." }
+        require(looksLikeJpeg(jpeg)) { "JPEG 사진만 첨부할 수 있어요 (최대 1.5MB)." }
+        val photo = IncidentPhoto(photoId, System.currentTimeMillis(), source, jpeg.size)
+        withContext(Dispatchers.IO) { photos.save(photoId, jpeg) }
+        try {
+            mutate { data ->
+                val incident = data.incidents.firstOrNull { it.id == incidentId } ?: throw IllegalArgumentException("특이사항 기록을 찾지 못했어요.")
+                require(incident.photos.size < MAX_INCIDENT_PHOTOS) { "사진은 기록당 ${MAX_INCIDENT_PHOTOS}장까지 첨부할 수 있어요." }
+                require(data.incidents.none { i -> i.photos.any { it.id == photoId } }) { "이미 첨부된 사진이에요." }
+                data.copy(incidents = data.incidents.map { if (it.id == incidentId) it.copy(photos = it.photos + photo, updatedAt = photo.at) else it })
+            }
+        } catch (e: Exception) { withContext(Dispatchers.IO) { photos.delete(photoId) }; throw e }
+        return photo
+    }
+
+    suspend fun removePhoto(incidentId: String, photoId: String) {
+        mutate { data ->
+            require(data.incidents.any { it.id == incidentId }) { "특이사항 기록을 찾지 못했어요." }
+            data.copy(incidents = data.incidents.map { if (it.id == incidentId) it.copy(photos = it.photos.filterNot { p -> p.id == photoId }, updatedAt = System.currentTimeMillis()) else it })
+        }
+        withContext(Dispatchers.IO) { photos.delete(photoId) }
+    }
 
     /** Applies an edit sent by a paired phone; every change is attributed to the phone in the trip history. */
     suspend fun applyCommand(command: SyncCommand) {
@@ -206,6 +236,7 @@ class TripLogRepository private constructor(context: Context) {
             is SyncCommand.ResolveCharge -> resolveCharge(command.amountWon, EditSource.PHONE)
             is SyncCommand.ReportIncident -> reportIncident(command.kind, command.note, EditSource.PHONE)
             is SyncCommand.UpdateIncident -> updateIncident(command.id, command.note, command.status, command.kind)
+            is SyncCommand.RemovePhoto -> removePhoto(command.incidentId, command.photoId)
         }
     }
 
@@ -401,7 +432,8 @@ internal object TripLogCodec {
         } ?: VehicleCard()
         val incidents = json.optJSONArray("incidents")?.objects()?.map { i ->
             Incident(i.getString("id"), i.getLong("at"), IncidentKind.valueOf(i.getString("kind")), if (i.isNull("odometerKm")) null else i.getDouble("odometerKm"),
-                i.text("address"), i.text("tripId"), i.text("driverId"), i.getString("note"), IncidentStatus.valueOf(i.getString("status")), i.getLong("updatedAt"), i.optBoolean("demo"))
+                i.text("address"), i.text("tripId"), i.text("driverId"), i.getString("note"), IncidentStatus.valueOf(i.getString("status")), i.getLong("updatedAt"), i.optBoolean("demo"),
+                i.optJSONArray("photos")?.objects()?.map { p -> IncidentPhoto(p.getString("id"), p.getLong("at"), EditSource.valueOf(p.getString("source")), p.getInt("bytes")) }.orEmpty())
         }.orEmpty()
         val charge = json.optJSONObject("pendingCharge")?.let { c ->
             ChargeSession(c.getLong("startAt"), c.getLong("endAt"), if (c.isNull("socFrom")) null else c.getInt("socFrom"),
@@ -428,7 +460,8 @@ internal object TripLogCodec {
                 .put("odometerKm", data.vehicle.odometerKm ?: JSONObject.NULL).put("socPercent", data.vehicle.socPercent ?: JSONObject.NULL).put("capturedAt", data.vehicle.capturedAt))
             .put("incidents", JSONArray(data.incidents.map { i -> JSONObject().put("id", i.id).put("at", i.at).put("kind", i.kind.name)
                 .put("odometerKm", i.odometerKm ?: JSONObject.NULL).put("address", i.address ?: JSONObject.NULL).put("tripId", i.tripId ?: JSONObject.NULL)
-                .put("driverId", i.driverId ?: JSONObject.NULL).put("note", i.note).put("status", i.status.name).put("updatedAt", i.updatedAt).put("demo", i.demo) }))
+                .put("driverId", i.driverId ?: JSONObject.NULL).put("note", i.note).put("status", i.status.name).put("updatedAt", i.updatedAt).put("demo", i.demo)
+                .put("photos", JSONArray(i.photos.map { p -> JSONObject().put("id", p.id).put("at", p.at).put("source", p.source.name).put("bytes", p.bytes) })) }))
             .put("pendingCharge", data.pendingCharge?.let { c -> JSONObject().put("startAt", c.startAt).put("endAt", c.endAt).put("socFrom", c.socFrom ?: JSONObject.NULL)
                 .put("socTo", c.socTo ?: JSONObject.NULL).put("odometerKm", c.odometerKm ?: JSONObject.NULL).put("demo", c.demo) } ?: JSONObject.NULL)
         return json.toString().toByteArray(Charsets.UTF_8)
@@ -459,7 +492,9 @@ internal object TripLogCodec {
         .put("history", JSONArray(t.history)).put("updatedAt", t.updatedAt)
 
     private fun validate(data: TripLogData) {
-        require(data.incidents.size <= 500 && data.incidents.all { validUuid(it.id) && it.at > 0 && it.note.length <= 500 })
+        require(data.incidents.size <= 500 && data.incidents.all { validUuid(it.id) && it.at > 0 && it.note.length <= 500 &&
+            it.photos.size <= MAX_INCIDENT_PHOTOS && it.photos.all { p -> validUuid(p.id) && p.bytes in 1..MAX_PHOTO_BYTES } })
+        require(data.incidents.flatMap { it.photos }.map { it.id }.let { it.size == it.toSet().size })
         require(data.vehicle.model.orEmpty().length <= 60 && data.vehicle.vin.orEmpty().length <= 40)
         require(data.drivers.size <= 50 && data.drivers.map { it.id }.distinct().size == data.drivers.size)
         data.drivers.forEach { require(validUuid(it.id) && it.name.isNotBlank() && it.name.length <= 30 && it.department.length <= 30) }

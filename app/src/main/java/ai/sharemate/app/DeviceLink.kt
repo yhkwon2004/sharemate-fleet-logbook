@@ -37,7 +37,25 @@ internal class DeviceLink(context: Context, role: String) {
     }
     fun clear() = file.delete()
 
-    suspend fun request(config: LinkConfig, path: String, payload: JSONObject? = null, timeoutMillis: Long? = null): JSONObject = withContext(Dispatchers.IO) {
+    /** Fetches a binary resource (an incident photo) over the same pinned connection; errors arrive as JSON like everywhere else. */
+    suspend fun download(config: LinkConfig, path: String, maxBytes: Int = 2_000_000): ByteArray = withContext(Dispatchers.IO) {
+        val connection = open(config, path)
+        try {
+            connection.connectTimeout = 4_000; connection.readTimeout = 15_000
+            connection.setRequestProperty("Authorization", "Bearer ${config.token}")
+            val status = connection.responseCode
+            require(status == 200) { "사진을 받지 못했어요 ($status)." }
+            connection.inputStream.use { stream ->
+                val output = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8_192)
+                while (true) { val count = stream.read(buffer); if (count < 0) break; require(output.size() + count <= maxBytes); output.write(buffer, 0, count) }
+                output.toByteArray()
+            }
+        } finally { connection.disconnect() }
+    }
+
+    /** The exact certificate is explicitly paired; arbitrary self-signed certificates are never trusted. */
+    private fun open(config: LinkConfig, path: String): HttpsURLConnection {
         val trust = object : X509TrustManager {
             override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
             override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) { throw java.security.cert.CertificateException() }
@@ -49,17 +67,21 @@ internal class DeviceLink(context: Context, role: String) {
             }
         }
         val ssl = SSLContext.getInstance("TLS").apply { init(null, arrayOf<TrustManager>(trust), null) }
-        val connection = URI(config.endpoint + path).toURL().openConnection() as HttpsURLConnection
+        return (URI(config.endpoint + path).toURL().openConnection() as HttpsURLConnection).apply {
+            sslSocketFactory = ssl.socketFactory
+            hostnameVerifier = javax.net.ssl.HostnameVerifier { host, _ -> host == URI(config.endpoint).host }
+            instanceFollowRedirects = false
+        }
+    }
+
+    suspend fun request(config: LinkConfig, path: String, payload: JSONObject? = null, timeoutMillis: Long? = null): JSONObject = withContext(Dispatchers.IO) {
+        val connection = open(config, path)
         try {
-            connection.sslSocketFactory = ssl.socketFactory
-            // The exact certificate is explicitly paired; never trust arbitrary self-signed certificates.
-            connection.hostnameVerifier = javax.net.ssl.HostnameVerifier { host, _ -> host == URI(config.endpoint).host }
             connection.connectTimeout = 4_000; connection.readTimeout = timeoutMillis?.toInt() ?: if (path == "/v1/analyze") 75_000 else 4_000
-            connection.instanceFollowRedirects = false
             connection.setRequestProperty("Authorization", "Bearer ${config.token}")
             if (payload != null) {
                 val bytes = payload.toString().toByteArray(Charsets.UTF_8)
-                require(bytes.size <= if (path == "/v1/analyze") 4_200_000 else 262_144)
+                require(bytes.size <= when (path) { "/v1/analyze" -> 4_200_000; "/v2/photo" -> SYNC_MAX_PHOTO_BODY; else -> 262_144 })
                 connection.requestMethod = "POST"; connection.doOutput = true
                 connection.setRequestProperty("Content-Type", "application/json")
                 connection.setFixedLengthStreamingMode(bytes.size)
