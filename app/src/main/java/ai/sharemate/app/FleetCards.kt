@@ -224,11 +224,12 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
     val minutes = ((session.endAt - session.startAt) / 60_000).coerceAtLeast(1)
     val soc = if (session.socFrom != null && session.socTo != null) "${session.socFrom}% → ${session.socTo}%" else "배터리 변화 미수신"
     Panel {
-        Eyebrow("충전 종료 감지 · ${clock(session.startAt)}–${clock(session.endAt)}", pleos.active)
-        Text("충전 비용만 알려 주세요", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
+        val word = if (session.fuel) "주유" else "충전"
+        Eyebrow("$word 감지 · ${clock(session.startAt)}–${clock(session.endAt)}", pleos.active)
+        Text("$word 비용만 알려 주세요", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
         Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-            Stat("배터리", soc, Modifier.weight(1.2f))
-            Stat("충전 시간", "${minutes}분", Modifier.weight(1f))
+            Stat(if (session.fuel) "연료" else "배터리", soc, Modifier.weight(1.2f))
+            Stat("$word 시간", "${minutes}분", Modifier.weight(1f))
             Stat("계기판", km(session.odometerKm), Modifier.weight(1f))
         }
         BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -332,5 +333,73 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
         }
         Muted(if (enabled) "차량이 원본이고 휴대폰은 거울이에요. 휴대폰에서 바꾼 목적·경비·특이사항은 차량 기록에 ‘휴대폰’ 출처로 남아요."
             else "설정 › 기록에서 켜면 휴대폰 SHAREMATE가 운행·경비·특이사항을 실시간으로 받고, 정차 중 입력도 휴대폰에서 할 수 있어요.")
+    }
+}
+
+// ───────────────────────── 자동 완성 ─────────────────────────
+
+/** Month progress in one line of numbers: how much of the logbook finished itself and what is left for a person. */
+@Composable internal fun AutopilotStrip(data: TripLogData, now: Long, modifier: Modifier = Modifier) {
+    if (!data.profile.autopilot) return
+    val today = java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+    val summary = autopilotSummary(data, today.withDayOfMonth(1), today, java.time.ZoneId.systemDefault())
+    val pleos = LocalPleosColors.current
+    val headline: @Composable (Modifier) -> Unit = { place ->
+        Column(place, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("이달 운행일지 ${summary.percent?.let { "$it%" } ?: "—"} 완성", style = MaterialTheme.typography.titleMedium, maxLines = 1)
+            Text(if (summary.left > 0) "남은 확인 ${summary.left}건" else "사람이 확인할 일 없음", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+    val numbers: @Composable RowScope.() -> Unit = {
+        Stat("목적 자동 분류", "${summary.autoPurpose}건", Modifier.weight(1f))
+        Stat("카드 자동 반영", "${summary.cardMatched}건 · ${formatWon(summary.cardWon)}", Modifier.weight(1.5f))
+    }
+    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = pleos.surfaceHigh) {
+        BoxWithConstraints(Modifier.padding(horizontal = 18.dp, vertical = 14.dp).semantics(mergeDescendants = true) {}) {
+            if (maxWidth < 560.dp) Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                headline(Modifier)
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), content = numbers)
+            } else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                headline(Modifier.weight(1.2f))
+                numbers()
+            }
+        }
+    }
+}
+
+/** The only card question the car ever asks: one payment, the trip it probably belongs to, yes or no. */
+@Composable internal fun ChargeReviewCard(charge: CardCharge, remaining: Int, data: TripLogData, act: Act, repository: TripLogRepository) {
+    val pleos = LocalPleosColors.current
+    val trip = suggestedTrip(charge, data)
+    val moment = SimpleDateFormat(if (charge.timeKnown) "M/d HH:mm" else "M/d", Locale.KOREA).format(Date(charge.at))
+    Panel {
+        Eyebrow(if (remaining > 1) "카드 결제 확인 ${remaining}건 · 한 건씩" else "카드 결제 확인", pleos.active)
+        Text(trip?.let { "이 운행의 비용이 맞나요?" } ?: "어느 운행의 비용인지 찾지 못했어요", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
+        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text(formatWon(charge.amountWon), style = MaterialTheme.typography.displaySmall.copy(fontFeatureSettings = "tnum"))
+            Muted("$moment · ${charge.category?.label ?: "차량 비용 추정"}", Modifier.padding(bottom = 6.dp))
+        }
+        Text(charge.merchant, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        trip?.let { Muted("${clock(it.startAt)} 출발 · ${km(it.distanceKm)} · ${it.destination ?: it.endAddress ?: "주소 미기록"}") }
+        if (charge.reason.isNotBlank()) Muted("판단 근거 · ${charge.reason}")
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (trip != null) PrimaryAction("맞아요", Modifier.weight(1f)) { act { repository.confirmCardCharge(charge.id, trip.id) } }
+            QuietAction("회사 비용 아님", Modifier.weight(1f)) { act { repository.excludeCardCharge(charge.id) } }
+        }
+    }
+}
+
+/** Settings for the hands-off behaviour: the switch and which cards count as the company's. */
+@Composable internal fun AutopilotSettings(saved: FleetProfile, act: Act, repository: TripLogRepository, field: @Composable (String, (String) -> Unit) -> Unit) {
+    var cards by rememberSaveable(saved.cards) { mutableStateOf(saved.cards.joinToString(", ")) }
+    val parsed = cards.split(',', ' ').map { it.trim() }.filter { it.isNotEmpty() }
+    val valid = parsed.size <= 10 && parsed.all { it.matches(Regex("[0-9]{4}")) }
+    Panel {
+        Eyebrow("자동 완성")
+        Muted("반복 도착지는 목적을 스스로 채우고, 휴대폰이 받은 카드 승인을 차량 기록과 맞춰 비용에 넣습니다. 자동으로 들어간 항목은 ‘자동 분류’·‘카드 자동 매칭’으로 표시되고 언제든 고칠 수 있어요.")
+        field(cards) { value -> if (value.length <= 60 && value.all { it.isDigit() || it == ',' || it == ' ' }) cards = value }
+        if (!valid) Text("끝 4자리 숫자를 쉼표로 구분해 입력해 주세요.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+        Muted("등록하면 다른 카드의 알림은 무시하고, 가맹점 이름만으로 알 수 없는 결제도 차량 기록과 맞춰 봅니다. 등록하지 않으면 주유·충전·통행료·주차로 확인되는 결제만 받습니다.")
+        PrimaryAction("카드 저장", Modifier.fillMaxWidth(), enabled = valid && parsed != saved.cards) { act { repository.updateProfile(saved.copy(cards = parsed)) } }
     }
 }

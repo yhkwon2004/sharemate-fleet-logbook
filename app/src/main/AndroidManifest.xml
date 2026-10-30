@@ -67,6 +67,13 @@
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Records corporate vehicle trips from gear and odometer signals for the statutory driving logbook" />
         </service>
+        <!-- Phone only: reads card approval alerts after the user grants notification access in system settings. -->
+        <service android:name=".CardNotificationService" android:exported="true" android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
         <receiver android:name=".TripLogBootReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

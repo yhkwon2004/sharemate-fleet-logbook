@@ -166,3 +166,34 @@ private fun phoneTime(at: Long, pattern: String = "HH:mm") = Instant.ofEpochMill
     OutlinedTextField(note, { if (it.length <= 300) note = it }, Modifier.fillMaxWidth(), label = { Text("메모") }, shape = RoundedCornerShape(14.dp))
     if (note != trip.note) TextButton(onClick = { send(SyncCommand.Note(trip.id, note)) }, enabled = !busy) { Text("메모 저장") }
 }
+
+/** Status and setup for the card feed: the alert permission, what is waiting to reach the car, and the month-end file. */
+@Composable internal fun PhoneCardLinkCard(granted: Boolean, queued: Int, busy: Boolean, openSettings: () -> Unit, importStatement: () -> Unit) {
+    Panel(padding = 20.dp) {
+        Eyebrow("카드 자동 연동")
+        Text(if (granted) "카드 승인 알림을 차량 기록과 맞추고 있어요" else "카드 승인 알림을 연결하면 비용이 저절로 채워져요", style = MaterialTheme.typography.titleMedium)
+        Muted(if (granted) "알림에서 금액·가맹점·시각·카드 끝 4자리만 읽어 차량에 보냅니다. 원문과 다른 앱의 알림은 저장하지 않아요."
+            else "Android 설정에서 SHAREMATE의 알림 접근을 허용해 주세요. 카드사 앱이나 문자 승인 알림만 골라 읽습니다.")
+        if (queued > 0) Muted("차량에 보낼 결제 ${queued}건 대기 중 · 연결되면 자동 전송")
+        if (!granted) Button(onClick = openSettings, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = RoundedCornerShape(14.dp)) { Text("알림 접근 허용") }
+        OutlinedButton(onClick = importStatement, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = RoundedCornerShape(14.dp)) {
+            Text("카드 명세서 가져오기 · CSV·XLSX")
+        }
+        Muted("하이패스처럼 승인 알림이 없는 결제는 월말 명세서로 맞춥니다.")
+    }
+}
+
+/** The review question from the car, answerable from the passenger seat or the office. */
+@Composable internal fun PhoneChargeReviewCard(charge: CardCharge, data: TripLogData, busy: Boolean, send: (SyncCommand) -> Unit) {
+    val trip = suggestedTrip(charge, data)
+    Panel(padding = 20.dp) {
+        Eyebrow("카드 결제 확인 · ${phoneTime(charge.at, if (charge.timeKnown) "M/d HH:mm" else "M/d")}")
+        Text("${formatWon(charge.amountWon)} · ${charge.merchant}", style = MaterialTheme.typography.titleMedium)
+        Muted(trip?.let { "${phoneTime(it.startAt)} 출발 ${"%.1f".format(Locale.KOREA, it.distanceKm)} km · ${it.destination ?: it.endAddress ?: "주소 미기록"}" } ?: "맞는 운행을 찾지 못했어요")
+        if (charge.reason.isNotBlank()) Muted("판단 근거 · ${charge.reason}")
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (trip != null) Button(onClick = { send(SyncCommand.ConfirmCharge(charge.id, trip.id)) }, enabled = !busy, modifier = Modifier.weight(1f).heightIn(min = 48.dp), shape = RoundedCornerShape(14.dp)) { Text("이 운행 비용") }
+            OutlinedButton(onClick = { send(SyncCommand.ExcludeCharge(charge.id)) }, enabled = !busy, modifier = Modifier.weight(1f).heightIn(min = 48.dp), shape = RoundedCornerShape(14.dp)) { Text("회사 비용 아님") }
+        }
+    }
+}

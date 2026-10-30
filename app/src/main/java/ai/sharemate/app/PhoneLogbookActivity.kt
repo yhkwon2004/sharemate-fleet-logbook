@@ -109,6 +109,31 @@ class PhoneLogbookActivity : ComponentActivity() {
             .onFailure { captureFor = null; error = "카메라를 열 수 없어요. 카메라 앱이 있는지 확인해 주세요." }
     }
     val fetchPhoto: (String) -> Unit = { id -> scope.launch { sync.fetchPhoto(id) } }
+    val queuedCards by sync.queued.collectAsState()
+    // Re-read when the user returns from system settings, where this access is granted.
+    var cardAlerts by remember { mutableStateOf(CardNotificationService.granted(context)) }
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) cardAlerts = CardNotificationService.granted(context)
+        }
+        lifecycle.lifecycle.addObserver(observer)
+        onDispose { lifecycle.lifecycle.removeObserver(observer) }
+    }
+    val statement = androidx.activity.compose.rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) act {
+            val all = withContext(Dispatchers.IO) {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: throw IOException()
+                parseStatementFile(bytes, zone)
+            }
+            val relevant = vehicleRelevant(all, data, zone)
+            sync.enqueue(relevant)
+            message = "명세서 ${all.size}건 중 차량 관련 ${relevant.size}건을 차량으로 보냈어요. 맞는 운행에 자동으로 들어가고, 애매한 건만 확인을 요청합니다."
+        }
+    }
+    val openAlertSettings = { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
+    val importStatement = { statement.launch(arrayOf("text/csv", "text/comma-separated-values", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel", "text/html", "*/*")) }
+    val cardReviews = data.charges.filter { it.state == ChargeState.REVIEW && it.demo == data.profile.demoMode }.sortedBy { it.at }
     val import: (Uri) -> Unit = { uri -> act {
         val copy = withContext(Dispatchers.IO) {
             val bytes = context.contentResolver.openInputStream(uri)?.use { stream ->
@@ -205,8 +230,11 @@ class PhoneLogbookActivity : ComponentActivity() {
                         // What the car is asking for right now, mirrored so the passenger or the office can answer it.
                         data.open?.let { open -> PhoneOpenTripCard(open, link) }
                         openIncidents(data).forEach { incident -> PhoneIncidentCard(incident, data, busy, send, repository.photos, photoVersion, capture, fetchPhoto) }
+                        cardReviews.take(3).forEach { charge -> PhoneChargeReviewCard(charge, data, busy, send) }
+                        AutopilotStrip(data, System.currentTimeMillis())
                         data.pendingCharge?.takeIf { it.demo == data.profile.demoMode }?.let { session -> PhoneChargeCard(session, busy, send) }
                         PhoneIncidentButtons(busy, send)
+                        PhoneCardLinkCard(cardAlerts, queuedCards, busy, openAlertSettings, importStatement)
                     }
                     SharemateTheme(compact = true, dark = true) {
                         Panel(Modifier.clip(RoundedCornerShape(24.dp)).background(Brush.linearGradient(listOf(Color(0xFF302B29), Color(0xFF17191D)))), color = Color.Transparent, padding = 22.dp) {
@@ -338,7 +366,7 @@ class PhoneLogbookActivity : ComponentActivity() {
                 Text("사용자: ${data.drivers.firstOrNull { it.id == trip.driverId }?.label ?: "미지정"}")
                 trip.expenses.forEachIndexed { index, expense ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("${expense.type.label} · ${formatWon(expense.amountWon)}", Modifier.weight(1f))
+                        Text(listOfNotNull("${expense.type.label} · ${formatWon(expense.amountWon)}", expense.merchant).joinToString(" · "), Modifier.weight(1f))
                         if (paired) TextButton(onClick = { send(SyncCommand.RemoveExpense(trip.id, index)) }, enabled = !busy) { Text("삭제") }
                     }
                 }
@@ -350,5 +378,5 @@ class PhoneLogbookActivity : ComponentActivity() {
     }
     (error ?: state.error)?.let { text -> AlertDialog(onDismissRequest = { error = null; repository.clearError() }, title = { Text("확인이 필요해요") },
         text = { Text(text) }, confirmButton = { TextButton(onClick = { error = null; repository.clearError() }) { Text("확인") } }) }
-    message?.let { text -> AlertDialog(onDismissRequest = { message = null }, title = { Text("저장 완료") }, text = { Text(text) }, confirmButton = { TextButton(onClick = { message = null }) { Text("확인") } }) }
+    message?.let { text -> AlertDialog(onDismissRequest = { message = null }, title = { Text("완료") }, text = { Text(text) }, confirmButton = { TextButton(onClick = { message = null }) { Text("확인") } }) }
 }

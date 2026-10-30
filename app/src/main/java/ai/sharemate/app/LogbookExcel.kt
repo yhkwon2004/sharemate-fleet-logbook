@@ -43,7 +43,8 @@ internal fun logbookSheets(profile: FleetProfile, from: LocalDate, to: LocalDate
             val driver = byDriver[trip.driverId]
             listOf(Instant.ofEpochMilli(expense.at).atZone(zone).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")), date(trip.startAt),
                 driver?.department.orEmpty(), driver?.name ?: "직원 미지정", expense.type.label, expense.amountWon,
-                trip.purpose.label, expense.source.label, "영수증 별도 확인·보관")
+                trip.purpose.label, expense.merchant?.let { "${expense.source.label} · $it" } ?: expense.source.label,
+                if (expense.cardChargeId != null) "카드 승인 내역 연결 · 매출전표 별도 보관" else "영수증 별도 확인·보관")
         }
     val checkRows = mutableListOf<List<Any>>(listOf("확인 항목", "운행일자", "부서", "성명", "검토 내용"))
     listOf("법인명" to profile.companyName, "사업자등록번호" to profile.businessNumber, "차종" to profile.carModel, "차량번호" to profile.plateNumber)

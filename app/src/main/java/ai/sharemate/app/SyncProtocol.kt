@@ -38,7 +38,23 @@ sealed interface SyncCommand {
     data class ReportIncident(val kind: IncidentKind, val note: String) : SyncCommand
     data class UpdateIncident(val id: String, val note: String?, val status: IncidentStatus?, val kind: IncidentKind?) : SyncCommand
     data class RemovePhoto(val incidentId: String, val photoId: String) : SyncCommand
+    data class CardEvents(val events: List<CardApproval>) : SyncCommand
+    data class ConfirmCharge(val id: String, val tripId: String) : SyncCommand
+    data class ExcludeCharge(val id: String) : SyncCommand
 }
+
+internal const val SYNC_MAX_CARD_EVENTS = 100
+
+private fun parseApproval(json: JSONObject) = CardApproval(json.id("id"), json.getLong("at").also { require(it > 0) }, json.getBoolean("timeKnown"),
+    json.getLong("amountWon").also { require(it in 1..10_000_000) }, json.getString("merchant").also { require(it.length in 2..60) },
+    if (json.isNull("last4")) null else json.getString("last4").also { require(it.matches(Regex("[0-9]{4}"))) },
+    CardSource.valueOf(json.getString("source")), json.getBoolean("cancel"))
+
+private fun encodeApproval(a: CardApproval) = JSONObject().put("id", a.id).put("at", a.at).put("timeKnown", a.timeKnown).put("amountWon", a.amountWon)
+    .put("merchant", a.merchant).put("last4", a.last4 ?: JSONObject.NULL).put("source", a.source.name).put("cancel", a.cancel)
+
+internal fun encodeApprovals(events: List<CardApproval>) = org.json.JSONArray(events.map(::encodeApproval))
+internal fun parseApprovals(array: org.json.JSONArray) = (0 until array.length()).map { parseApproval(array.getJSONObject(it)) }
 
 /*
  * Photos are binary, so they bypass the command channel:
@@ -63,6 +79,9 @@ internal fun parseSyncCommand(json: JSONObject): SyncCommand = when (val type = 
         if (json.isNull("status")) null else IncidentStatus.valueOf(json.getString("status")),
         if (json.isNull("kind")) null else IncidentKind.valueOf(json.getString("kind")))
     "removePhoto" -> SyncCommand.RemovePhoto(json.id("incidentId"), json.id("photoId"))
+    "cardEvents" -> SyncCommand.CardEvents(parseApprovals(json.getJSONArray("events")).also { require(it.size in 1..SYNC_MAX_CARD_EVENTS) })
+    "confirmCharge" -> SyncCommand.ConfirmCharge(json.id("id"), json.id("tripId"))
+    "excludeCharge" -> SyncCommand.ExcludeCharge(json.id("id"))
     else -> throw IllegalArgumentException("Unknown command: $type")
 }
 
@@ -77,6 +96,9 @@ internal fun encodeSyncCommand(command: SyncCommand): JSONObject = when (command
     is SyncCommand.UpdateIncident -> JSONObject().put("type", "updateIncident").put("id", command.id).put("note", command.note ?: JSONObject.NULL)
         .put("status", command.status?.name ?: JSONObject.NULL).put("kind", command.kind?.name ?: JSONObject.NULL)
     is SyncCommand.RemovePhoto -> JSONObject().put("type", "removePhoto").put("incidentId", command.incidentId).put("photoId", command.photoId)
+    is SyncCommand.CardEvents -> JSONObject().put("type", "cardEvents").put("events", encodeApprovals(command.events))
+    is SyncCommand.ConfirmCharge -> JSONObject().put("type", "confirmCharge").put("id", command.id).put("tripId", command.tripId)
+    is SyncCommand.ExcludeCharge -> JSONObject().put("type", "excludeCharge").put("id", command.id)
 }
 
 /** What the phone sees of the car: the whole log only when the saved log moved, live signals every time. */

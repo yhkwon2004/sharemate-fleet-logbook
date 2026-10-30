@@ -14,6 +14,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
+import java.time.ZoneId
 import java.util.UUID
 
 data class TripLogData(
@@ -25,6 +26,9 @@ data class TripLogData(
     val vehicle: VehicleCard = VehicleCard(),
     val incidents: List<Incident> = emptyList(),
     val pendingCharge: ChargeSession? = null,
+    // Evidence and card records for automatic cost matching; see CardMatch.kt.
+    val stops: List<ChargeSession> = emptyList(),
+    val charges: List<CardCharge> = emptyList(),
 )
 
 /** Live-sync status published by the car's sync server for the vehicle screens. */
@@ -99,6 +103,8 @@ class TripLogRepository private constructor(context: Context) {
 
     private var chargingSince: Long? = null
     private var chargingSocFrom: Int? = null
+    private var settledAt = 0L
+    private val zone: ZoneId get() = ZoneId.systemDefault()
 
     fun clearError() = mutableState.update { it.copy(error = null) }
 
@@ -118,7 +124,11 @@ class TripLogRepository private constructor(context: Context) {
                 is TripChange.Progress -> next.copy(open = change.trip)
                 is TripChange.Finished -> {
                     require(next.trips.size < MAX_TRIPS) { "운행기록이 20,000건에 도달했어요. 기록을 내보낸 뒤 저장 공간을 정리해 주세요." }
-                    val history = withHistory(change.trip, if (change.trip.recovered) "앱 중단 후 마지막 수신 시각으로 종료" else "기어 P 전환으로 운행 종료", sample.at)
+                    val closed = withHistory(change.trip, if (change.trip.recovered) "앱 중단 후 마지막 수신 시각으로 종료" else "기어 P 전환으로 운행 종료", sample.at)
+                    // A place the driver has labelled the same way every time needs no question.
+                    val purpose = if (next.profile.autopilot) autoPurpose(closed, next.trips) else null
+                    val history = if (purpose == null) closed else withHistory(closed.copy(purpose = purpose, purposeSource = EditSource.AUTO),
+                        "목적 ${purpose.label} (같은 도착지 기록 기준 ${EditSource.AUTO.label})", sample.at)
                     finishedId = history.id
                     next.copy(open = null, trips = next.trips + history)
                 }
@@ -128,20 +138,34 @@ class TripLogRepository private constructor(context: Context) {
         // Charging stops become an expense prompt; the car knows when and how much battery, the driver adds the amount.
         val wasCharging = chargingSince != null
         if (sample.charging == true && chargingSince == null) { chargingSince = sample.at; chargingSocFrom = sample.socPercent }
-        val session = chargeSessionEnded(chargingSince, chargingSocFrom, sample, wasCharging)
+        val observed = chargeSessionEnded(chargingSince, chargingSocFrom, sample, wasCharging)
         if (sample.charging == false) { chargingSince = null; chargingSocFrom = null }
-        if (session != null && next.pendingCharge == null) next = next.copy(pendingCharge = session)
-        // The vehicle card refreshes from live signals so the logbook header always names the real car.
         val card = next.vehicle
+        val detected = observed ?: if (chargingSince == null && next.open == null && !sample.demo) refillAcrossGap(card, sample) else null
+        val session = detected?.let { stop ->
+            val place = (stored.destination ?: stored.address ?: next.trips.lastOrNull()?.let { it.destination ?: it.endAddress })?.take(120)
+            // A signal-less charge shows up in steps; steps close together are one stop.
+            next.stops.lastOrNull { it.demo == stop.demo && it.fuel == stop.fuel && it.chargeId == null && stop.startAt - it.endAt <= 600_000 }
+                ?.copy(endAt = stop.endAt, socTo = stop.socTo, odometerKm = stop.odometerKm) ?: stop.copy(id = UUID.randomUUID().toString(), place = place)
+        }
+        if (session != null) next = next.copy(stops = (next.stops.filterNot { it.id == session.id } + session).takeLast(MAX_ENERGY_STOPS),
+            pendingCharge = next.pendingCharge?.takeIf { it.id != session.id } ?: session)
+        // The vehicle card refreshes from live signals so the logbook header always names the real car.
         val model = state.value.vehicleModel?.takeIf { it.isNotBlank() && !sample.demo }
-        val refreshed = card.copy(model = model ?: card.model, vin = sample.vin ?: card.vin,
-            odometerKm = sample.odometerKm ?: card.odometerKm, socPercent = sample.socPercent ?: card.socPercent, capturedAt = sample.at)
+        val refreshed = card.copy(model = model ?: card.model, vin = sample.vin ?: card.vin, odometerKm = sample.odometerKm ?: card.odometerKm,
+            socPercent = sample.socPercent ?: card.socPercent, fuelPercent = sample.fuelPercent ?: card.fuelPercent, capturedAt = sample.at)
         val cardChanged = refreshed.model != card.model || refreshed.vin != card.vin
-        if (!sample.demo && (cardChanged || sample.at - card.capturedAt >= 300_000)) next = next.copy(vehicle = refreshed)
+        // Parking refreshes the baseline too, so the next start compares against the level the car actually stopped with.
+        if (!sample.demo && (cardChanged || session != null || finishedId != null || sample.at - card.capturedAt >= 300_000)) next = next.copy(vehicle = refreshed)
+        // New evidence can resolve a card line that was waiting; the timer retires lines that never found a home.
+        val settle = finishedId != null || session != null || (next.charges.any { it.state == ChargeState.WAITING } && sample.at - settledAt >= 60_000)
+        val beforeSettle = next
+        if (settle) { next = settleCharges(next, sample.at, zone); settledAt = sample.at }
+        val settled = next != beforeSettle
         val open = next.open
         // Checkpoint a recording trip every minute or kilometre so an interruption loses little.
         val checkpoint = open != null && data.open != null && (sample.at - persistedAt >= 60_000 || open.endOdometerKm - persistedOdometer >= 1.0)
-        if (next.open?.id != data.open?.id || next.trips.size != data.trips.size || checkpoint || session != null || cardChanged) {
+        if (next.open?.id != data.open?.id || next.trips.size != data.trips.size || checkpoint || session != null || cardChanged || settled) {
             save(next)
             persistedAt = sample.at
             persistedOdometer = open?.endOdometerKm ?: 0.0
@@ -194,6 +218,15 @@ class TripLogRepository private constructor(context: Context) {
         })
     }
 
+    /** Card records from the phone. Runs inside the save so an approval and the trip it lands on are written together. */
+    suspend fun ingestCardEvents(events: List<CardApproval>) = mutate { data ->
+        val now = System.currentTimeMillis()
+        settleCharges(mergeCardEvents(data, events, now, zone), now, zone)
+    }
+
+    suspend fun confirmCardCharge(id: String, tripId: String) = mutate { data -> confirmCharge(data, id, tripId, System.currentTimeMillis()) }
+    suspend fun excludeCardCharge(id: String) = mutate { data -> excludeCharge(data, id, System.currentTimeMillis()) }
+
     suspend fun deleteIncident(id: String) {
         val orphaned = state.value.data.incidents.firstOrNull { it.id == id }?.photos.orEmpty()
         mutate { data -> data.copy(incidents = data.incidents.filterNot { it.id == id }) }
@@ -237,6 +270,9 @@ class TripLogRepository private constructor(context: Context) {
             is SyncCommand.ReportIncident -> reportIncident(command.kind, command.note, EditSource.PHONE)
             is SyncCommand.UpdateIncident -> updateIncident(command.id, command.note, command.status, command.kind)
             is SyncCommand.RemovePhoto -> removePhoto(command.incidentId, command.photoId)
+            is SyncCommand.CardEvents -> ingestCardEvents(command.events)
+            is SyncCommand.ConfirmCharge -> confirmCardCharge(command.id, command.tripId)
+            is SyncCommand.ExcludeCharge -> excludeCardCharge(command.id)
         }
     }
 
@@ -283,9 +319,13 @@ class TripLogRepository private constructor(context: Context) {
     }
 
     suspend fun removeExpense(id: String, index: Int) = mutate { data ->
-        data.editTrip(id) { trip ->
-            val item = trip.expenses.getOrNull(index) ?: return@editTrip trip
-            withHistory(trip.copy(expenses = trip.expenses.filterIndexed { i, _ -> i != index }), "${item.type.label} ${formatWon(item.amountWon)} 삭제", System.currentTimeMillis())
+        val trip = (data.trips + listOfNotNull(data.open)).firstOrNull { it.id == id }
+        // Deleting a matched cost is the driver saying it does not belong here, so it must not match back in.
+        val linked = trip?.expenses?.getOrNull(index)?.cardChargeId?.takeIf { charge -> data.charges.any { it.id == charge } }
+        if (linked != null) return@mutate excludeCharge(data, linked, System.currentTimeMillis())
+        data.editTrip(id) { current ->
+            val item = current.expenses.getOrNull(index) ?: return@editTrip current
+            withHistory(current.copy(expenses = current.expenses.filterIndexed { i, _ -> i != index }), "${item.type.label} ${formatWon(item.amountWon)} 삭제", System.currentTimeMillis())
         }
     }
 
@@ -381,6 +421,7 @@ internal fun validateProfile(profile: FleetProfile) {
     require(profile.businessNumber.isEmpty() || BUSINESS_NUMBER.matches(profile.businessNumber)) { "사업자등록번호는 000-00-00000 형식으로 입력해 주세요." }
     require(profile.annualCostWon == null || profile.annualCostWon in 0..10_000_000_000L) { "연간 차량 비용을 확인해 주세요." }
     require(profile.reimbursePerKmWon in 0..100_000) { "km당 정산 단가는 0~100,000원으로 입력해 주세요." }
+    require(profile.cards.size <= 10 && profile.cards.all { it.matches(Regex("[0-9]{4}")) }) { "카드 끝 4자리를 쉼표로 구분해 입력해 주세요." }
 }
 
 /** Trip log stored on the vehicle only, excluded from backup like the rest of the app data. */
@@ -421,26 +462,30 @@ internal object TripLogCodec {
         val p = json.getJSONObject("profile")
         val profile = FleetProfile(p.getString("companyName"), p.getString("businessNumber"), p.getString("carModel"), p.getString("plateNumber"),
             if (p.isNull("annualCostWon")) null else p.getLong("annualCostWon"), p.getLong("reimbursePerKmWon"), p.getBoolean("storeAddresses"), p.getBoolean("demoMode"),
-            p.optBoolean("phoneSync", false))
+            p.optBoolean("phoneSync", false), p.optBoolean("autopilot", true),
+            p.optJSONArray("cards")?.let { a -> (0 until a.length()).map { a.getString(it) } }.orEmpty())
         validateProfile(profile)
         val drivers = json.getJSONArray("drivers").objects().map { Driver(it.getString("id"), it.getString("department"), it.getString("name")) }
         val trips = json.getJSONArray("trips").objects().map(::readTrip)
         // Fields added after 2.3 are optional so older files still load.
         val vehicle = json.optJSONObject("vehicle")?.let { v ->
             VehicleCard(v.text("model"), v.text("vin"), if (v.isNull("odometerKm")) null else v.getDouble("odometerKm"),
-                if (v.isNull("socPercent")) null else v.getInt("socPercent"), v.optLong("capturedAt"))
+                if (v.isNull("socPercent")) null else v.getInt("socPercent"), v.optLong("capturedAt"), if (v.isNull("fuelPercent")) null else v.getInt("fuelPercent"))
         } ?: VehicleCard()
         val incidents = json.optJSONArray("incidents")?.objects()?.map { i ->
             Incident(i.getString("id"), i.getLong("at"), IncidentKind.valueOf(i.getString("kind")), if (i.isNull("odometerKm")) null else i.getDouble("odometerKm"),
                 i.text("address"), i.text("tripId"), i.text("driverId"), i.getString("note"), IncidentStatus.valueOf(i.getString("status")), i.getLong("updatedAt"), i.optBoolean("demo"),
                 i.optJSONArray("photos")?.objects()?.map { p -> IncidentPhoto(p.getString("id"), p.getLong("at"), EditSource.valueOf(p.getString("source")), p.getInt("bytes")) }.orEmpty())
         }.orEmpty()
-        val charge = json.optJSONObject("pendingCharge")?.let { c ->
-            ChargeSession(c.getLong("startAt"), c.getLong("endAt"), if (c.isNull("socFrom")) null else c.getInt("socFrom"),
-                if (c.isNull("socTo")) null else c.getInt("socTo"), if (c.isNull("odometerKm")) null else c.getDouble("odometerKm"), c.optBoolean("demo"))
-        }
+        val charge = json.optJSONObject("pendingCharge")?.let(::readStop)
+        val stops = json.optJSONArray("stops")?.objects()?.map(::readStop).orEmpty()
+        val charges = json.optJSONArray("charges")?.objects()?.map { c ->
+            CardCharge(c.getString("id"), c.getLong("at"), c.getBoolean("timeKnown"), c.getLong("amountWon"), c.getString("merchant"), c.text("last4"),
+                CardSource.valueOf(c.getString("source")), c.text("category")?.let(CostCategory::valueOf), ChargeState.valueOf(c.getString("state")),
+                c.text("tripId"), c.text("stopId"), c.optInt("score"), c.optString("reason"), c.text("statementId"), c.optBoolean("demo"))
+        }.orEmpty()
         val data = TripLogData(profile, drivers, json.optString("currentDriverId").takeIf { it.isNotEmpty() && drivers.any { d -> d.id == it } },
-            trips, if (json.isNull("open")) null else readTrip(json.getJSONObject("open")), vehicle, incidents, charge)
+            trips, if (json.isNull("open")) null else readTrip(json.getJSONObject("open")), vehicle, incidents, charge, stops, charges)
         validate(data)
         return data
     }
@@ -451,24 +496,38 @@ internal object TripLogCodec {
             .put("profile", JSONObject().put("companyName", data.profile.companyName).put("businessNumber", data.profile.businessNumber)
                 .put("carModel", data.profile.carModel).put("plateNumber", data.profile.plateNumber)
                 .put("annualCostWon", data.profile.annualCostWon ?: JSONObject.NULL).put("reimbursePerKmWon", data.profile.reimbursePerKmWon)
-                .put("storeAddresses", data.profile.storeAddresses).put("demoMode", data.profile.demoMode).put("phoneSync", data.profile.phoneSync))
+                .put("storeAddresses", data.profile.storeAddresses).put("demoMode", data.profile.demoMode).put("phoneSync", data.profile.phoneSync)
+                .put("autopilot", data.profile.autopilot).put("cards", JSONArray(data.profile.cards)))
             .put("drivers", JSONArray(data.drivers.map { JSONObject().put("id", it.id).put("department", it.department).put("name", it.name) }))
             .put("currentDriverId", data.currentDriverId ?: "")
             .put("trips", JSONArray(data.trips.map(::writeTrip)))
             .put("open", data.open?.let(::writeTrip) ?: JSONObject.NULL)
             .put("vehicle", JSONObject().put("model", data.vehicle.model ?: JSONObject.NULL).put("vin", data.vehicle.vin ?: JSONObject.NULL)
-                .put("odometerKm", data.vehicle.odometerKm ?: JSONObject.NULL).put("socPercent", data.vehicle.socPercent ?: JSONObject.NULL).put("capturedAt", data.vehicle.capturedAt))
+                .put("odometerKm", data.vehicle.odometerKm ?: JSONObject.NULL).put("socPercent", data.vehicle.socPercent ?: JSONObject.NULL).put("capturedAt", data.vehicle.capturedAt)
+                .put("fuelPercent", data.vehicle.fuelPercent ?: JSONObject.NULL))
             .put("incidents", JSONArray(data.incidents.map { i -> JSONObject().put("id", i.id).put("at", i.at).put("kind", i.kind.name)
                 .put("odometerKm", i.odometerKm ?: JSONObject.NULL).put("address", i.address ?: JSONObject.NULL).put("tripId", i.tripId ?: JSONObject.NULL)
                 .put("driverId", i.driverId ?: JSONObject.NULL).put("note", i.note).put("status", i.status.name).put("updatedAt", i.updatedAt).put("demo", i.demo)
                 .put("photos", JSONArray(i.photos.map { p -> JSONObject().put("id", p.id).put("at", p.at).put("source", p.source.name).put("bytes", p.bytes) })) }))
-            .put("pendingCharge", data.pendingCharge?.let { c -> JSONObject().put("startAt", c.startAt).put("endAt", c.endAt).put("socFrom", c.socFrom ?: JSONObject.NULL)
-                .put("socTo", c.socTo ?: JSONObject.NULL).put("odometerKm", c.odometerKm ?: JSONObject.NULL).put("demo", c.demo) } ?: JSONObject.NULL)
+            .put("pendingCharge", data.pendingCharge?.let(::writeStop) ?: JSONObject.NULL)
+            .put("stops", JSONArray(data.stops.map(::writeStop)))
+            .put("charges", JSONArray(data.charges.map { c -> JSONObject().put("id", c.id).put("at", c.at).put("timeKnown", c.timeKnown).put("amountWon", c.amountWon)
+                .put("merchant", c.merchant).put("last4", c.last4 ?: JSONObject.NULL).put("source", c.source.name).put("category", c.category?.name ?: JSONObject.NULL)
+                .put("state", c.state.name).put("tripId", c.tripId ?: JSONObject.NULL).put("stopId", c.stopId ?: JSONObject.NULL).put("score", c.score)
+                .put("reason", c.reason).put("statementId", c.statementId ?: JSONObject.NULL).put("demo", c.demo) }))
         return json.toString().toByteArray(Charsets.UTF_8)
     }
 
+    private fun readStop(c: JSONObject) = ChargeSession(c.getLong("startAt"), c.getLong("endAt"), if (c.isNull("socFrom")) null else c.getInt("socFrom"),
+        if (c.isNull("socTo")) null else c.getInt("socTo"), if (c.isNull("odometerKm")) null else c.getDouble("odometerKm"), c.optBoolean("demo"),
+        c.optString("id"), c.optBoolean("fuel"), c.text("place"), c.text("chargeId"))
+
+    private fun writeStop(c: ChargeSession) = JSONObject().put("startAt", c.startAt).put("endAt", c.endAt).put("socFrom", c.socFrom ?: JSONObject.NULL)
+        .put("socTo", c.socTo ?: JSONObject.NULL).put("odometerKm", c.odometerKm ?: JSONObject.NULL).put("demo", c.demo)
+        .put("id", c.id).put("fuel", c.fuel).put("place", c.place ?: JSONObject.NULL).put("chargeId", c.chargeId ?: JSONObject.NULL)
+
     private fun JSONArray.objects() = (0 until length()).map { getJSONObject(it) }
-    private fun JSONObject.text(key: String) = if (isNull(key)) null else getString(key)
+    private fun JSONObject.text(key: String) = if (!has(key) || isNull(key)) null else getString(key)
 
     private fun readTrip(o: JSONObject) = Trip(
         id = o.getString("id"), startAt = o.getLong("startAt"), endAt = if (o.isNull("endAt")) null else o.getLong("endAt"),
@@ -476,9 +535,11 @@ internal object TripLogCodec {
         startAddress = o.text("startAddress"), endAddress = o.text("endAddress"), destination = o.text("destination"), driverId = o.text("driverId"),
         purpose = TripPurpose.valueOf(o.getString("purpose")), purposeSource = o.text("purposeSource")?.let(EditSource::valueOf),
         note = o.getString("note"),
-        expenses = o.getJSONArray("expenses").objects().map { TripExpense(ExpenseType.valueOf(it.getString("type")), it.getLong("amountWon"), it.getLong("at"), EditSource.valueOf(it.getString("source"))) },
+        expenses = o.getJSONArray("expenses").objects().map { TripExpense(ExpenseType.valueOf(it.getString("type")), it.getLong("amountWon"), it.getLong("at"), EditSource.valueOf(it.getString("source")), it.text("cardChargeId"), it.text("merchant")) },
         origin = TripOrigin.valueOf(o.getString("origin")), recovered = o.getBoolean("recovered"), demo = o.getBoolean("demo"),
         history = o.getJSONArray("history").let { a -> (0 until a.length()).map { a.getString(it) } }, updatedAt = o.getLong("updatedAt"),
+        tollFareWon = if (o.isNull("tollFareWon")) null else o.getLong("tollFareWon"),
+        tollPasses = o.optJSONArray("tollPasses")?.objects()?.map { TollPass(it.getLong("at"), it.text("place")) }.orEmpty(),
     ).also { require(it.endOdometerKm >= it.startOdometerKm && it.startAt > 0) }
 
     private fun writeTrip(t: Trip) = JSONObject()
@@ -487,15 +548,20 @@ internal object TripLogCodec {
         .put("startAddress", t.startAddress ?: JSONObject.NULL).put("endAddress", t.endAddress ?: JSONObject.NULL)
         .put("destination", t.destination ?: JSONObject.NULL).put("driverId", t.driverId ?: JSONObject.NULL)
         .put("purpose", t.purpose.name).put("purposeSource", t.purposeSource?.name ?: JSONObject.NULL).put("note", t.note)
-        .put("expenses", JSONArray(t.expenses.map { JSONObject().put("type", it.type.name).put("amountWon", it.amountWon).put("at", it.at).put("source", it.source.name) }))
+        .put("expenses", JSONArray(t.expenses.map { JSONObject().put("type", it.type.name).put("amountWon", it.amountWon).put("at", it.at).put("source", it.source.name)
+            .put("cardChargeId", it.cardChargeId ?: JSONObject.NULL).put("merchant", it.merchant ?: JSONObject.NULL) }))
         .put("origin", t.origin.name).put("recovered", t.recovered).put("demo", t.demo)
-        .put("history", JSONArray(t.history)).put("updatedAt", t.updatedAt)
+        .put("history", JSONArray(t.history)).put("updatedAt", t.updatedAt).put("tollFareWon", t.tollFareWon ?: JSONObject.NULL)
+        .put("tollPasses", JSONArray(t.tollPasses.map { JSONObject().put("at", it.at).put("place", it.place ?: JSONObject.NULL) }))
 
     private fun validate(data: TripLogData) {
         require(data.incidents.size <= 500 && data.incidents.all { validUuid(it.id) && it.at > 0 && it.note.length <= 500 &&
             it.photos.size <= MAX_INCIDENT_PHOTOS && it.photos.all { p -> validUuid(p.id) && p.bytes in 1..MAX_PHOTO_BYTES } })
         require(data.incidents.flatMap { it.photos }.map { it.id }.let { it.size == it.toSet().size })
         require(data.vehicle.model.orEmpty().length <= 60 && data.vehicle.vin.orEmpty().length <= 40)
+        require(data.stops.size <= MAX_ENERGY_STOPS && data.stops.all { validUuid(it.id) && it.endAt >= it.startAt && it.place.orEmpty().length <= 120 })
+        require(data.charges.size <= MAX_CARD_CHARGES && data.charges.map { it.id }.distinct().size == data.charges.size)
+        require(data.charges.all { validUuid(it.id) && it.at > 0 && it.amountWon in 1..10_000_000 && it.merchant.length <= 60 && it.reason.length <= 200 })
         require(data.drivers.size <= 50 && data.drivers.map { it.id }.distinct().size == data.drivers.size)
         data.drivers.forEach { require(validUuid(it.id) && it.name.isNotBlank() && it.name.length <= 30 && it.department.length <= 30) }
         require(data.trips.size <= TripLogRepository.MAX_TRIPS && data.trips.none { it.open } && (data.open == null || data.open.open))

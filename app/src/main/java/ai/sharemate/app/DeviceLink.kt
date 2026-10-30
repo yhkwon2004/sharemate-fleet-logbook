@@ -92,7 +92,7 @@ internal class DeviceLink(context: Context, role: String) {
                 requireNotNull(stream) { "서버 응답을 확인하지 못했습니다." }
                 val output = java.io.ByteArrayOutputStream()
                 val buffer = ByteArray(4_096)
-                while (true) { val count = stream.read(buffer); if (count < 0) break; require(output.size() + count <= 524_288); output.write(buffer, 0, count) }
+                while (true) { val count = stream.read(buffer); if (count < 0) break; require(output.size() + count <= if (path.startsWith("/v2/state")) LOGBOOK_MAX_BYTES + 65_536 else 524_288); output.write(buffer, 0, count) }
                 output.toByteArray()
             }
             val result = JSONObject(bytes.toString(Charsets.UTF_8))

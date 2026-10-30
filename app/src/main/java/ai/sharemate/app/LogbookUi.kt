@@ -172,6 +172,19 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     LaunchedEffect(Unit) { repository.ensureLoaded() }
     val blocked = driving.automotive && (!driving.available || driving.restricted)
     val latestBlocked by rememberUpdatedState(blocked)
+    // The car tells the driver what it just settled, once, with a way to take it back; while driving the bar stays hidden.
+    val matched = stored.data.charges.count { it.state == ChargeState.MATCHED }
+    var announced by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(matched, stored.loaded) {
+        if (!stored.loaded) return@LaunchedEffect
+        val previous = announced
+        announced = matched
+        // A cancelled approval must not leave "applied" on screen.
+        if (previous != null && matched < previous) snackbar.currentSnackbarData?.dismiss()
+        if (previous != null && matched > previous) stored.data.charges.lastOrNull { it.state == ChargeState.MATCHED }?.let { charge ->
+            followUp(FollowUp("${charge.merchant} ${formatWon(charge.amountWon)} 카드 결제를 운행에 반영했어요", "회사 비용 아님") { repository.excludeCardCharge(charge.id) })
+        }
+    }
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     LaunchedEffect(blocked) {
@@ -461,12 +474,16 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     val pending = data.trips.filter { it.purpose == TripPurpose.UNCLASSIFIED }.sortedByDescending { it.startAt }
     val setupNeeded = data.drivers.isEmpty() || data.profile.plateNumber.isBlank() || data.profile.companyName.isBlank()
     val incident = openIncidents(data).firstOrNull()
-    val charge = data.pendingCharge?.takeIf { it.demo == data.profile.demoMode }
+    // With a card feed the amount is on its way by itself, so the car waits before asking a person to type it.
+    val feedActive = data.charges.isNotEmpty() || data.profile.cards.isNotEmpty()
+    val charge = data.pendingCharge?.takeIf { it.demo == data.profile.demoMode && (!feedActive || now - it.endAt > 20 * 60_000) }
+    val reviews = data.charges.filter { it.state == ChargeState.REVIEW && it.demo == data.profile.demoMode }.sortedBy { it.at }
     val pairingNeeded = data.profile.phoneSync && state.sync.running && state.sync.pairedPhones == 0
     // One card at a time, in the order the moment demands: safety, then money the car already measured, then paperwork.
     val task: @Composable ColumnScope.() -> Unit = {
         when {
             incident != null -> IncidentCard(incident, data, act, repository)
+            reviews.isNotEmpty() -> ChargeReviewCard(reviews.first(), reviews.size, data, act, repository)
             charge != null -> ChargeCard(charge, act, repository)
             pending.isNotEmpty() -> PendingCard(pending.first(), pending.size, data, act, repository, openDriver)
             setupNeeded -> SetupCard(data, goSettings) { openDriver(null) }
@@ -495,7 +512,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     if (wide) Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
             Column(Modifier.weight(1.12f), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                StatusHero(state, now, false, requestPermissions)
+                StatusHero(state, now, false, requestPermissions) { act { repository.ingestCardEvents(listOf(demoCardApproval(repository.state.value.data, System.currentTimeMillis()))) } }
                 IncidentQuickRow(data, act, repository)
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -505,8 +522,9 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
         }
         MonthCard(data, now)
     } else Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        StatusHero(state, now, true, requestPermissions)
-        if (incident != null || charge != null || pending.isNotEmpty() || setupNeeded || pairingNeeded) task()
+        StatusHero(state, now, true, requestPermissions) { act { repository.ingestCardEvents(listOf(demoCardApproval(repository.state.value.data, System.currentTimeMillis()))) } }
+        if (incident != null || reviews.isNotEmpty() || charge != null || pending.isNotEmpty() || setupNeeded || pairingNeeded) task()
+        AutopilotStrip(data, now)
         IncidentQuickRow(data, act, repository)
         Panel(padding = 22.dp) {
             val today = localDate(now)
@@ -548,7 +566,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     }
 }
 
-@Composable private fun StatusHero(state: TripLogState, now: Long, compact: Boolean, requestPermissions: () -> Unit) {
+@Composable private fun StatusHero(state: TripLogState, now: Long, compact: Boolean, requestPermissions: () -> Unit, demoCard: () -> Unit) {
     val demo = state.data.profile.demoMode
     val open = state.data.open?.takeIf { it.demo == demo }
     val today = localDate(now)
@@ -588,7 +606,8 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
             Stat("계기판 누적", state.live?.odometerKm?.takeIf { overview.fresh }?.let(::kmText) ?: "확인 필요", Modifier.weight(1.4f))
             Stat("오늘 완료 운행", "${tripsIn(state.data.trips, today, today, zone).size}건", Modifier.weight(1f))
         }
-        if (open == null) {
+        // The demo line stays while driving so the buttons below it never move under the presenter's finger.
+        if (open == null || demo) {
             Muted(when {
                 demo -> "시연 주행은 15배속으로 기록되고 ‘시연 데이터’로 구분돼요."
                 state.signal == SignalStatus.READY -> "출발하면 자동 기록, 주차하면 저장돼요."
@@ -601,6 +620,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
         if (demo) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             PrimaryAction(if (moving) "시연 주차 (P)" else "시연 출발 (D)", Modifier.weight(1.3f)) { DemoDrive.setMoving(!moving) }
             QuietAction(if (charging) "충전 종료" else "충전 시작", Modifier.weight(1f), enabled = !moving) { DemoDrive.setCharging(!charging) }
+            QuietAction("카드 승인", Modifier.weight(1f), onClick = demoCard)
         }
     }
     }
@@ -695,6 +715,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     val trips = tripsIn(data.trips, today.withDayOfMonth(1), today, zone)
     val totals = logbookTotals(trips)
     Panel {
+        AutopilotStrip(data, now)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Eyebrow("${today.monthValue}월 한눈에 보기")
             Spacer(Modifier.weight(1f))
@@ -920,10 +941,13 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
         trip.expenses.forEachIndexed { index, expense ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("${expense.type.label}  ${formatWon(expense.amountWon)}", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                Muted(expense.source.label)
+                Muted(expense.merchant?.let { "$it · ${expense.source.label}" } ?: expense.source.label)
                 TextButton(onClick = { act {
                     repository.removeExpense(trip.id, index)
-                    followUp(FollowUp("${expense.type.label} ${formatWon(expense.amountWon)}을 삭제했어요", "실행 취소") { repository.addExpense(trip.id, expense.type, expense.amountWon, expense.source) })
+                    followUp(FollowUp("${expense.type.label} ${formatWon(expense.amountWon)}을 삭제했어요", "실행 취소") {
+                        val charge = expense.cardChargeId
+                        if (charge != null) repository.confirmCardCharge(charge, trip.id) else repository.addExpense(trip.id, expense.type, expense.amountWon, expense.source)
+                    })
                 } }, modifier = Modifier.heightIn(min = 56.dp).semantics { contentDescription = "${expense.type.label} ${formatWon(expense.amountWon)} 삭제" }) { Text("삭제") }
             }
         }
@@ -1171,6 +1195,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     val privacy: @Composable () -> Unit = {
         Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
             PrivacyCard(state.data.profile, act, repository)
+            AutopilotSettings(state.data.profile, act, repository) { value, change -> Field("법인카드 끝 4자리 (쉼표로 구분)", value, change, number = true, done = true, hint = "예: 1234, 5678") }
             GleoCard(compact = !wide)
             Panel {
                 Eyebrow("PLEOS SDK / 필요한 신호만 사용")
@@ -1288,6 +1313,9 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
         Eyebrow("기록 방식·개인정보")
         SwitchRow("출발·도착 주소 저장", "끄면 계기판 거리와 시각만 남기고 내비 주소는 저장하지 않아요.", saved.storeAddresses) { value ->
             act { repository.updateProfile(saved.copy(storeAddresses = value)) }
+        }
+        SwitchRow("자동 완성", "반복 도착지의 목적과 카드 결제 비용을 사람 손 없이 채웁니다. 끄면 지금까지처럼 정차 후 직접 확인해요.", saved.autopilot) { value ->
+            act { repository.updateProfile(saved.copy(autopilot = value)) }
         }
         SwitchRow("휴대폰 실시간 연동", "같은 Wi-Fi·핫스팟의 휴대폰 SHAREMATE와 암호화 연결로 운행·경비·특이사항을 실시간 공유해요. 휴대폰에서 바꾼 내용은 ‘휴대폰’ 출처로 차량에 기록돼요.", saved.phoneSync) { value ->
             act { repository.updateProfile(saved.copy(phoneSync = value)) }

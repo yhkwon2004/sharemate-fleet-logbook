@@ -1,6 +1,7 @@
 package ai.sharemate.app
 
 import android.content.Context
+import android.util.AtomicFile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -14,8 +15,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.net.URI
 import java.security.MessageDigest
 import java.security.cert.X509Certificate
@@ -31,6 +36,11 @@ import javax.net.ssl.X509TrustManager
 class PhoneSyncClient private constructor(context: Context) {
     private val repository = TripLogRepository.get(context)
     private val store = DeviceLink(context, "fleet-phone")
+    // Approvals arrive whether or not the car is reachable, so they wait on disk until it is.
+    private val queueFile = AtomicFile(File(context.applicationContext.noBackupFilesDir, "card-queue.json"))
+    private val queueLock = Mutex()
+    private val mutableQueued = MutableStateFlow(0)
+    val queued: StateFlow<Int> = mutableQueued.asStateFlow()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mutableLink = MutableStateFlow(PhoneLink())
     val link: StateFlow<PhoneLink> = mutableLink.asStateFlow()
@@ -39,6 +49,8 @@ class PhoneSyncClient private constructor(context: Context) {
     private var job: Job? = null
     @Volatile private var config: LinkConfig? = runCatching { store.load() }.getOrNull()
     val paired get() = config != null
+
+    init { scope.launch(Dispatchers.IO) { mutableQueued.value = readQueue().size } }
 
     /** Pairs with the car at [endpoint] using the six-digit code on the vehicle screen; the certificate seen then is pinned. */
     suspend fun pair(endpoint: String, code: String) {
@@ -121,6 +133,7 @@ class PhoneSyncClient private constructor(context: Context) {
                     }
                     since = revision
                     failures = 0
+                    if (mutableQueued.value > 0) flushCards()
                     mutableLink.update { it.copy(connected = true, revision = revision, lastSeenAt = System.currentTimeMillis(),
                         signal = runCatching { SignalStatus.valueOf(remote.getString("signal")) }.getOrNull(),
                         live = decodeLive(remote.optJSONObject("live")), message = "차량 연결됨") }
@@ -135,6 +148,42 @@ class PhoneSyncClient private constructor(context: Context) {
     }
 
     fun stop() { job?.cancel(); job = null }
+
+    private fun readQueue(): List<CardApproval> = runCatching {
+        if (!queueFile.baseFile.exists()) emptyList() else parseApprovals(JSONArray(queueFile.readFully().toString(Charsets.UTF_8)))
+    }.getOrDefault(emptyList())
+
+    private fun writeQueue(events: List<CardApproval>) {
+        val stream = queueFile.startWrite()
+        try { stream.write(encodeApprovals(events).toString().toByteArray(Charsets.UTF_8)); queueFile.finishWrite(stream) }
+        catch (e: Exception) { queueFile.failWrite(stream); throw e }
+        mutableQueued.value = events.size
+    }
+
+    /** Takes card records from any source and hands them to the car as soon as it can be reached. */
+    suspend fun enqueue(events: List<CardApproval>) {
+        if (events.isEmpty()) return
+        queueLock.withLock {
+            withContext(Dispatchers.IO) { writeQueue((readQueue() + events).distinctBy { it.id }.takeLast(CARD_QUEUE_LIMIT)) }
+        }
+        flushCards()
+    }
+
+    /** Sends the queue in order; whatever the car did not accept stays queued for the next attempt. */
+    suspend fun flushCards() {
+        val current = config ?: return
+        queueLock.withLock {
+            var pending = withContext(Dispatchers.IO) { readQueue() }
+            mutableQueued.value = pending.size
+            while (pending.isNotEmpty()) {
+                val batch = pending.take(SYNC_MAX_CARD_EVENTS)
+                val sent = runCatching { store.request(current, "/v2/command", encodeSyncCommand(SyncCommand.CardEvents(batch))).optBoolean("ok") }.getOrDefault(false)
+                if (!sent) break
+                pending = pending.drop(batch.size)
+                withContext(Dispatchers.IO) { writeQueue(pending) }
+            }
+        }
+    }
 
     /** Uploads a JPEG the phone already stored under [photoId]; the car records it and the entry comes back through the mirror. */
     suspend fun uploadPhoto(incidentId: String, photoId: String, jpeg: ByteArray) {
@@ -159,6 +208,7 @@ class PhoneSyncClient private constructor(context: Context) {
     }
 
     companion object {
+        private const val CARD_QUEUE_LIMIT = 500
         @Volatile private var instance: PhoneSyncClient? = null
         fun get(context: Context): PhoneSyncClient = instance ?: synchronized(this) { instance ?: PhoneSyncClient(context).also { instance = it } }
     }

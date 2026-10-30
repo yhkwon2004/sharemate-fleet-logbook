@@ -3,13 +3,16 @@ package ai.sharemate.app
 import ai.pleos.playground.navi.data.CurrentLocationInfo
 import ai.pleos.playground.navi.constants.NaviErrorCode
 import ai.pleos.playground.navi.data.DestinationArrivedInfo
+import ai.pleos.playground.navi.constants.TurnType
 import ai.pleos.playground.navi.data.DestinationInfo
 import ai.pleos.playground.navi.data.RouteStartInfo
+import ai.pleos.playground.navi.data.TBTInfo
 import ai.pleos.playground.navi.helper.NaviHelper
 import ai.pleos.playground.navi.helper.listener.NaviHelperEventListener
 import ai.pleos.playground.vehicle.Vehicle
 import ai.pleos.playground.vehicle.listener.DistanceDrivenListener
 import ai.pleos.playground.vehicle.listener.EvBatteryStateOfChargeListener
+import ai.pleos.playground.vehicle.listener.FuelPercentListener
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -68,6 +71,10 @@ internal fun driveSignalsFresh(gear: GearState, odometer: Double?, gearAgeMillis
 internal fun freshNavigationAddress(address: String?, ageMillis: Long): String? =
     address?.trim()?.take(120)?.takeIf { it.isNotEmpty() && ageMillis in 0..45_000 }
 
+/** A gate counts as passed when the guidance stops listing it, or when the next toll entry is suddenly much further away. */
+internal fun tollGatePassed(previousMeters: Double?, currentMeters: Double?): Boolean =
+    previousMeters != null && previousMeters <= 2_000 && (currentMeters == null || currentMeters > previousMeters + 1_000)
+
 /** Reads the connected Pleos vehicle only; it never writes vehicle settings or changes the navigation route. */
 class PleosDriveSignals(context: Context) : DriveSignals {
     private val context = context.applicationContext
@@ -85,13 +92,19 @@ class PleosDriveSignals(context: Context) : DriveSignals {
     private var naviListener: NaviHelperEventListener? = null
     private var distanceListener: DistanceDrivenListener? = null
     private var socListener: EvBatteryStateOfChargeListener? = null
+    private var fuelListener: FuelPercentListener? = null
     private var heartbeat: Job? = null
     private var gear = GearState.UNKNOWN
     private var odometer: Double? = null
     // Vehicle card and charge-session inputs; optional, so a car without them still records trips.
     private var charging: Boolean? = null
     private var soc: Int? = null
+    private var fuel: Int? = null
     private var vin: String? = null
+    // Toll evidence for card matching; the SDK reports no payment, only the route's fare and upcoming gates.
+    private var tollFare: Long? = null
+    private var tollAhead: Double? = null
+    private var tollPassAt: Long? = null
     private var address: String? = null
     private var addressAt = -1L
     private var destination: String? = null
@@ -140,6 +153,7 @@ class PleosDriveSignals(context: Context) : DriveSignals {
                 if (ticks % 2 == 0) readOdometer()
                 if (ticks % 2 == 1) readChargeState()
                 if (gear == GearState.MOVING && ticks % 4 == 0) requestLocation()
+                if (gear == GearState.MOVING && destination != null && naviReady) runCatching { navi?.getTBTInfo() }
                 emit()
             }
         }
@@ -182,6 +196,19 @@ class PleosDriveSignals(context: Context) : DriveSignals {
             }, {})
         }
         runCatching {
+            v.getFuel().checkFuelPercentCapabilities({
+                scope.launch {
+                    if (!active) return@launch
+                    val listener = object : FuelPercentListener {
+                        override fun onFuelPercentUpdated(value: Int?) { scope.launch { if (active) onFuel(value) } }
+                        override fun onFailed(e: Exception) { scope.launch { if (active) onFuel(null) } }
+                    }
+                    runCatching { v.getFuel().registerFuelPercent(listener); fuelListener = listener }
+                    runCatching { v.getFuel().getFuelPercent({ value -> scope.launch { if (active) onFuel(value) } }, {}) }
+                }
+            }, {})
+        }
+        runCatching {
             v.getCarInfo().checkVINInfoCapabilities({
                 scope.launch {
                     if (!active) return@launch
@@ -195,6 +222,18 @@ class PleosDriveSignals(context: Context) : DriveSignals {
 
     private fun onSoc(value: Int?) {
         soc = value?.takeIf { it in 0..100 }
+        emit()
+    }
+
+    private fun onFuel(value: Int?) {
+        fuel = value?.takeIf { it in 0..100 }
+        emit()
+    }
+
+    private fun onTurnList(list: List<TBTInfo>) {
+        val ahead = list.firstOrNull { it.type == TurnType.TURN_TOLL }?.distance?.takeIf { it.isFinite() && it >= 0 }
+        if (tollGatePassed(tollAhead, ahead)) tollPassAt = System.currentTimeMillis()
+        tollAhead = ahead
         emit()
     }
 
@@ -315,10 +354,13 @@ class PleosDriveSignals(context: Context) : DriveSignals {
                     }
                 }
                 override fun onDestinationInfo(destinationInfo: DestinationInfo) {
-                    scope.launch { if (active) { destination = destinationInfo.name.trim().take(80).ifBlank { null }; emit() } }
+                    scope.launch { if (active) { destination = destinationInfo.name.trim().take(80).ifBlank { null }; tollFare = destinationInfo.tollFare.toLong().takeIf { it > 0 } ?: tollFare; emit() } }
                 }
                 override fun onRouteStarted(routeStartInfo: RouteStartInfo) {
-                    scope.launch { if (active) { destination = routeStartInfo.name.trim().take(80).ifBlank { null }; emit() } }
+                    scope.launch { if (active) { destination = routeStartInfo.name.trim().take(80).ifBlank { null }; tollFare = routeStartInfo.tollFare.toLong().takeIf { it > 0 }; emit() } }
+                }
+                override fun onTBTInfo(tbtInfoList: List<TBTInfo>) {
+                    scope.launch { if (active) onTurnList(tbtInfoList) }
                 }
                 override fun onDestinationArrived(destinationArrivedInfo: DestinationArrivedInfo) {
                     scope.launch {
@@ -333,6 +375,8 @@ class PleosDriveSignals(context: Context) : DriveSignals {
                     scope.launch {
                         if (!active) return@launch
                         destination = null
+                        tollFare = null
+                        tollAhead = null
                         invalidateLocation()
                         emit()
                         requestLocation()
@@ -380,7 +424,7 @@ class PleosDriveSignals(context: Context) : DriveSignals {
             if (gearAt < 0 || odometerAt < 0 || waitingForParkDistance) SignalStatus.STARTING else SignalStatus.ERROR
         mutableSamples.value = DriveSample(System.currentTimeMillis(), if (fresh) gear else GearState.UNKNOWN,
             if (fresh) distance else null, freshNavigationAddress(address, if (addressAt < 0) Long.MAX_VALUE else now - addressAt), destination,
-            charging = charging, socPercent = soc, vin = vin)
+            charging = charging, socPercent = soc, vin = vin, fuelPercent = fuel, tollFareWon = tollFare, tollPassAt = tollPassAt)
     }
 
     override fun stop() {
@@ -392,6 +436,7 @@ class PleosDriveSignals(context: Context) : DriveSignals {
         runCatching { properties?.unregisterCallback(chargeCallback) }
         distanceListener?.let { listener -> runCatching { vehicle?.getOdometer()?.unregisterDistanceDriven(listener) } }
         socListener?.let { listener -> runCatching { vehicle?.getEvBattery()?.unregisterEvBatteryStateOfCharge(listener) } }
+        fuelListener?.let { listener -> runCatching { vehicle?.getFuel()?.unregisterFuelPercent(listener) } }
         naviListener?.let { listener -> runCatching { navi?.removeListener(listener) } }
         runCatching { navi?.release() }
         runCatching { vehicle?.release() }
@@ -431,18 +476,24 @@ class DemoDriveSignals(private val startOdometerKm: Double, private val tripCoun
             var leg = tripCount
             var moving = false
             var soc = 68.0
+            var movingSeconds = 0
+            var tollPassAt: Long? = null
             while (isActive) {
                 val nowMoving = DemoDrive.moving.value
                 val charging = DemoDrive.charging.value
-                if (nowMoving && !moving) leg++
+                if (nowMoving && !moving) { leg++; movingSeconds = 0 }
                 moving = nowMoving
+                // Every other demo leg uses a toll road, so the card story can be shown end to end.
+                val tollLeg = leg % 2 == 0
+                if (moving && ++movingSeconds == 8 && tollLeg) tollPassAt = System.currentTimeMillis()
                 // 60 km/h at 15x speed: 0.25 km per second while moving; the battery follows at a visible pace.
                 if (moving) { odometer += 0.25; soc = (soc - 0.05).coerceAtLeast(5.0) }
                 if (charging) soc = (soc + 0.5).coerceAtMost(100.0)
                 val (from, _) = demoPlaces[(leg - 1).mod(demoPlaces.size)]
                 val (to, name) = demoPlaces[leg.mod(demoPlaces.size)]
                 mutableSamples.value = DriveSample(System.currentTimeMillis(), if (moving) GearState.MOVING else GearState.PARK,
-                    odometer, if (moving) from else to, name, demo = true, charging = charging, socPercent = soc.toInt(), vin = "KMHDEMO0000000001")
+                    odometer, if (moving) from else to, name, demo = true, charging = charging, socPercent = soc.toInt(), vin = "KMHDEMO0000000001",
+                    tollFareWon = if (tollLeg) 3_600 else null, tollPassAt = tollPassAt)
                 delay(1_000)
             }
         }

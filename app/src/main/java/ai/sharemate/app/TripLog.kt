@@ -13,7 +13,7 @@ enum class TripPurpose(val label: String) {
     UNCLASSIFIED("미분류"), COMMUTE("출·퇴근"), BUSINESS("일반 업무"), PERSONAL("개인");
     val business get() = this == COMMUTE || this == BUSINESS
 }
-enum class EditSource(val label: String) { DRIVER("직접 선택"), VOICE("Gleo 음성"), SUGGESTED("이전 기록 제안"), PHONE("휴대폰") }
+enum class EditSource(val label: String) { DRIVER("직접 선택"), VOICE("Gleo 음성"), SUGGESTED("이전 기록 제안"), PHONE("휴대폰"), CARD("카드 자동 매칭"), AUTO("자동 분류") }
 
 enum class IncidentKind(val label: String) { ACCIDENT("사고"), DAMAGE("파손·긁힘"), BREAKDOWN("고장·경고"), OTHER("특이사항") }
 enum class IncidentStatus(val label: String) { OPEN("대응 중"), CLOSED("처리 완료") }
@@ -52,10 +52,12 @@ data class VehicleCard(
     val odometerKm: Double? = null,
     val socPercent: Int? = null,
     val capturedAt: Long = 0,
+    val fuelPercent: Int? = null,
 )
 
-/** A charging stop detected from the vehicle; the amount is the one thing the driver still has to enter. */
-data class ChargeSession(val startAt: Long, val endAt: Long, val socFrom: Int?, val socTo: Int?, val odometerKm: Double?, val demo: Boolean = false)
+/** An energy stop detected from the vehicle: charging, or fuel rising while parked. `socFrom`/`socTo` hold whichever level applies. */
+data class ChargeSession(val startAt: Long, val endAt: Long, val socFrom: Int?, val socTo: Int?, val odometerKm: Double?, val demo: Boolean = false,
+    val id: String = "", val fuel: Boolean = false, val place: String? = null, val chargeId: String? = null)
 enum class ExpenseType(val label: String) { FUEL("주유·충전"), TOLL("통행료"), PARKING("주차"), OTHER("기타") }
 enum class GearState { PARK, MOVING, UNKNOWN }
 enum class TripOrigin { AUTO, GAP_FILL }
@@ -63,7 +65,8 @@ enum class TripOrigin { AUTO, GAP_FILL }
 data class Driver(val id: String, val department: String, val name: String) {
     val label get() = listOf(department, name).filter { it.isNotBlank() }.joinToString(" · ")
 }
-data class TripExpense(val type: ExpenseType, val amountWon: Long, val at: Long, val source: EditSource)
+data class TripExpense(val type: ExpenseType, val amountWon: Long, val at: Long, val source: EditSource, val cardChargeId: String? = null, val merchant: String? = null)
+data class TollPass(val at: Long, val place: String?)
 
 data class Trip(
     val id: String,
@@ -85,6 +88,9 @@ data class Trip(
     val demo: Boolean = false,
     val history: List<String> = emptyList(),
     val updatedAt: Long = startAt,
+    // Toll evidence from the navigation: the route's expected fare and each gate the guidance passed.
+    val tollFareWon: Long? = null,
+    val tollPasses: List<TollPass> = emptyList(),
 ) {
     val open get() = endAt == null
     val distanceKm get() = (endOdometerKm - startOdometerKm).coerceAtLeast(0.0)
@@ -102,6 +108,9 @@ data class DriveSample(
     val charging: Boolean? = null,
     val socPercent: Int? = null,
     val vin: String? = null,
+    val fuelPercent: Int? = null,
+    val tollFareWon: Long? = null,
+    val tollPassAt: Long? = null,
 )
 
 data class FleetProfile(
@@ -115,7 +124,25 @@ data class FleetProfile(
     val demoMode: Boolean = false,
     // Car-hosted live sync for the phone app; off until the fleet manager turns it on in the vehicle.
     val phoneSync: Boolean = false,
+    // Fills in purposes and card costs by itself; every automatic entry is labelled and can be undone.
+    val autopilot: Boolean = true,
+    // Last four digits of the company's cards. Empty means only merchants that are plainly vehicle costs are accepted.
+    val cards: List<String> = emptyList(),
 )
+
+/**
+ * A refill the car never saw happen: the head unit is often off while plugged in or at the pump, so the only trace is a
+ * higher level at the next start. Requires the car to be stopped so regeneration on a downhill cannot look like a charge.
+ */
+internal fun refillAcrossGap(card: VehicleCard, sample: DriveSample): ChargeSession? {
+    if (sample.gear == GearState.MOVING || sample.charging == true || sample.at - card.capturedAt < MIN_CHARGE_MILLIS || card.capturedAt <= 0) return null
+    fun rose(before: Int?, after: Int?) = before != null && after != null && after - before >= MIN_REFILL_PERCENT
+    return when {
+        rose(card.socPercent, sample.socPercent) -> ChargeSession(card.capturedAt, sample.at, card.socPercent, sample.socPercent, sample.odometerKm, sample.demo)
+        rose(card.fuelPercent, sample.fuelPercent) -> ChargeSession(card.capturedAt, sample.at, card.fuelPercent, sample.fuelPercent, sample.odometerKm, sample.demo, fuel = true)
+        else -> null
+    }
+}
 
 internal const val MIN_CHARGE_MILLIS = 60_000L
 
@@ -163,12 +190,15 @@ internal fun advanceTrip(open: Trip?, sample: DriveSample, driverId: String?, ne
     if (open == null) {
         if (sample.gear != GearState.MOVING) return emptyList()
         return listOf(TripChange.Started(Trip(newId(), sample.at, startOdometerKm = odometer, endOdometerKm = odometer,
-            startAddress = sample.address, destination = sample.destination, driverId = driverId, demo = sample.demo, updatedAt = sample.at)))
+            startAddress = sample.address, destination = sample.destination, driverId = driverId, demo = sample.demo, updatedAt = sample.at,
+            tollFareWon = sample.tollFareWon)))
     }
     // The odometer only grows; a lower reading is a stale or faulty value and is ignored.
     val latest = if (odometer >= open.endOdometerKm) odometer else open.endOdometerKm
+    val gate = sample.tollPassAt?.takeIf { at -> at >= open.startAt && open.tollPasses.none { it.at == at } }?.let { TollPass(it, sample.address) }
     val updated = open.copy(endOdometerKm = latest, endAddress = if (sample.gear == GearState.PARK) sample.address else sample.address ?: open.endAddress,
-        destination = sample.destination ?: open.destination, updatedAt = maxOf(open.updatedAt, sample.at))
+        destination = sample.destination ?: open.destination, updatedAt = maxOf(open.updatedAt, sample.at),
+        tollFareWon = sample.tollFareWon ?: open.tollFareWon, tollPasses = (open.tollPasses + listOfNotNull(gate)).takeLast(30))
     if (sample.gear != GearState.PARK) return listOf(TripChange.Progress(updated))
     val finished = updated.copy(endAt = maxOf(open.startAt, sample.at))
     return listOf(if (finished.distanceKm < MIN_TRIP_KM && finished.durationMillis < MIN_TRIP_MILLIS) TripChange.Discarded(finished)
@@ -183,6 +213,7 @@ enum class IssueType(val label: String, val detail: String) {
     ODOMETER_OVERLAP("누적거리 겹침", "다음 운행의 출발 거리가 앞 운행의 도착 거리보다 작아요."),
     IMPLAUSIBLE_SPEED("비정상 평균 속도", "평균 속도가 시속 200 km를 넘어요. 시각이나 거리를 확인해 주세요."),
     RECOVERED("종료 시각 추정", "운행 중 앱이 중단되어 마지막 수신 시각으로 종료했어요."),
+    CARD_ON_PERSONAL("개인 운행의 카드 비용", "개인 운행에 카드 결제가 연결됐어요. 회사 규정에 따라 처리해 주세요."),
 }
 data class TripIssue(val type: IssueType, val tripId: String, val gapKm: Double? = null, val previousTripId: String? = null)
 
@@ -199,6 +230,7 @@ internal fun auditTrips(trips: List<Trip>): List<TripIssue> {
         if (trip.recovered) issues += TripIssue(IssueType.RECOVERED, trip.id)
         val hours = trip.durationMillis / 3_600_000.0
         if (hours > 0 && trip.distanceKm / hours > 200) issues += TripIssue(IssueType.IMPLAUSIBLE_SPEED, trip.id)
+        if (trip.purpose == TripPurpose.PERSONAL && trip.expenses.any { it.cardChargeId != null }) issues += TripIssue(IssueType.CARD_ON_PERSONAL, trip.id)
     }
     // Demo trips run on their own odometer and are checked separately from vehicle data.
     closed.groupBy { it.demo }.values.forEach { chain ->
