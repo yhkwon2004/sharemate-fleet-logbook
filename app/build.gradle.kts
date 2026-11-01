@@ -13,8 +13,8 @@ android {
         applicationId = "ai.sharemate.app"
         minSdk = 28
         targetSdk = 34
-        versionCode = 16
-        versionName = "2.6.0"
+        versionCode = 17
+        versionName = "2.7.0"
     }
 
     buildFeatures { compose = true }

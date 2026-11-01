@@ -149,6 +149,8 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     var pickingDriver by remember { mutableStateOf(false) }
     var tutorial by rememberSaveable { mutableStateOf(false) }
     var expenseTripId by rememberSaveable { mutableStateOf<String?>(null) }
+    // 0 = 전체, 1 = 점검 필요; set by "정리하러 가기" so the log opens on what needs attention.
+    var logFilter by rememberSaveable { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
     val act: Act = { block ->
         scope.launch {
@@ -202,7 +204,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                     context.contentResolver.openOutputStream(uri, "wt")?.use { output -> exportFile.inputStream().use { it.copyTo(output) } }
                         ?: throw IOException()
                 }
-                info = "운행기록부를 저장했어요. 엑셀에서 열어 확인해 주세요."
+                followUp(FollowUp("운행기록부를 저장했어요 · 엑셀에서 열어 확인해 주세요"))
             } finally { pendingExportName = null }
         }
     }
@@ -257,10 +259,11 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                                             expenseTripId = state.data.trips.maxByOrNull { it.startAt }?.id
                                             tab = 1
                                         })
-                                        1 -> LogPane(state, now, wide, act, repository, openDriver, expenseTripId)
-                                        2 -> ReportPane(state, now, wide, pendingExportName != null, export) { tab = 4 }
+                                        1 -> LogPane(state, now, wide, act, repository, openDriver, expenseTripId, logFilter)
+                                        2 -> ReportPane(state, now, wide, pendingExportName != null, export, { tab = 4 }) { logFilter = 1; expenseTripId = null; tab = 1 }
                                         3 -> VehiclePane(state, now, act, repository)
-                                        else -> SettingsPane(state, wide, act, repository) { info = it }
+                                        // Saved-settings confirmations ride the bar; a modal is kept for text the driver must read, such as a file path.
+                                        else -> SettingsPane(state, wide, act, repository, { tutorial = true }) { text -> if (text.contains('\n')) info = text else followUp(FollowUp(text)) }
                                     }
                                   }
                                 }
@@ -286,7 +289,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
         val message = error ?: state.error
         if (message != null && !blocked) AlertDialog(onDismissRequest = { error = null; repository.clearError() }, title = { Text("확인이 필요해요") }, text = { Text(message) },
             confirmButton = { TextButton(onClick = { error = null; repository.clearError() }) { Text("확인") } })
-        info?.takeUnless { blocked }?.let { text -> AlertDialog(onDismissRequest = { info = null }, title = { Text("완료") }, text = { Text(text) }, confirmButton = { TextButton(onClick = { info = null }) { Text("확인") } }) }
+        info?.takeUnless { blocked }?.let { text -> AlertDialog(onDismissRequest = { info = null }, title = { Text("저장 위치") }, text = { Text(text) }, confirmButton = { TextButton(onClick = { info = null }) { Text("확인") } }) }
     }
 }
 
@@ -309,6 +312,8 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 @Composable private fun TopBar(state: TripLogState, now: Long, wide: Boolean, gutter: Dp, onDriver: () -> Unit, onTutorial: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val driver = state.data.drivers.firstOrNull { it.id == state.data.currentDriverId }
+    // The tutorial is for a car that has not recorded anything yet; once real trips exist it stays reachable from settings.
+    val showTutorial = state.data.trips.none { !it.demo }
     BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = gutter, vertical = 12.dp)) {
     val narrow = maxWidth < 720.dp
     val brand: @Composable () -> Unit = {
@@ -328,14 +333,14 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
         }
     }
     if (narrow) Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.weight(1f)) { brand() }; TextButton(onClick = onTutorial, modifier = Modifier.heightIn(min = 56.dp)) { Text("시연 체험") } }
+        Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.weight(1f)) { brand() }; if (showTutorial) TextButton(onClick = onTutorial, modifier = Modifier.heightIn(min = 56.dp)) { Text("시연 체험") } }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) { Box(Modifier.weight(1f)) { StatusPill(state) }; employee() }
     } else Row(Modifier.fillMaxWidth().heightIn(min = 80.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         Box(Modifier.weight(1f)) { brand() }
         StatusPill(state)
         employee()
-        OutlinedButton(onClick = onTutorial, modifier = Modifier.heightIn(min = 56.dp), border = BorderStroke(1.dp, colors.outlineVariant)) { Text("시연 체험") }
+        if (showTutorial) OutlinedButton(onClick = onTutorial, modifier = Modifier.heightIn(min = 56.dp), border = BorderStroke(1.dp, colors.outlineVariant)) { Text("시연 체험") }
     }
     }
 }
@@ -764,9 +769,9 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 
 // ───────────────────────── 일지 ─────────────────────────
 
-@Composable private fun LogPane(state: TripLogState, now: Long, wide: Boolean, act: Act, repository: TripLogRepository, openDriver: (String?) -> Unit, initialTripId: String?) {
+@Composable private fun LogPane(state: TripLogState, now: Long, wide: Boolean, act: Act, repository: TripLogRepository, openDriver: (String?) -> Unit, initialTripId: String?, initialFilter: Int = 0) {
     var month by rememberSaveable { mutableStateOf(YearMonth.from(localDate(now)).toString()) }
-    var filter by rememberSaveable { mutableIntStateOf(0) }
+    var filter by rememberSaveable(initialFilter) { mutableIntStateOf(initialFilter) }
     var selectedId by rememberSaveable(initialTripId) { mutableStateOf(initialTripId) }
     var employeeFilter by rememberSaveable { mutableStateOf<String?>(null) }
     var employeeMenu by remember { mutableStateOf(false) }
@@ -1014,7 +1019,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 
 // ───────────────────────── 리포트 ─────────────────────────
 
-@Composable private fun ReportPane(state: TripLogState, now: Long, wide: Boolean, exporting: Boolean, saveFile: (String, String, ByteArray) -> Unit, goSettings: () -> Unit) {
+@Composable private fun ReportPane(state: TripLogState, now: Long, wide: Boolean, exporting: Boolean, saveFile: (String, String, ByteArray) -> Unit, goSettings: () -> Unit, goReview: () -> Unit) {
     val data = state.data
     var period by rememberSaveable { mutableIntStateOf(0) }
     var view by rememberSaveable { mutableIntStateOf(2) }
@@ -1073,7 +1078,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     if (confirmExport) AlertDialog(onDismissRequest = { confirmExport = false }, title = { Text("정리되지 않은 운행이 있어요") },
         text = { Text("미분류 ${kmText(totals.unclassifiedKm)}는 업무용 사용거리에서 제외되고, 사용자 미지정 운행은 ④란이 비어 있게 저장돼요. 그래도 저장할까요?") },
         confirmButton = { TextButton(onClick = { confirmExport = false; export() }) { Text("저장") } },
-        dismissButton = { TextButton(onClick = { confirmExport = false }) { Text("정리하러 가기") } })
+        dismissButton = { TextButton(onClick = { confirmExport = false; goReview() }) { Text("정리하러 가기") } })
 }
 
 @Composable private fun EmployeeUsageCard(trips: List<Trip>, data: TripLogData, modifier: Modifier) {
@@ -1187,14 +1192,14 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 
 // ───────────────────────── 설정 ─────────────────────────
 
-@Composable private fun SettingsPane(state: TripLogState, wide: Boolean, act: Act, repository: TripLogRepository, showInfo: (String) -> Unit) {
+@Composable private fun SettingsPane(state: TripLogState, wide: Boolean, act: Act, repository: TripLogRepository, onTutorial: () -> Unit = {}, showInfo: (String) -> Unit) {
     var section by rememberSaveable { mutableIntStateOf(0) }
     val profile: @Composable () -> Unit = { ProfileCard(state, act, repository, showInfo) }
     val drivers: @Composable () -> Unit = { DriversCard(state.data, act, repository) }
     val costs: @Composable () -> Unit = { CostCard(state.data.profile, act, repository, showInfo) }
     val privacy: @Composable () -> Unit = {
         Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            PrivacyCard(state.data.profile, act, repository)
+            PrivacyCard(state.data.profile, act, repository, onTutorial)
             AutopilotSettings(state.data.profile, act, repository) { value, change -> Field("법인카드 끝 4자리 (쉼표로 구분)", value, change, number = true, done = true, hint = "예: 1234, 5678") }
             GleoCard(compact = !wide)
             Panel {
@@ -1308,13 +1313,17 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     }
 }
 
-@Composable private fun PrivacyCard(saved: FleetProfile, act: Act, repository: TripLogRepository) {
+@Composable private fun PrivacyCard(saved: FleetProfile, act: Act, repository: TripLogRepository, onTutorial: () -> Unit = {}) {
     Panel {
-        Eyebrow("기록 방식·개인정보")
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Eyebrow("기록 방식·개인정보")
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onTutorial, modifier = Modifier.heightIn(min = 48.dp)) { Text("시연 체험 다시 보기") }
+        }
         SwitchRow("출발·도착 주소 저장", "끄면 계기판 거리와 시각만 남기고 내비 주소는 저장하지 않아요.", saved.storeAddresses) { value ->
             act { repository.updateProfile(saved.copy(storeAddresses = value)) }
         }
-        SwitchRow("자동 완성", "반복 도착지의 목적과 카드 결제 비용을 사람 손 없이 채웁니다. 끄면 지금까지처럼 정차 후 직접 확인해요.", saved.autopilot) { value ->
+        SwitchRow("자동 완성 · 기본 켜짐", "반복 도착지의 목적과 카드 결제 비용을 사람 손 없이 채웁니다. 자동으로 들어간 항목은 ‘자동 분류’·‘카드 자동 매칭’으로 표시되고 언제든 되돌릴 수 있어요. 끄면 정차 후 직접 확인해요.", saved.autopilot) { value ->
             act { repository.updateProfile(saved.copy(autopilot = value)) }
         }
         SwitchRow("휴대폰 실시간 연동", "같은 Wi-Fi·핫스팟의 휴대폰 SHAREMATE와 암호화 연결로 운행·경비·특이사항을 실시간 공유해요. 휴대폰에서 바꾼 내용은 ‘휴대폰’ 출처로 차량에 기록돼요.", saved.phoneSync) { value ->
