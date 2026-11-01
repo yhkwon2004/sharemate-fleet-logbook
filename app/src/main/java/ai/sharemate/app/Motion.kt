@@ -62,9 +62,12 @@ internal const val MOTION_STAGGER_MS = 40
 @Composable fun <T> springSpec(): FiniteAnimationSpec<T> =
     if (LocalReduceMotion.current) snap() else spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
 
-/** Fades and lifts [content] in once; [index] staggers siblings so a list arrives top to bottom. */
-@Composable fun Appear(index: Int = 0, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
-    if (LocalReduceMotion.current) { Box(modifier) { content() }; return }
+/**
+ * Fades and lifts [content] in once; [index] staggers siblings so a list arrives top to bottom. [animate] false renders
+ * the content in place, for rows that already had their entrance (a card the driver is returning to).
+ */
+@Composable fun Appear(modifier: Modifier = Modifier, index: Int = 0, animate: Boolean = true, content: @Composable () -> Unit) {
+    if (LocalReduceMotion.current || !animate) { Box(modifier) { content() }; return }
     val state = remember { MutableTransitionState(false).apply { targetState = true } }
     val delay = (index * MOTION_STAGGER_MS).coerceAtMost(400)
     AnimatedVisibility(visibleState = state, modifier = modifier,
