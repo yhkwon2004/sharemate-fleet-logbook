@@ -68,6 +68,7 @@ internal fun gleoExpense(value: String?): ExpenseType? = when (value?.trim()?.lo
     "fuel" -> ExpenseType.FUEL
     "toll" -> ExpenseType.TOLL
     "parking" -> ExpenseType.PARKING
+    "maintenance" -> ExpenseType.MAINTENANCE
     "other" -> ExpenseType.OTHER
     else -> null
 }

@@ -41,7 +41,28 @@ sealed interface SyncCommand {
     data class CardEvents(val events: List<CardApproval>) : SyncCommand
     data class ConfirmCharge(val id: String, val tripId: String) : SyncCommand
     data class ExcludeCharge(val id: String) : SyncCommand
+    data class UpdateCare(val care: VehicleCare) : SyncCommand
+    data class AddMaintenance(val kind: MaintenanceKind, val amountWon: Long, val merchant: String?, val note: String, val odometerKm: Double?) : SyncCommand
+    data class RemoveMaintenance(val id: String) : SyncCommand
+    data class CloseMonth(val month: String) : SyncCommand
+    data class ReopenMonth(val month: String) : SyncCommand
+    data class ClassifyMany(val tripIds: List<String>, val purpose: TripPurpose) : SyncCommand
+    data class DeleteIncident(val id: String) : SyncCommand
 }
+
+internal const val SYNC_MAX_CLASSIFY_IDS = 200
+
+private val MONTH_KEY = Regex("\\d{4}-\\d{2}")
+
+private fun parseCare(json: JSONObject) = VehicleCare(
+    if (json.isNull("inspectionDue")) null else json.getString("inspectionDue"), if (json.isNull("insuranceDue")) null else json.getString("insuranceDue"),
+    if (json.isNull("leaseEnd")) null else json.getString("leaseEnd"), if (json.isNull("serviceIntervalKm")) null else json.getInt("serviceIntervalKm"),
+    if (json.isNull("lastServiceKm")) null else json.getDouble("lastServiceKm"), if (json.isNull("lastServiceAt")) null else json.getLong("lastServiceAt"),
+).also(::validateCare)
+
+private fun encodeCare(c: VehicleCare) = JSONObject().put("inspectionDue", c.inspectionDue ?: JSONObject.NULL).put("insuranceDue", c.insuranceDue ?: JSONObject.NULL)
+    .put("leaseEnd", c.leaseEnd ?: JSONObject.NULL).put("serviceIntervalKm", c.serviceIntervalKm ?: JSONObject.NULL)
+    .put("lastServiceKm", c.lastServiceKm ?: JSONObject.NULL).put("lastServiceAt", c.lastServiceAt ?: JSONObject.NULL)
 
 internal const val SYNC_MAX_CARD_EVENTS = 100
 
@@ -82,6 +103,16 @@ internal fun parseSyncCommand(json: JSONObject): SyncCommand = when (val type = 
     "cardEvents" -> SyncCommand.CardEvents(parseApprovals(json.getJSONArray("events")).also { require(it.size in 1..SYNC_MAX_CARD_EVENTS) })
     "confirmCharge" -> SyncCommand.ConfirmCharge(json.id("id"), json.id("tripId"))
     "excludeCharge" -> SyncCommand.ExcludeCharge(json.id("id"))
+    "updateCare" -> SyncCommand.UpdateCare(parseCare(json.getJSONObject("care")))
+    "addMaintenance" -> SyncCommand.AddMaintenance(MaintenanceKind.valueOf(json.getString("kind")), json.getLong("amountWon").also { require(it in 0..10_000_000) },
+        if (json.isNull("merchant")) null else json.getString("merchant").also { require(it.length <= 60) }, json.optString("note").also { require(it.length <= 300) },
+        if (json.isNull("odometerKm")) null else json.getDouble("odometerKm").also { require(it.isFinite() && it in 0.0..10_000_000.0) })
+    "removeMaintenance" -> SyncCommand.RemoveMaintenance(json.id("id"))
+    "closeMonth" -> SyncCommand.CloseMonth(json.getString("month").also { require(MONTH_KEY.matches(it)) })
+    "reopenMonth" -> SyncCommand.ReopenMonth(json.getString("month").also { require(MONTH_KEY.matches(it)) })
+    "classifyMany" -> SyncCommand.ClassifyMany(json.getJSONArray("tripIds").let { a -> (0 until a.length()).map { a.getString(it).also { id -> require(validUuid(id)) } } }
+        .also { require(it.size in 1..SYNC_MAX_CLASSIFY_IDS) }, TripPurpose.valueOf(json.getString("purpose")))
+    "deleteIncident" -> SyncCommand.DeleteIncident(json.id("id"))
     else -> throw IllegalArgumentException("Unknown command: $type")
 }
 
@@ -99,6 +130,14 @@ internal fun encodeSyncCommand(command: SyncCommand): JSONObject = when (command
     is SyncCommand.CardEvents -> JSONObject().put("type", "cardEvents").put("events", encodeApprovals(command.events))
     is SyncCommand.ConfirmCharge -> JSONObject().put("type", "confirmCharge").put("id", command.id).put("tripId", command.tripId)
     is SyncCommand.ExcludeCharge -> JSONObject().put("type", "excludeCharge").put("id", command.id)
+    is SyncCommand.UpdateCare -> JSONObject().put("type", "updateCare").put("care", encodeCare(command.care))
+    is SyncCommand.AddMaintenance -> JSONObject().put("type", "addMaintenance").put("kind", command.kind.name).put("amountWon", command.amountWon)
+        .put("merchant", command.merchant ?: JSONObject.NULL).put("note", command.note).put("odometerKm", command.odometerKm ?: JSONObject.NULL)
+    is SyncCommand.RemoveMaintenance -> JSONObject().put("type", "removeMaintenance").put("id", command.id)
+    is SyncCommand.CloseMonth -> JSONObject().put("type", "closeMonth").put("month", command.month)
+    is SyncCommand.ReopenMonth -> JSONObject().put("type", "reopenMonth").put("month", command.month)
+    is SyncCommand.ClassifyMany -> JSONObject().put("type", "classifyMany").put("tripIds", org.json.JSONArray(command.tripIds)).put("purpose", command.purpose.name)
+    is SyncCommand.DeleteIncident -> JSONObject().put("type", "deleteIncident").put("id", command.id)
 }
 
 /** What the phone sees of the car: the whole log only when the saved log moved, live signals every time. */

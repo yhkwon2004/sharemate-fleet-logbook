@@ -128,8 +128,12 @@ class PhoneSyncClient private constructor(context: Context) {
                     if (remote.optBoolean("changed")) {
                         val data = TripLogCodec.decode(remote.getJSONObject("data").toString().toByteArray(Charsets.UTF_8))
                         // The car's trip in progress rides along so the phone can show it; it is never closed on the phone.
+                        val before = repository.state.value.data.incidents.flatMap { it.photos }.map { it.id }.toSet()
                         repository.importPhoneCopy(data, live = true)
                         dataSince = remote.getLong("dataRevision")
+                        // A photo the car no longer lists has no business staying on the phone.
+                        val kept = data.incidents.flatMap { it.photos }.map { it.id }.toSet()
+                        withContext(Dispatchers.IO) { (before - kept).forEach { repository.photos.delete(it) } }
                     }
                     since = revision
                     failures = 0
@@ -148,6 +152,22 @@ class PhoneSyncClient private constructor(context: Context) {
     }
 
     fun stop() { job?.cancel(); job = null }
+
+    /** Pull-to-refresh: one immediate state fetch, independent of the long-poll loop, so the gesture ends with a real answer. */
+    suspend fun refreshNow(): Boolean {
+        val current = config ?: return false
+        return try {
+            val remote = store.request(current, "/v2/state?since=-1&data=-1&wait=0", timeoutMillis = 8_000)
+            if (remote.optBoolean("changed")) repository.importPhoneCopy(TripLogCodec.decode(remote.getJSONObject("data").toString().toByteArray(Charsets.UTF_8)), live = true)
+            mutableLink.update { it.copy(connected = true, revision = remote.getLong("revision"), lastSeenAt = System.currentTimeMillis(),
+                signal = runCatching { SignalStatus.valueOf(remote.getString("signal")) }.getOrNull(), live = decodeLive(remote.optJSONObject("live")), message = "차량 연결됨") }
+            if (mutableQueued.value > 0) flushCards()
+            true
+        } catch (e: CancellationException) { throw e } catch (_: Exception) {
+            mutableLink.update { it.copy(connected = false, message = "차량과 연결되지 않아요 · 같은 네트워크인지 확인") }
+            false
+        }
+    }
 
     private fun readQueue(): List<CardApproval> = runCatching {
         if (!queueFile.baseFile.exists()) emptyList() else parseApprovals(JSONArray(queueFile.readFully().toString(Charsets.UTF_8)))

@@ -78,21 +78,21 @@ import java.util.UUID
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 
-private val zone: ZoneId get() = ZoneId.systemDefault()
-private fun hm(at: Long) = SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(at))
-private fun localDate(at: Long) = Instant.ofEpochMilli(at).atZone(zone).toLocalDate()
-private fun dayLabel(date: LocalDate) = "${date.monthValue}월 ${date.dayOfMonth}일 (${weekday(date)})"
-private fun kmText(value: Double) = String.format(Locale.KOREA, "%,.1f km", value)
-private fun ratioText(ratio: Double?) = ratio?.let { "${(it * 100).roundToInt()}%" } ?: "–"
-private fun durationText(ms: Long): String {
+internal val zone: ZoneId get() = ZoneId.systemDefault()
+internal fun hm(at: Long) = SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(at))
+internal fun localDate(at: Long) = Instant.ofEpochMilli(at).atZone(zone).toLocalDate()
+internal fun dayLabel(date: LocalDate) = "${date.monthValue}월 ${date.dayOfMonth}일 (${weekday(date)})"
+internal fun kmText(value: Double) = String.format(Locale.KOREA, "%,.1f km", value)
+internal fun ratioText(ratio: Double?) = ratio?.let { "${(it * 100).roundToInt()}%" } ?: "–"
+internal fun durationText(ms: Long): String {
     val minutes = ceil(ms.coerceAtLeast(0) / 60_000.0).toLong()
     return if (minutes >= 60) "${minutes / 60}시간 ${minutes % 60}분" else "${minutes}분"
 }
-private fun routeText(trip: Trip) = listOfNotNull(trip.startAddress, trip.destination ?: trip.endAddress)
+internal fun routeText(trip: Trip) = listOfNotNull(trip.startAddress, trip.destination ?: trip.endAddress)
     .filter { it.isNotBlank() }.joinToString("  →  ").ifBlank { "주소 미기록 · 계기판 거리로 기록" }
 
 internal typealias Act = (suspend () -> Unit) -> Unit
-private val purposeChoices = listOf(TripPurpose.COMMUTE, TripPurpose.BUSINESS, TripPurpose.PERSONAL)
+internal val purposeChoices = listOf(TripPurpose.COMMUTE, TripPurpose.BUSINESS, TripPurpose.PERSONAL)
 
 /** A confirmation shown after a change, with one optional follow-up such as undo or applying the same choice to more trips. */
 internal data class FollowUp(val message: String, val action: String? = null, val perform: (suspend () -> Unit)? = null)
@@ -106,7 +106,7 @@ internal fun withRo(word: String): String {
     return if (final == 0 || final == 8) "${word}로" else "${word}으로"
 }
 
-@Composable private fun purposeColor(purpose: TripPurpose): Color {
+@Composable internal fun purposeColor(purpose: TripPurpose): Color {
     val pleos = LocalPleosColors.current
     return when (purpose) {
         TripPurpose.COMMUTE -> pleos.positive
@@ -117,7 +117,7 @@ internal fun withRo(word: String): String {
 }
 
 /** Classifies a trip with haptic confirmation, then offers undo or a same-day bulk apply in the follow-up bar. */
-@Composable private fun rememberClassifier(data: TripLogData, act: Act, repository: TripLogRepository): (Trip, TripPurpose, EditSource) -> Unit {
+@Composable internal fun rememberClassifier(data: TripLogData, act: Act, repository: TripLogRepository): (Trip, TripPurpose, EditSource) -> Unit {
     val followUp = LocalFollowUp.current
     val haptic = LocalHapticFeedback.current
     return { trip, purpose, source ->
@@ -291,7 +291,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 }
 
 /** Car-sized snackbar: large text, one action, inverse surface so it reads in day and night mode. */
-@Composable private fun FollowUpBar(data: SnackbarData) {
+@Composable internal fun FollowUpBar(data: SnackbarData) {
     val colors = MaterialTheme.colorScheme
     Surface(shape = RoundedCornerShape(20.dp), color = colors.inverseSurface, contentColor = colors.inverseOnSurface,
         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) {
@@ -552,7 +552,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     }
 }
 
-@Composable private fun HomeActionRow(title: String, subtitle: String, icon: Int, enabled: Boolean = true, onClick: () -> Unit) {
+@Composable internal fun HomeActionRow(title: String, subtitle: String, icon: Int, enabled: Boolean = true, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
         .heightIn(min = 72.dp).padding(horizontal = 4.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
@@ -627,7 +627,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     }
 }
 
-@Composable private fun PendingCard(trip: Trip, count: Int, data: TripLogData, act: Act, repository: TripLogRepository, openDriver: (String?) -> Unit) {
+@Composable internal fun PendingCard(trip: Trip, count: Int, data: TripLogData, act: Act, repository: TripLogRepository, openDriver: (String?) -> Unit) {
     val suggestion = remember(trip.id, data.trips.size) { suggestPurpose(trip, data.trips) }
     val driver = data.drivers.firstOrNull { it.id == trip.driverId }
     val classify = rememberClassifier(data, act, repository)
@@ -655,7 +655,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     }
 }
 
-@Composable private fun PurposeTile(purpose: TripPurpose, modifier: Modifier, selected: Boolean = false, onClick: () -> Unit) {
+@Composable internal fun PurposeTile(purpose: TripPurpose, modifier: Modifier, selected: Boolean = false, onClick: () -> Unit) {
     val color = purposeColor(purpose)
     val caption = if (purpose.business) "업무 거리 포함" else "업무 합계 제외"
     Surface(onClick = onClick, modifier = modifier.heightIn(min = 96.dp).semantics { this.selected = selected; role = Role.RadioButton }, shape = RoundedCornerShape(24.dp),
@@ -668,7 +668,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     }
 }
 
-@Composable private fun PurposeOptions(selected: TripPurpose? = null, onSelect: (TripPurpose) -> Unit) {
+@Composable internal fun PurposeOptions(selected: TripPurpose? = null, onSelect: (TripPurpose) -> Unit) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         if (maxWidth < 480.dp) Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             purposeChoices.forEach { purpose ->
@@ -684,7 +684,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     }
 }
 
-@Composable private fun SetupCard(data: TripLogData, goSettings: () -> Unit, pickDriver: () -> Unit) {
+@Composable internal fun SetupCard(data: TripLogData, goSettings: () -> Unit, pickDriver: () -> Unit) {
     val steps = listOf(
         "법인·차량 정보" to (data.profile.companyName.isNotBlank() && data.profile.plateNumber.isNotBlank()),
         "운전자(사용자) 등록" to data.drivers.isNotEmpty(),
@@ -710,7 +710,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     }
 }
 
-@Composable private fun MonthCard(data: TripLogData, now: Long) {
+@Composable internal fun MonthCard(data: TripLogData, now: Long) {
     val today = localDate(now)
     val trips = tripsIn(data.trips, today.withDayOfMonth(1), today, zone)
     val totals = logbookTotals(trips)
@@ -835,7 +835,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     }
 }
 
-@Composable private fun TripRow(trip: Trip, data: TripLogData, flagged: Boolean, selected: Boolean, onClick: () -> Unit) {
+@Composable internal fun TripRow(trip: Trip, data: TripLogData, flagged: Boolean, selected: Boolean, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val driver = data.drivers.firstOrNull { it.id == trip.driverId }
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(if (selected) LocalPleosColors.current.surfaceHigh else colors.surface)
@@ -980,7 +980,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
         dismissButton = { TextButton(onClick = { deleting = false }) { Text("취소") } })
 }
 
-@Composable private fun Field(label: String, value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier, number: Boolean = false, suffix: String? = null,
+@Composable internal fun Field(label: String, value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier, number: Boolean = false, suffix: String? = null,
     done: Boolean = false, hint: String? = null, error: String? = null) {
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -994,7 +994,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
         keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Next) }, onDone = { keyboard?.hide(); focus.clearFocus() }))
 }
 
-@Composable private fun DriverPicker(data: TripLogData, tripId: String?, act: Act, repository: TripLogRepository, dismiss: () -> Unit, goSettings: () -> Unit) {
+@Composable internal fun DriverPicker(data: TripLogData, tripId: String?, act: Act, repository: TripLogRepository, dismiss: () -> Unit, goSettings: () -> Unit) {
     val current = if (tripId == null) data.currentDriverId else (data.trips.firstOrNull { it.id == tripId } ?: data.open)?.driverId
     AlertDialog(onDismissRequest = dismiss, title = { Text(if (tripId == null) "지금 운전하는 사용자" else "이 운행의 사용자") }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1330,7 +1330,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     }
 }
 
-@Composable private fun SwitchRow(title: String, description: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+@Composable internal fun SwitchRow(title: String, description: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).toggleable(value = checked, role = Role.Switch, onValueChange = onChange)
         .heightIn(min = 72.dp).padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {

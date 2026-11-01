@@ -29,6 +29,10 @@ data class TripLogData(
     // Evidence and card records for automatic cost matching; see CardMatch.kt.
     val stops: List<ChargeSession> = emptyList(),
     val charges: List<CardCharge> = emptyList(),
+    // Fleet care: deadlines, maintenance done, and months the company has closed; see FleetCare.kt.
+    val care: VehicleCare = VehicleCare(),
+    val maintenance: List<MaintenanceRecord> = emptyList(),
+    val closedMonths: List<MonthClose> = emptyList(),
 )
 
 /** Live-sync status published by the car's sync server for the vehicle screens. */
@@ -227,6 +231,38 @@ class TripLogRepository private constructor(context: Context) {
     suspend fun confirmCardCharge(id: String, tripId: String) = mutate { data -> confirmCharge(data, id, tripId, System.currentTimeMillis()) }
     suspend fun excludeCardCharge(id: String) = mutate { data -> excludeCharge(data, id, System.currentTimeMillis()) }
 
+    suspend fun updateCare(care: VehicleCare) = mutate { data -> validateCare(care); data.copy(care = care) }
+
+    suspend fun addMaintenance(kind: MaintenanceKind, amountWon: Long, merchant: String?, note: String, odometerKm: Double?, source: EditSource = EditSource.DRIVER): MaintenanceRecord {
+        require(amountWon in 0..10_000_000) { "금액은 0원~1,000만 원으로 입력해 주세요." }
+        require(note.length <= 300 && merchant.orEmpty().length <= 60) { "메모는 300자, 업체명은 60자 이하로 입력해 주세요." }
+        val record = MaintenanceRecord(UUID.randomUUID().toString(), System.currentTimeMillis(), kind, odometerKm ?: state.value.live?.odometerKm ?: state.value.data.vehicle.odometerKm,
+            amountWon, merchant?.trim()?.ifBlank { null }, note.trim(), source, demo = state.value.data.profile.demoMode)
+        mutate { data ->
+            require(data.maintenance.size < MAX_MAINTENANCE) { "정비 기록이 ${MAX_MAINTENANCE}건에 도달했어요." }
+            data.copy(maintenance = data.maintenance + record).let { if (kind == MaintenanceKind.OIL) it.copy(care = it.care.copy(lastServiceKm = record.odometerKm ?: it.care.lastServiceKm, lastServiceAt = record.at)) else it }
+        }
+        return record
+    }
+
+    suspend fun removeMaintenance(id: String) = mutate { data -> data.copy(maintenance = data.maintenance.filterNot { it.id == id }) }
+    suspend fun closeMonth(month: String) = mutate { data -> closeMonth(data, parseMonth(month), System.currentTimeMillis(), zone) }
+    suspend fun reopenMonth(month: String) = mutate { data -> reopenMonth(data, parseMonth(month)) }
+
+    /** Undo for [deleteIncident]: the record returns, but photo files are gone, so the restored record says so. */
+    suspend fun restoreIncident(incident: Incident) {
+        val photosLeft = withContext(Dispatchers.IO) { incident.photos.filter { photos.has(it.id) } }
+        val restored = incident.copy(photos = photosLeft, updatedAt = System.currentTimeMillis(),
+            note = if (photosLeft.size < incident.photos.size && !incident.note.contains("사진은 복구되지 않음")) (incident.note + " (삭제 취소 · 사진은 복구되지 않음)").trim() else incident.note)
+        mutate { data ->
+            if (data.incidents.any { it.id == incident.id }) data
+            else { require(data.incidents.size < 500) { "특이사항 기록이 500건에 도달했어요." }; data.copy(incidents = (data.incidents + restored).sortedBy { it.at }) }
+        }
+    }
+
+    /** Undo for [removeDriver]; keeps the id so trips that still reference it line up again. */
+    suspend fun restoreDriver(driver: Driver) = saveDriver(driver)
+
     suspend fun deleteIncident(id: String) {
         val orphaned = state.value.data.incidents.firstOrNull { it.id == id }?.photos.orEmpty()
         mutate { data -> data.copy(incidents = data.incidents.filterNot { it.id == id }) }
@@ -270,9 +306,16 @@ class TripLogRepository private constructor(context: Context) {
             is SyncCommand.ReportIncident -> reportIncident(command.kind, command.note, EditSource.PHONE)
             is SyncCommand.UpdateIncident -> updateIncident(command.id, command.note, command.status, command.kind)
             is SyncCommand.RemovePhoto -> removePhoto(command.incidentId, command.photoId)
+            is SyncCommand.ClassifyMany -> classifyMany(command.tripIds, command.purpose, EditSource.PHONE)
+            is SyncCommand.DeleteIncident -> deleteIncident(command.id)
             is SyncCommand.CardEvents -> ingestCardEvents(command.events)
             is SyncCommand.ConfirmCharge -> confirmCardCharge(command.id, command.tripId)
             is SyncCommand.ExcludeCharge -> excludeCardCharge(command.id)
+            is SyncCommand.UpdateCare -> updateCare(command.care)
+            is SyncCommand.AddMaintenance -> addMaintenance(command.kind, command.amountWon, command.merchant, command.note, command.odometerKm, EditSource.PHONE)
+            is SyncCommand.RemoveMaintenance -> removeMaintenance(command.id)
+            is SyncCommand.CloseMonth -> closeMonth(command.month)
+            is SyncCommand.ReopenMonth -> reopenMonth(command.month)
         }
     }
 
@@ -284,9 +327,13 @@ class TripLogRepository private constructor(context: Context) {
 
     private fun TripLogData.editTrip(id: String, edit: (Trip) -> Trip): TripLogData = when {
         open?.id == id -> copy(open = edit(open))
-        trips.any { it.id == id } -> copy(trips = trips.map { if (it.id == id) edit(it) else it })
+        trips.any { it.id == id } -> copy(trips = trips.map { if (it.id == id) sealed(this, it, edit(it)) else it })
         else -> throw IllegalArgumentException("운행 기록을 찾지 못했어요.")
     }
+
+    /** A change to a trip in a closed month is allowed, but the close was a sign-off, so the trip says it was touched afterwards. */
+    private fun sealed(data: TripLogData, before: Trip, after: Trip): Trip =
+        if (after == before || closedMonthOf(data, before, zone) == null) after else withHistory(after, "마감된 달의 기록 수정", System.currentTimeMillis())
 
     suspend fun classify(id: String, purpose: TripPurpose, source: EditSource, appendNote: String = "") = mutate { data ->
         require(appendNote.length <= 200) { "추가 메모는 200자 이하로 입력해 주세요." }
@@ -463,7 +510,7 @@ internal object TripLogCodec {
         val profile = FleetProfile(p.getString("companyName"), p.getString("businessNumber"), p.getString("carModel"), p.getString("plateNumber"),
             if (p.isNull("annualCostWon")) null else p.getLong("annualCostWon"), p.getLong("reimbursePerKmWon"), p.getBoolean("storeAddresses"), p.getBoolean("demoMode"),
             p.optBoolean("phoneSync", false), p.optBoolean("autopilot", true),
-            p.optJSONArray("cards")?.let { a -> (0 until a.length()).map { a.getString(it) } }.orEmpty())
+            p.optJSONArray("cards")?.let { a -> (0 until a.length()).map { a.getString(it) } }.orEmpty(), p.optBoolean("confirmDriverDaily", true))
         validateProfile(profile)
         val drivers = json.getJSONArray("drivers").objects().map { Driver(it.getString("id"), it.getString("department"), it.getString("name")) }
         val trips = json.getJSONArray("trips").objects().map(::readTrip)
@@ -484,8 +531,19 @@ internal object TripLogCodec {
                 CardSource.valueOf(c.getString("source")), c.text("category")?.let(CostCategory::valueOf), ChargeState.valueOf(c.getString("state")),
                 c.text("tripId"), c.text("stopId"), c.optInt("score"), c.optString("reason"), c.text("statementId"), c.optBoolean("demo"))
         }.orEmpty()
+        val care = json.optJSONObject("care")?.let { c ->
+            VehicleCare(c.text("inspectionDue"), c.text("insuranceDue"), c.text("leaseEnd"), if (c.isNull("serviceIntervalKm")) null else c.getInt("serviceIntervalKm"),
+                if (c.isNull("lastServiceKm")) null else c.getDouble("lastServiceKm"), if (c.isNull("lastServiceAt")) null else c.getLong("lastServiceAt"))
+        } ?: VehicleCare()
+        val maintenance = json.optJSONArray("maintenance")?.objects()?.map { m ->
+            MaintenanceRecord(m.getString("id"), m.getLong("at"), MaintenanceKind.valueOf(m.getString("kind")), if (m.isNull("odometerKm")) null else m.getDouble("odometerKm"),
+                m.getLong("amountWon"), m.text("merchant"), m.optString("note"), EditSource.valueOf(m.getString("source")), m.text("cardChargeId"), m.optBoolean("demo"))
+        }.orEmpty()
+        val closedMonths = json.optJSONArray("closedMonths")?.objects()?.map { m ->
+            MonthClose(m.getString("month"), m.getLong("closedAt"), m.getInt("trips"), m.getDouble("totalKm"), m.getDouble("businessKm"), m.getLong("expenseWon"), m.optBoolean("demo"))
+        }.orEmpty()
         val data = TripLogData(profile, drivers, json.optString("currentDriverId").takeIf { it.isNotEmpty() && drivers.any { d -> d.id == it } },
-            trips, if (json.isNull("open")) null else readTrip(json.getJSONObject("open")), vehicle, incidents, charge, stops, charges)
+            trips, if (json.isNull("open")) null else readTrip(json.getJSONObject("open")), vehicle, incidents, charge, stops, charges, care, maintenance, closedMonths)
         validate(data)
         return data
     }
@@ -497,7 +555,7 @@ internal object TripLogCodec {
                 .put("carModel", data.profile.carModel).put("plateNumber", data.profile.plateNumber)
                 .put("annualCostWon", data.profile.annualCostWon ?: JSONObject.NULL).put("reimbursePerKmWon", data.profile.reimbursePerKmWon)
                 .put("storeAddresses", data.profile.storeAddresses).put("demoMode", data.profile.demoMode).put("phoneSync", data.profile.phoneSync)
-                .put("autopilot", data.profile.autopilot).put("cards", JSONArray(data.profile.cards)))
+                .put("autopilot", data.profile.autopilot).put("cards", JSONArray(data.profile.cards)).put("confirmDriverDaily", data.profile.confirmDriverDaily))
             .put("drivers", JSONArray(data.drivers.map { JSONObject().put("id", it.id).put("department", it.department).put("name", it.name) }))
             .put("currentDriverId", data.currentDriverId ?: "")
             .put("trips", JSONArray(data.trips.map(::writeTrip)))
@@ -515,6 +573,14 @@ internal object TripLogCodec {
                 .put("merchant", c.merchant).put("last4", c.last4 ?: JSONObject.NULL).put("source", c.source.name).put("category", c.category?.name ?: JSONObject.NULL)
                 .put("state", c.state.name).put("tripId", c.tripId ?: JSONObject.NULL).put("stopId", c.stopId ?: JSONObject.NULL).put("score", c.score)
                 .put("reason", c.reason).put("statementId", c.statementId ?: JSONObject.NULL).put("demo", c.demo) }))
+            .put("care", JSONObject().put("inspectionDue", data.care.inspectionDue ?: JSONObject.NULL).put("insuranceDue", data.care.insuranceDue ?: JSONObject.NULL)
+                .put("leaseEnd", data.care.leaseEnd ?: JSONObject.NULL).put("serviceIntervalKm", data.care.serviceIntervalKm ?: JSONObject.NULL)
+                .put("lastServiceKm", data.care.lastServiceKm ?: JSONObject.NULL).put("lastServiceAt", data.care.lastServiceAt ?: JSONObject.NULL))
+            .put("maintenance", JSONArray(data.maintenance.map { m -> JSONObject().put("id", m.id).put("at", m.at).put("kind", m.kind.name)
+                .put("odometerKm", m.odometerKm ?: JSONObject.NULL).put("amountWon", m.amountWon).put("merchant", m.merchant ?: JSONObject.NULL).put("note", m.note)
+                .put("source", m.source.name).put("cardChargeId", m.cardChargeId ?: JSONObject.NULL).put("demo", m.demo) }))
+            .put("closedMonths", JSONArray(data.closedMonths.map { m -> JSONObject().put("month", m.month).put("closedAt", m.closedAt).put("trips", m.trips)
+                .put("totalKm", m.totalKm).put("businessKm", m.businessKm).put("expenseWon", m.expenseWon).put("demo", m.demo) }))
         return json.toString().toByteArray(Charsets.UTF_8)
     }
 
@@ -562,6 +628,11 @@ internal object TripLogCodec {
         require(data.stops.size <= MAX_ENERGY_STOPS && data.stops.all { validUuid(it.id) && it.endAt >= it.startAt && it.place.orEmpty().length <= 120 })
         require(data.charges.size <= MAX_CARD_CHARGES && data.charges.map { it.id }.distinct().size == data.charges.size)
         require(data.charges.all { validUuid(it.id) && it.at > 0 && it.amountWon in 1..10_000_000 && it.merchant.length <= 60 && it.reason.length <= 200 })
+        validateCare(data.care)
+        require(data.maintenance.size <= MAX_MAINTENANCE && data.maintenance.map { it.id }.distinct().size == data.maintenance.size)
+        require(data.maintenance.all { validUuid(it.id) && it.at > 0 && it.amountWon in 0..10_000_000 && it.note.length <= 300 && it.merchant.orEmpty().length <= 60 })
+        require(data.closedMonths.size <= 240 && data.closedMonths.all { it.month.matches(Regex("\\d{4}-\\d{2}")) && it.closedAt > 0 } &&
+            data.closedMonths.map { it.month to it.demo }.distinct().size == data.closedMonths.size)
         require(data.drivers.size <= 50 && data.drivers.map { it.id }.distinct().size == data.drivers.size)
         data.drivers.forEach { require(validUuid(it.id) && it.name.isNotBlank() && it.name.length <= 30 && it.department.length <= 30) }
         require(data.trips.size <= TripLogRepository.MAX_TRIPS && data.trips.none { it.open } && (data.open == null || data.open.open))

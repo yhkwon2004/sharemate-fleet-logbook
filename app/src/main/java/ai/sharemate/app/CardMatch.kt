@@ -20,6 +20,7 @@ import kotlin.math.abs
 
 enum class CostCategory(val label: String, val expense: ExpenseType) {
     FUEL("주유", ExpenseType.FUEL), CHARGE("충전", ExpenseType.FUEL), TOLL("통행료", ExpenseType.TOLL), PARKING("주차", ExpenseType.PARKING),
+    MAINTENANCE("정비", ExpenseType.MAINTENANCE),
 }
 enum class CardSource(val label: String) { NOTIFICATION("승인 알림"), STATEMENT("카드 명세서") }
 enum class ChargeState(val label: String) { WAITING("차량 기록 대기"), MATCHED("자동 반영"), REVIEW("확인 필요"), EXCLUDED("회사 비용 아님"), CANCELED("승인 취소") }
@@ -73,6 +74,8 @@ private val FUEL_WORDS = listOf("주유", "SK에너지", "에스케이에너지"
 private val CHARGE_WORDS = listOf("충전", "차지비", "CHARGEV", "채비", "CHAEVI", "에버온", "EVERON", "일렉링크", "이피트", "E-PIT", "EPIT", "파워큐브", "플러그링크", "스타코프", "타이드플로")
 private val TOLL_WORDS = listOf("도로공사", "하이패스", "HIPASS", "통행료", "톨게이트", "고속도로", "하이웨이", "순환도로", "민자도로")
 private val PARKING_WORDS = listOf("주차", "파킹", "PARKING", "AJ파크", "GS파크")
+private val MAINTENANCE_WORDS = listOf("카센터", "정비", "타이어", "TIRE", "오토큐", "블루핸즈", "스피드메이트", "오토오아시스", "공업사", "모터스", "세차", "워시", "WASH",
+    "카닥", "교통안전공단", "TS한국", "자동차검사", "배터리", "와이퍼", "오일교환")
 // These contain a trigger word but are not vehicle costs: stored-value top-ups and highway rest stops.
 private val NOT_VEHICLE_WORDS = listOf("교통카드", "티머니", "캐시비", "페이충전", "포인트충전", "휴게소")
 
@@ -88,6 +91,7 @@ internal fun categorize(merchant: String): CostCategory? {
         has(CHARGE_WORDS) -> CostCategory.CHARGE
         has(TOLL_WORDS) -> CostCategory.TOLL
         has(PARKING_WORDS) -> CostCategory.PARKING
+        has(MAINTENANCE_WORDS) -> CostCategory.MAINTENANCE
         else -> null
     }
 }
@@ -183,14 +187,16 @@ internal fun matchCandidates(charge: CardCharge, data: TripLogData, zone: ZoneId
             if (inWindow) {
                 val near = sharesPlace(charge.merchant, trip.place())
                 val base = if (charge.timeKnown) 60 else 40
-                out += MatchCandidate(trip.id, null, base + known + trust + (if (near) 25 else 0), if (near) "주차 위치 일치" else "주차 시간대 일치")
+                val word = if (charge.category == CostCategory.MAINTENANCE) "정비" else "주차"
+                out += MatchCandidate(trip.id, null, base + known + trust + (if (near) 25 else 0), if (near) "$word 위치 일치" else "$word 시간대 일치")
             }
         }
     }
 
     when (charge.category) {
         CostCategory.TOLL -> tolls()
-        CostCategory.PARKING -> parking()
+        // A workshop charges while the car sits there, the same shape as a parking fee.
+        CostCategory.PARKING, CostCategory.MAINTENANCE -> parking()
         CostCategory.FUEL, CostCategory.CHARGE -> { fromStops(); if (out.isEmpty()) fromTrips() }
         null -> fromStops()
     }
@@ -232,11 +238,18 @@ private fun TripLogData.attach(charge: CardCharge, candidate: MatchCandidate, no
             }
         }
     }
-    return withTrip(trip.id) { updated }.copy(
+    val result = withTrip(trip.id) { updated }.copy(
         charges = charges.map { if (it.id == charge.id) it.copy(state = ChargeState.MATCHED, tripId = trip.id, stopId = candidate.stopId, score = candidate.score, reason = candidate.reason) else it },
         stops = stops.map { if (it.id == candidate.stopId) it.copy(chargeId = charge.id) else it },
         pendingCharge = pendingCharge?.takeUnless { it.id.isNotEmpty() && it.id == candidate.stopId },
     )
+    // A workshop charge is also a maintenance record: what was done, where the odometer stood, and when the next service falls due.
+    if (type != ExpenseType.MAINTENANCE || result.maintenance.any { it.cardChargeId == charge.id } || result.maintenance.size >= MAX_MAINTENANCE) return result
+    val kind = maintenanceKindFor(charge.merchant)
+    val record = MaintenanceRecord(UUID.nameUUIDFromBytes("maint|${charge.id}".toByteArray()).toString(), charge.at, kind, trip.endOdometerKm, charge.amountWon,
+        charge.merchant, "", EditSource.CARD, charge.id, charge.demo)
+    val care = if (kind == MaintenanceKind.OIL) result.care.copy(lastServiceKm = trip.endOdometerKm, lastServiceAt = charge.at) else result.care
+    return result.copy(maintenance = result.maintenance + record, care = care)
 }
 
 /** Takes a charge back off its trip, used for cancellations and for the driver saying it was not a company cost. */
@@ -245,7 +258,8 @@ private fun TripLogData.detach(charge: CardCharge, note: String, now: Long): Tri
     val edited = if (trip != null && trip.expenses.any { it.cardChargeId == charge.id }) withTrip(trip.id) {
         withHistory(it.copy(expenses = it.expenses.filterNot { e -> e.cardChargeId == charge.id }), "${charge.merchant} ${formatWon(charge.amountWon)} $note", now)
     } else this
-    return edited.copy(stops = edited.stops.map { if (it.chargeId == charge.id) it.copy(chargeId = null) else it })
+    return edited.copy(stops = edited.stops.map { if (it.chargeId == charge.id) it.copy(chargeId = null) else it },
+        maintenance = edited.maintenance.filterNot { it.cardChargeId == charge.id })
 }
 
 /** Re-runs matching for everything undecided. Called when a charge arrives and whenever the car adds evidence. */

@@ -90,7 +90,7 @@ class LogbookExportTest {
         }
         entries.values.forEach { DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(ByteArrayInputStream(it.toByteArray())) }
         val workbook = entries.getValue("xl/workbook.xml")
-        listOf("운행기록부", "직원별 현황", "경비원장", "확인사항").forEach { assertTrue(workbook.contains("name=\"$it\"")) }
+        listOf("운행기록부", "직원별 현황", "경비원장", "차량관리", "확인사항").forEach { assertTrue(workbook.contains("name=\"$it\"")) }
         assertTrue(entries.getValue("xl/worksheets/sheet1.xml").contains("<v>25.0</v>"))
         assertFalse(entries.getValue("xl/worksheets/sheet1.xml").contains("99999"))
         val sheet = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(ByteArrayInputStream(entries.getValue("xl/worksheets/sheet1.xml").toByteArray()))
@@ -102,7 +102,8 @@ class LogbookExportTest {
         assertTrue(employees.contains("<c r=\"I6\" s=\"4\"><v>3000</v></c>"))
         val expenses = entries.getValue("xl/worksheets/sheet3.xml")
         assertTrue(expenses.contains("주유·충전") && expenses.contains("통행료") && expenses.contains("영수증 별도 확인·보관"))
-        val checks = entries.getValue("xl/worksheets/sheet4.xml")
+        assertTrue(entries.getValue("xl/worksheets/sheet4.xml").contains("차량관리") && entries.getValue("xl/worksheets/sheet4.xml").contains("정비 명세서와 대조"))
+        val checks = entries.getValue("xl/worksheets/sheet5.xml")
         assertTrue(checks.contains("사업자등록번호 항목을 입력해 주세요."))
         assertTrue(checks.contains("시연 데이터"))
         assertFalse(entries.values.any { it.contains("<f>") })
@@ -120,10 +121,11 @@ class LogbookExportTest {
             trips.first().copy(id = "outside", startAt = Instant.parse("2026-09-01T00:00:00Z").toEpochMilli()))
         val from = LocalDate.of(2026, 10, 1); val to = LocalDate.of(2026, 10, 31); val zone = ZoneId.of("Asia/Seoul")
         val sheets = logbookSheets(original.profile, from, to, trips + ignored, original.drivers, zone)
-        assertEquals(listOf("운행기록부", "직원별 현황", "경비원장", "확인사항"), sheets.map { it.name })
+        assertEquals(listOf("운행기록부", "직원별 현황", "경비원장", "차량관리", "확인사항"), sheets.map { it.name })
         assertEquals(3, sheets[0].rows.size)
         assertEquals(55_000L, sheets[2].rows.single()[5])
-        assertTrue(sheets[3].rows.any { it[0] == IssueType.NO_DRIVER.label })
+        assertTrue(sheets[4].rows.any { it[0] == IssueType.NO_DRIVER.label })
+        assertEquals("기록 없음", sheets[3].rows.single()[0])
         val entries = mutableMapOf<String, ByteArray>()
         ZipInputStream(ByteArrayInputStream(logbookXlsx(original.profile, from, to, trips + ignored, original.drivers, zone))).use { zip ->
             while (true) { val entry = zip.nextEntry ?: break; entries[entry.name] = zip.readBytes() }

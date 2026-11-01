@@ -13,7 +13,7 @@ enum class TripPurpose(val label: String) {
     UNCLASSIFIED("미분류"), COMMUTE("출·퇴근"), BUSINESS("일반 업무"), PERSONAL("개인");
     val business get() = this == COMMUTE || this == BUSINESS
 }
-enum class EditSource(val label: String) { DRIVER("직접 선택"), VOICE("Gleo 음성"), SUGGESTED("이전 기록 제안"), PHONE("휴대폰"), CARD("카드 자동 매칭"), AUTO("자동 분류") }
+enum class EditSource(val label: String) { DRIVER("직접 선택"), VOICE("Gleo 음성"), SUGGESTED("이전 기록 제안"), PHONE("휴대폰"), CARD("카드 자동 매칭"), AUTO("자동 분류"), ASSISTANT("화면 비서") }
 
 enum class IncidentKind(val label: String) { ACCIDENT("사고"), DAMAGE("파손·긁힘"), BREAKDOWN("고장·경고"), OTHER("특이사항") }
 enum class IncidentStatus(val label: String) { OPEN("대응 중"), CLOSED("처리 완료") }
@@ -58,7 +58,7 @@ data class VehicleCard(
 /** An energy stop detected from the vehicle: charging, or fuel rising while parked. `socFrom`/`socTo` hold whichever level applies. */
 data class ChargeSession(val startAt: Long, val endAt: Long, val socFrom: Int?, val socTo: Int?, val odometerKm: Double?, val demo: Boolean = false,
     val id: String = "", val fuel: Boolean = false, val place: String? = null, val chargeId: String? = null)
-enum class ExpenseType(val label: String) { FUEL("주유·충전"), TOLL("통행료"), PARKING("주차"), OTHER("기타") }
+enum class ExpenseType(val label: String) { FUEL("주유·충전"), TOLL("통행료"), PARKING("주차"), MAINTENANCE("정비"), OTHER("기타") }
 enum class GearState { PARK, MOVING, UNKNOWN }
 enum class TripOrigin { AUTO, GAP_FILL }
 
@@ -128,6 +128,8 @@ data class FleetProfile(
     val autopilot: Boolean = true,
     // Last four digits of the company's cards. Empty means only merchants that are plainly vehicle costs are accepted.
     val cards: List<String> = emptyList(),
+    // Ask once a day who is driving; off for a single-driver car.
+    val confirmDriverDaily: Boolean = true,
 )
 
 /**

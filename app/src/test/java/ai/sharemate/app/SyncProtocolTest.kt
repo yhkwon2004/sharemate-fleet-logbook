@@ -21,6 +21,8 @@ class SyncProtocolTest {
             SyncCommand.UpdateIncident(otherId, "상대 차량 12가 3456", IncidentStatus.CLOSED, null),
             SyncCommand.UpdateIncident(otherId, null, null, IncidentKind.DAMAGE),
             SyncCommand.RemovePhoto(otherId, tripId),
+            SyncCommand.ClassifyMany(listOf(tripId, otherId), TripPurpose.COMMUTE),
+            SyncCommand.DeleteIncident(otherId),
         )
         commands.forEach { command -> assertEquals(command, parseSyncCommand(JSONObject(encodeSyncCommand(command).toString()))) }
     }
@@ -37,6 +39,10 @@ class SyncProtocolTest {
             """{"type":"resolveCharge","amountWon":-5}""",
             """{"type":"reportIncident","kind":"FIRE"}""",
             """{"type":"updateIncident","id":"$otherId","status":"DONE"}""",
+            """{"type":"classifyMany","tripIds":[],"purpose":"COMMUTE"}""",
+            """{"type":"classifyMany","tripIds":["nope"],"purpose":"COMMUTE"}""",
+            """{"type":"classifyMany","tripIds":[${List(201) { "\"$tripId\"" }.joinToString(",")}],"purpose":"COMMUTE"}""",
+            """{"type":"deleteIncident","id":"12"}""",
         )
         bad.forEach { json -> assertThrows(json, Exception::class.java) { parseSyncCommand(JSONObject(json)) } }
     }

@@ -20,18 +20,32 @@ private fun logbookValues(item: LogbookRow): List<Any> = listOf("${item.date}(${
 internal fun logbookXlsx(profile: FleetProfile, from: LocalDate, to: LocalDate, rows: List<LogbookRow>, totals: LogbookTotals): ByteArray =
     logbookWorkbook(profile, from, to, rows, totals, emptyList())
 
-internal fun logbookXlsx(profile: FleetProfile, from: LocalDate, to: LocalDate, trips: List<Trip>, drivers: List<Driver>, zone: ZoneId = ZoneId.systemDefault()): ByteArray {
+internal fun logbookXlsx(profile: FleetProfile, from: LocalDate, to: LocalDate, trips: List<Trip>, drivers: List<Driver>, zone: ZoneId = ZoneId.systemDefault(),
+    maintenance: List<MaintenanceRecord> = emptyList(), care: VehicleCare = VehicleCare()): ByteArray {
     val selected = tripsIn(trips.filter { it.demo == profile.demoMode }, from, to, zone)
-    val supporting = logbookSheets(profile, from, to, selected, drivers, zone).drop(1).map { it.name to (listOf(it.columns) + it.rows) }
+    val supporting = logbookSheets(profile, from, to, selected, drivers, zone, maintenance, care).drop(1).map { it.name to (listOf(it.columns) + it.rows) }
     return logbookWorkbook(profile, from, to, logbookRows(selected, drivers, zone), logbookTotals(selected), supporting)
 }
 
 /** The preview and workbook use the same rows, including filtering and review warnings. */
-internal fun logbookSheets(profile: FleetProfile, from: LocalDate, to: LocalDate, trips: List<Trip>, drivers: List<Driver>, zone: ZoneId = ZoneId.systemDefault()): List<LogbookSheet> {
+internal fun logbookSheets(profile: FleetProfile, from: LocalDate, to: LocalDate, trips: List<Trip>, drivers: List<Driver>, zone: ZoneId = ZoneId.systemDefault(),
+    maintenance: List<MaintenanceRecord> = emptyList(), care: VehicleCare = VehicleCare()): List<LogbookSheet> {
     require(!to.isBefore(from))
     val selected = tripsIn(trips.filter { it.demo == profile.demoMode }, from, to, zone)
     val byDriver = drivers.associateBy { it.id }
     fun date(at: Long) = Instant.ofEpochMilli(at).atZone(zone).toLocalDate().toString()
+    // Vehicle care sheet: what was done to the car in the period and the deadlines the company is tracking.
+    val careRows = mutableListOf<List<Any>>(listOf("구분", "일자", "항목", "계기판(km)", "금액(원)", "업체", "메모", "등록 경로"))
+    maintenance.filter { it.demo == profile.demoMode && Instant.ofEpochMilli(it.at).atZone(zone).toLocalDate().let { d -> !d.isBefore(from) && !d.isAfter(to) } }
+        .sortedBy { it.at }.forEach { m ->
+            careRows += listOf("정비", date(m.at), m.kind.label, m.odometerKm ?: "", m.amountWon, m.merchant.orEmpty(), m.note, m.source.label)
+        }
+    listOf("정기검사 만료" to care.inspectionDue, "보험 만기" to care.insuranceDue, "리스·렌트 만기" to care.leaseEnd).forEach { (label, due) ->
+        if (!due.isNullOrBlank()) careRows += listOf("기한", due, label, "", "", "", "", "차량 설정")
+    }
+    if (care.serviceIntervalKm != null && care.lastServiceKm != null)
+        careRows += listOf("정비 주기", care.lastServiceAt?.let(::date).orEmpty(), "${"%,d".format(care.serviceIntervalKm)} km마다", care.lastServiceKm, "", "", "마지막 정비 기준", "차량 설정")
+    if (careRows.size == 1) careRows += listOf("기록 없음", "", "조회 기간에 정비 기록과 설정된 기한이 없습니다.", "", "", "", "", "")
     val employees = employeeUsage(selected, drivers, profile.reimbursePerKmWon)
     val employeeRows = listOf<List<Any>>(listOf("부서", "성명", "운행(건)", "전체(km)", "업무(km)", "주유·충전(원)", "기타 경비(원)", "단가(원/km)", "거리정산 참고(원)", "확인")) +
         employees.map { item -> listOf(item.driver?.department.orEmpty(), item.driver?.name ?: "직원 미지정", item.totals.trips,
@@ -58,7 +72,7 @@ internal fun logbookSheets(profile: FleetProfile, from: LocalDate, to: LocalDate
     if (selected.isEmpty()) checkRows += listOf("조회기간 기록 없음", "", "", "", "선택한 기간과 실제/시연 모드를 확인해 주세요.")
     if (checkRows.size == 1) checkRows += listOf("자동 점검", "", "", "", "확인 항목이 발견되지 않았습니다. 증빙의 적정성을 보장하지 않습니다.")
     return listOf(LogbookSheet("운행기록부", logbookColumns, logbookRows(selected, drivers, zone).map(::logbookValues))) +
-        listOf("직원별 현황" to employeeRows, "경비원장" to expenseRows, "확인사항" to checkRows).map { (name, content) ->
+        listOf("직원별 현황" to employeeRows, "경비원장" to expenseRows, "차량관리" to careRows, "확인사항" to checkRows).map { (name, content) ->
             LogbookSheet(name, content.first().map { it.toString() }, content.drop(1))
         }
 }
@@ -110,6 +124,7 @@ private fun logbookWorkbook(profile: FleetProfile, from: LocalDate, to: LocalDat
             val lastColumn = ('A'.code + content.first().size - 1).toChar()
             val note = when (title) {
                 "직원별 현황" -> "거리정산은 회사 단가 기준 참고액입니다. 입력 실비와 합산 지급하지 않으며 회사 규정과 원본 증빙을 확인하세요. 직원 미지정은 정산 보류합니다."
+                "차량관리" -> "정비 기록과 차량 기한입니다. 카드 자동 매칭 기록은 가맹점명으로 작업 종류를 추정했으니 정비 명세서와 대조하세요. 기한은 담당자가 입력한 값입니다."
                 "경비원장" -> "직접·음성 입력한 비용 목록입니다. 영수증이나 세금계산서를 생성하지 않습니다. 각 비용의 원본 증빙과 업무 관련성을 별도로 확인하세요."
                 else -> "국세청 운행기록부 항목을 참고한 제출 전 검토 자료입니다. 조회기간은 전체 사업연도와 다를 수 있습니다. 자동 점검은 신고 적정성을 보장하지 않습니다."
             }
