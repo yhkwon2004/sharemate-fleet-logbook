@@ -27,6 +27,10 @@ internal fun logbookXlsx(profile: FleetProfile, from: LocalDate, to: LocalDate, 
     return logbookWorkbook(profile, from, to, logbookRows(selected, drivers, zone), logbookTotals(selected), supporting)
 }
 
+/** Workbook from the whole log: profile, drivers, maintenance and care deadlines travel together so the 차량관리 sheet is never empty by accident. */
+internal fun logbookXlsx(data: TripLogData, from: LocalDate, to: LocalDate, trips: List<Trip> = data.trips, profile: FleetProfile = data.profile, zone: ZoneId = ZoneId.systemDefault()): ByteArray =
+    logbookXlsx(profile, from, to, trips, data.drivers, zone, data.maintenance, data.care)
+
 /** The preview and workbook use the same rows, including filtering and review warnings. */
 internal fun logbookSheets(profile: FleetProfile, from: LocalDate, to: LocalDate, trips: List<Trip>, drivers: List<Driver>, zone: ZoneId = ZoneId.systemDefault(),
     maintenance: List<MaintenanceRecord> = emptyList(), care: VehicleCare = VehicleCare()): List<LogbookSheet> {
