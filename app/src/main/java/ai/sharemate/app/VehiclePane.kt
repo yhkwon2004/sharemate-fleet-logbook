@@ -31,9 +31,9 @@ internal fun vehicleSampleFresh(state: TripLogState, now: Long): Boolean {
     return driveSignalsFresh(sample.gear, sample.odometerKm, now - sample.at, now - sample.at)
 }
 
-/** The vehicle as the app knows it: live signals, identity card, the phone link, and what happened to the car. */
+/** The vehicle as the app knows it: live signals, identity card, care deadlines and maintenance, the phone link, and what happened to the car. */
 @Composable
-internal fun VehiclePane(state: TripLogState, now: Long, act: Act, repository: TripLogRepository) {
+internal fun VehiclePane(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, goSettings: (() -> Unit)? = null) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 960.dp
         val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
@@ -41,6 +41,7 @@ internal fun VehiclePane(state: TripLogState, now: Long, act: Act, repository: T
         val fresh = vehicleSampleFresh(state, now)
         val hero: @Composable (Modifier) -> Unit = { VehicleHero(state, fresh, it) }
         val details: @Composable (Modifier) -> Unit = { VehicleDetails(state, fresh, now, it) }
+        val care: @Composable (Modifier) -> Unit = { VehicleCareCard(state, now, act, repository, it, goSettings) }
         val link: @Composable () -> Unit = {
             PhoneSyncCard(state, now)
             if (state.data.profile.phoneSync && state.sync.running) PairingCard(state.sync, now, compact = !wide)
@@ -52,12 +53,13 @@ internal fun VehiclePane(state: TripLogState, now: Long, act: Act, repository: T
                     details(Modifier.weight(1f).fillMaxHeight())
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(20.dp)) { link() }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(20.dp)) { care(Modifier); link() }
                     IncidentHistory(state.data, act, repository, Modifier.weight(1f))
                 }
             } else {
                 hero(Modifier.fillMaxWidth().height(heroHeight))
                 details(Modifier.fillMaxWidth().height(heroHeight * 1.1f))
+                care(Modifier.fillMaxWidth())
                 link()
                 IncidentHistory(state.data, act, repository)
             }

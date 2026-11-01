@@ -26,33 +26,38 @@ import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.util.Locale
 
-/** A read-only data preview of the same four sheets that Excel export writes. */
+/** A read-only data preview of the same five sheets that Excel export writes (운행·직원·경비·차량관리·확인). */
 @Composable
 internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate, to: LocalDate,
     modifier: Modifier = Modifier, compact: Boolean = false) {
     var sheetIndex by rememberSaveable { mutableIntStateOf(0) }
     var page by rememberSaveable { mutableIntStateOf(0) }
     var detail by remember { mutableStateOf<Pair<Int, List<Any>>?>(null) }
-    val result by produceState<Result<List<LogbookSheet>>?>(null, data.profile, trips, data.drivers, from, to) {
+    val result by produceState<Result<List<LogbookSheet>>?>(null, data.profile, trips, data.drivers, data.maintenance, data.care, from, to) {
         value = null
-        value = try { Result.success(withContext(Dispatchers.Default) { logbookSheets(data.profile, from, to, trips, data.drivers) }) }
+        value = try { Result.success(withContext(Dispatchers.Default) { logbookSheets(data.profile, from, to, trips, data.drivers, zone, data.maintenance, data.care) }) }
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { Result.failure(e) }
     }
     LaunchedEffect(data.profile, trips, data.drivers, from, to) { page = 0; detail = null }
+    val closed = remember(data.closedMonths, data.profile.demoMode, from, to) { closedMonthFor(data, from, to) }
     val colors = MaterialTheme.colorScheme
     BoxWithConstraints(modifier) {
     val rowsPerPage = ((maxHeight.value - if (compact) 340 else 470) / if (compact) 64 else 72).toInt().coerceIn(1, if (compact) 3 else 6)
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("업무용승용차 운행기록부", style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
-                modifier = Modifier.semantics { heading() })
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("업무용승용차 운행기록부", style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f).semantics { heading() }, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                // The previewed month is closed: say so where the file name would, never as a lock.
+                closed?.let { ClosedChip(it) }
+            }
             Text(if (data.profile.demoMode) "시연 데이터 · 제출용이 아닙니다" else "${data.profile.companyName.ifBlank { "법인명 미입력" }} · ${data.profile.plateNumber.ifBlank { "차량번호 미입력" }}",
                 style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Segmented(listOf("운행", "직원", "경비", "확인"), sheetIndex) { sheetIndex = it; page = 0; detail = null }
+        Segmented(listOf("운행", "직원", "경비", "차량", "확인"), sheetIndex) { sheetIndex = it; page = 0; detail = null }
         when {
-            result == null -> Box(Modifier.fillMaxWidth().height(140.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            result == null -> SkeletonTable(columns = if (compact) 4 else 6, rows = rowsPerPage, compact = compact)
             result!!.isFailure -> Panel { Text("미리보기를 만들지 못했어요"); Muted("기록은 변경하지 않았습니다. 조회 기간을 다시 선택해 주세요.") }
             else -> {
                 val sheet = result!!.getOrThrow()[sheetIndex]
@@ -65,7 +70,7 @@ internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate,
                     Text("${sheet.rows.size}행", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                 }
                 if (sheet.rows.isEmpty()) Panel(padding = 24.dp) {
-                    Text(if (sheetIndex == 2) "등록된 경비가 없어요" else "이 범위의 기록이 없어요", style = MaterialTheme.typography.titleMedium)
+                    Text(when (sheetIndex) { 2 -> "등록된 경비가 없어요"; 3 -> "정비 기록과 기한이 없어요"; else -> "이 범위의 기록이 없어요" }, style = MaterialTheme.typography.titleMedium)
                     Muted("조회 기간과 직원 선택을 확인하세요. 저장 시에도 빈 내역으로 표시됩니다.")
                 } else {
                     val widths = sheet.columns.mapIndexed { index, title -> when {
