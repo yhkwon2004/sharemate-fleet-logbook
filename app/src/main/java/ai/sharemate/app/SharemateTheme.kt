@@ -1,9 +1,18 @@
 package ai.sharemate.app
 
 import android.provider.Settings
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
@@ -96,6 +105,47 @@ fun rememberReduceMotion(): Boolean {
 /** Page transition for parked screens: 160 ms fade, or an immediate switch when motion is reduced. */
 @Composable
 fun <T> pageFade(): FiniteAnimationSpec<T> = if (LocalReduceMotion.current) snap() else tween(160)
+
+/** The parked screen's motion budget: one card replaces another in 160 ms, a bar slides up in 120 ms. */
+internal const val MOTION_SWAP_MS = 160
+internal const val MOTION_BAR_MS = 120
+
+/**
+ * How one home card gives way to the next: a 160 ms cross-fade with an 8 dp lift, so the driver sees that the question
+ * changed rather than that the screen jumped. Read it once in composition and hand it to `AnimatedContent`'s
+ * `transitionSpec`; with reduced motion, or while driving, it snaps.
+ */
+@Composable
+fun cardSwap(snap: Boolean = false): ContentTransform {
+    val density = LocalDensity.current
+    val lift = with(density) { 8.dp.roundToPx() }
+    if (snap || LocalReduceMotion.current) return snapSwap()
+    val ease = FastOutSlowInEasing
+    // `using` is only available inside AnimatedContentTransitionScope, so the transform is assembled directly.
+    return ContentTransform(
+        targetContentEnter = fadeIn(tween(MOTION_SWAP_MS, easing = ease)) + slideInVertically(tween(MOTION_SWAP_MS, easing = ease)) { lift },
+        initialContentExit = fadeOut(tween(MOTION_SWAP_MS, easing = ease)) + slideOutVertically(tween(MOTION_SWAP_MS, easing = ease)) { -lift },
+        sizeTransform = SizeTransform(clip = false) { _, _ -> tween(MOTION_SWAP_MS, easing = ease) },
+    )
+}
+
+/** An immediate card replacement: the blocked (driving) transition and reduced motion use this. */
+fun snapSwap(): ContentTransform =
+    ContentTransform(fadeIn(snap()), fadeOut(snap()), sizeTransform = SizeTransform(clip = false) { _, _ -> snap() })
+
+/** A follow-up bar arriving: 120 ms ease-out slide from the bottom edge with a fade; nothing when motion is reduced. */
+@Composable
+fun barEnter(): EnterTransition {
+    if (LocalReduceMotion.current) return fadeIn(snap())
+    return slideInVertically(tween(MOTION_BAR_MS, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(MOTION_BAR_MS, easing = FastOutSlowInEasing))
+}
+
+/** A follow-up bar leaving the same way it came. */
+@Composable
+fun barExit(): ExitTransition {
+    if (LocalReduceMotion.current) return fadeOut(snap())
+    return slideOutVertically(tween(MOTION_BAR_MS, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(MOTION_BAR_MS, easing = FastOutSlowInEasing))
+}
 
 /** Caps display-size numbers so a 1.3x+ font scale still fits one line on the car window. */
 @Composable

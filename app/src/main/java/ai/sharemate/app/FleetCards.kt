@@ -16,6 +16,7 @@ import kotlinx.coroutines.withContext
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -89,7 +90,8 @@ private fun incidentCaption(kind: IncidentKind) = when (kind) {
         act {
             val incident = repository.reportIncident(kind)
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            followUp(FollowUp("${kind.label} 기록됨 · 시각·계기판·위치 저장, 대처 안내를 홈에 띄웠어요", "실수예요") { repository.deleteIncident(incident.id) })
+            // One line: the card that just appeared on the home screen already says what was saved.
+            followUp(FollowUp("${kind.label} 기록됨", "실수예요") { repository.deleteIncident(incident.id) })
         }
     }
     Panel(padding = 20.dp) {
@@ -125,22 +127,51 @@ private fun incidentCaption(kind: IncidentKind) = when (kind) {
     }
 }
 
+/**
+ * Closes a report with a way back. A breakdown is offered a second life as a maintenance record, because this is the
+ * only moment that connection is obvious; the reopen stays one tap away in the vehicle tab.
+ */
+private fun closeIncident(incident: Incident, act: Act, repository: TripLogRepository, followUp: (FollowUp) -> Unit) = act {
+    repository.updateIncident(incident.id, status = IncidentStatus.CLOSED)
+    followUp(if (incident.kind == IncidentKind.BREAKDOWN) FollowUp("처리 완료 · 고장·경고를 정비 항목으로 남길까요?", "남기기") {
+        val record = repository.addMaintenance(MaintenanceKind.REPAIR, 0, null, incident.note.ifBlank { "고장·경고 특이사항에서 남김" }.take(300), incident.odometerKm)
+        followUp(FollowUp("정비 항목으로 남겼어요 · 차량 탭에서 볼 수 있어요", "실행 취소") { repository.removeMaintenance(record.id) })
+    } else FollowUp("처리 완료로 바꿨어요", "되돌리기") { repository.updateIncident(incident.id, status = IncidentStatus.OPEN) })
+}
+
+/** Removes a report and offers it back; photo files are gone for good, and the bar says so when there were any. */
+private fun deleteIncident(incident: Incident, act: Act, repository: TripLogRepository, followUp: (FollowUp) -> Unit) = act {
+    repository.deleteIncident(incident.id)
+    val photos = incident.photos.size
+    followUp(FollowUp(if (photos > 0) "특이사항 기록과 사진 ${photos}장을 삭제했어요 · 사진은 복구되지 않아요" else "특이사항 기록을 삭제했어요", "실행 취소") {
+        repository.restoreIncident(incident)
+    })
+}
+
 /** Guidance for an open report: numbered steps first, captured facts second, one closing action. */
 @Composable internal fun IncidentCard(incident: Incident, data: TripLogData, act: Act, repository: TripLogRepository) {
     val pleos = LocalPleosColors.current
+    val followUp = LocalFollowUp.current
     val driver = data.drivers.firstOrNull { it.id == incident.driverId }
     val steps = incidentSteps(incident.kind)
+    // The steps walk in one by one the first time this report is seen; coming back to it later they are simply there.
+    var introduced by rememberSaveable(incident.id) { mutableStateOf(false) }
+    val stagger = remember(incident.id) { !introduced }
+    LaunchedEffect(incident.id) { introduced = true }
+    var confirmDelete by remember(incident.id) { mutableStateOf(false) }
     Panel(color = if (incident.kind == IncidentKind.ACCIDENT) pleos.negative.copy(alpha = .08f) else MaterialTheme.colorScheme.surface) {
         Column(Modifier.semantics { liveRegion = LiveRegionMode.Polite }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Eyebrow("${incident.kind.label} · ${incident.status.label} · ${clock(incident.at)}", pleos.negative)
             Text("지금 할 일", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
         }
         steps.forEachIndexed { index, step ->
-            Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                Box(Modifier.size(32.dp).clip(CircleShape).background(pleos.surfaceHigh), contentAlignment = Alignment.Center) {
-                    Text("${index + 1}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.clearAndSetSemantics {})
+            Appear(index = index.coerceAtMost(3), animate = stagger) {
+                Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Box(Modifier.size(32.dp).clip(CircleShape).background(pleos.surfaceHigh), contentAlignment = Alignment.Center) {
+                        Text("${index + 1}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.clearAndSetSemantics {})
+                    }
+                    Text(step, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f).padding(top = 4.dp))
                 }
-                Text(step, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f).padding(top = 4.dp))
             }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -157,10 +188,18 @@ private fun incidentCaption(kind: IncidentKind) = when (kind) {
             else -> "사진·메모는 휴대폰에서 덧붙일 수 있어요. 설정에서 휴대폰 실시간 연동을 켜 주세요."
         })
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            PrimaryAction("처리 완료", Modifier.weight(1f)) { act { repository.updateIncident(incident.id, status = IncidentStatus.CLOSED) } }
-            QuietAction("기록 삭제", Modifier.weight(1f), color = pleos.negative) { act { repository.deleteIncident(incident.id) } }
+            PrimaryAction("처리 완료", Modifier.weight(1f)) { closeIncident(incident, act, repository, followUp) }
+            // Only a record with photos asks first: the record can come back, the pictures cannot.
+            QuietAction("기록 삭제", Modifier.weight(1f), color = pleos.negative) {
+                if (incident.photos.isEmpty()) deleteIncident(incident, act, repository, followUp) else confirmDelete = true
+            }
         }
     }
+    if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false },
+        title = { Text("사진 ${incident.photos.size}장도 함께 지워져요") },
+        text = { Text("기록은 하단 바에서 되돌릴 수 있지만 사진은 복구되지 않아요.") },
+        confirmButton = { TextButton(onClick = { confirmDelete = false; deleteIncident(incident, act, repository, followUp) }, modifier = Modifier.heightIn(min = 56.dp)) { Text("삭제", color = pleos.negative) } },
+        dismissButton = { TextButton(onClick = { confirmDelete = false }, modifier = Modifier.heightIn(min = 56.dp)) { Text("취소") } })
 }
 
 /**
@@ -193,6 +232,7 @@ private fun incidentCaption(kind: IncidentKind) = when (kind) {
 @Composable internal fun IncidentHistory(data: TripLogData, act: Act, repository: TripLogRepository, modifier: Modifier = Modifier) {
     val items = recentIncidents(data)
     val pleos = LocalPleosColors.current
+    val followUp = LocalFollowUp.current
     Panel(modifier, padding = 22.dp) {
         Eyebrow("사고·특이사항 기록 · ${data.incidents.count { it.demo == data.profile.demoMode }}건")
         if (items.isEmpty()) Muted("기록이 없어요. 홈의 사고·특이사항 버튼을 누르면 그 순간의 차량 정보가 저장돼요.")
@@ -206,8 +246,15 @@ private fun incidentCaption(kind: IncidentKind) = when (kind) {
                     Text(listOfNotNull(incident.odometerKm?.let(::km), incident.address, incident.photos.size.takeIf { it > 0 }?.let { "사진 ${it}장" }, incident.note.ifBlank { null }).joinToString(" · ").ifBlank { "상세 없음" },
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                TextButton(onClick = { act { repository.updateIncident(incident.id, status = if (open) IncidentStatus.CLOSED else IncidentStatus.OPEN) } },
-                    modifier = Modifier.heightIn(min = 48.dp)) { Text(if (open) "완료" else "다시 열기") }
+                TextButton(onClick = {
+                    if (open) closeIncident(incident, act, repository, followUp)
+                    else act {
+                        repository.updateIncident(incident.id, status = IncidentStatus.OPEN)
+                        followUp(FollowUp("${incident.kind.label} 기록을 다시 열었어요 · 홈에 대처 안내가 떠요", "되돌리기") { repository.updateIncident(incident.id, status = IncidentStatus.CLOSED) })
+                    }
+                }, modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "${incident.kind.label} ${SimpleDateFormat("M/d HH:mm", Locale.KOREA).format(Date(incident.at))} ${if (open) "처리 완료" else "다시 열기"}" }) {
+                    Text(if (open) "완료" else "다시 열기", modifier = Modifier.clearAndSetSemantics {})
+                }
             }
         }
     }
@@ -217,14 +264,36 @@ private fun incidentCaption(kind: IncidentKind) = when (kind) {
 
 private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
 
-/** The car saw the charge end; the amount is the only thing left, and even that can be skipped. */
-@Composable internal fun ChargeCard(session: ChargeSession, act: Act, repository: TripLogRepository) {
+/**
+ * The car saw the charge end; the amount is the only thing left, and even that can be skipped. [data] supplies what this
+ * car paid before (same place, similar level change) as the first row of chips, so the likely answer is one tap and
+ * never a guess. [onWait] appears only when a company card is registered: the approval may still settle this by itself.
+ */
+@Composable internal fun ChargeCard(session: ChargeSession, act: Act, repository: TripLogRepository, data: TripLogData? = null, onWait: (() -> Unit)? = null) {
     val pleos = LocalPleosColors.current
+    val followUp = LocalFollowUp.current
     var custom by rememberSaveable(session.endAt) { mutableStateOf("") }
     val minutes = ((session.endAt - session.startAt) / 60_000).coerceAtLeast(1)
     val soc = if (session.socFrom != null && session.socTo != null) "${session.socFrom}% → ${session.socTo}%" else "배터리 변화 미수신"
+    val word = if (session.fuel) "주유" else "충전"
+    val anchors = remember(session.id, session.endAt, data?.stops?.size, data?.charges?.size) { data?.let { recentChargeAmounts(session, it) } ?: emptyList() }
+    val cardsRegistered = data?.profile?.cards?.isNotEmpty() == true
+    // The amount lands on the trip that arrived here; undo takes that one line back off again.
+    val register: (Long) -> Unit = { amount ->
+        act {
+            repository.resolveCharge(amount, EditSource.DRIVER)
+            followUp(FollowUp("$word ${formatWon(amount)}을 최근 운행 비용에 넣었어요", "실행 취소") {
+                val latest = repository.state.value.data
+                val trip = latest.trips.filter { it.demo == session.demo && it.startAt <= session.endAt }.maxByOrNull { it.startAt }
+                val index = trip?.expenses?.indexOfLast { it.type == ExpenseType.FUEL && it.cardChargeId == null && it.amountWon == amount } ?: -1
+                if (trip != null && index >= 0) {
+                    repository.removeExpense(trip.id, index)
+                    followUp(FollowUp("$word 비용을 지웠어요 · 운행 상세에서 다시 등록할 수 있어요"))
+                }
+            })
+        }
+    }
     Panel {
-        val word = if (session.fuel) "주유" else "충전"
         Eyebrow("$word 감지 · ${clock(session.startAt)}–${clock(session.endAt)}", pleos.active)
         Text("$word 비용만 알려 주세요", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
         Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -232,13 +301,26 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
             Stat("$word 시간", "${minutes}분", Modifier.weight(1f))
             Stat("계기판", km(session.odometerKm), Modifier.weight(1f))
         }
+        if (anchors.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Eyebrow("이 차가 지난번에 낸 금액")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                anchors.forEach { anchor ->
+                    Surface(onClick = { register(anchor.amountWon) }, shape = RoundedCornerShape(18.dp), color = pleos.surfaceHigh,
+                        border = BorderStroke(1.dp, pleos.active.copy(alpha = .45f)),
+                        modifier = Modifier.weight(1f).heightIn(min = 64.dp).semantics { role = Role.Button; contentDescription = "${anchor.label}, 이 금액으로 등록" }) {
+                        Text(anchor.label, style = MaterialTheme.typography.titleSmall, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp))
+                    }
+                }
+            }
+        }
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val columns = if (maxWidth < 520.dp) 2 else 4
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 chargeQuickAmounts.chunked(columns).forEach { row ->
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         row.forEach { amount ->
-                            Surface(onClick = { act { repository.resolveCharge(amount, EditSource.DRIVER) } }, modifier = Modifier.weight(1f).heightIn(min = 64.dp),
+                            Surface(onClick = { register(amount) }, modifier = Modifier.weight(1f).heightIn(min = 64.dp),
                                 shape = RoundedCornerShape(18.dp), color = pleos.surfaceHigh) {
                                 Text(formatWon(amount), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, modifier = Modifier.padding(16.dp))
                             }
@@ -250,10 +332,15 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedTextField(custom, { if (it.length <= 8 && it.all(Char::isDigit)) custom = it }, Modifier.weight(1f), singleLine = true,
                 label = { Text("직접 입력 (원)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), shape = RoundedCornerShape(16.dp))
-            PrimaryAction("등록", enabled = (custom.toLongOrNull() ?: 0) > 0) { act { repository.resolveCharge(custom.toLong(), EditSource.DRIVER); custom = "" } }
+            PrimaryAction("등록", enabled = (custom.toLongOrNull() ?: 0) > 0) { val amount = custom.toLong(); custom = ""; register(amount) }
         }
-        QuietAction("비용 없음 · 법인카드 자동정산 (건너뛰기)", Modifier.fillMaxWidth()) { act { repository.resolveCharge(null, EditSource.DRIVER) } }
-        Muted("등록한 금액은 가장 최근 운행의 ‘주유·충전’ 경비로 들어가고 Excel ⑫ 비용에 합산돼요.")
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            QuietAction("비용 없음", Modifier.weight(1f)) { act { repository.resolveCharge(null, EditSource.DRIVER); followUp(FollowUp("비용 없이 $word 기록을 정리했어요")) } }
+            // Only a registered card can answer this question by itself; without one the button would promise nothing.
+            if (cardsRegistered && onWait != null) QuietAction("카드 승인 기다리기", Modifier.weight(1f), onClick = onWait)
+        }
+        Muted(if (cardsRegistered) "등록한 금액은 가장 최근 운행의 ‘주유·충전’ 경비로 들어가요. 법인카드로 냈다면 승인이 도착할 때 같은 금액은 하나로 합쳐져요."
+            else "등록한 금액은 가장 최근 운행의 ‘주유·충전’ 경비로 들어가고 Excel ⑫ 비용에 합산돼요.")
     }
 }
 
@@ -338,8 +425,13 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
 
 // ───────────────────────── 자동 완성 ─────────────────────────
 
-/** Month progress in one line of numbers: how much of the logbook finished itself and what is left for a person. */
-@Composable internal fun AutopilotStrip(data: TripLogData, now: Long, modifier: Modifier = Modifier) {
+/**
+ * Month progress in one line of numbers: how much of the logbook finished itself and what is left for a person.
+ * Payments still waiting for the car's evidence are counted out loud, and a charge question the car is holding back for
+ * the card feed ([waiting], see [hiddenPendingCharge]) gets a dimmed row with [onEnterNow] instead of a silent gap.
+ */
+@Composable internal fun AutopilotStrip(data: TripLogData, now: Long, modifier: Modifier = Modifier, waiting: ChargeSession? = null,
+    waitingPrompt: ChargePrompt = ChargePrompt.AUTO, onEnterNow: (() -> Unit)? = null) {
     if (!data.profile.autopilot) return
     val today = java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
     val summary = autopilotSummary(data, today.withDayOfMonth(1), today, java.time.ZoneId.systemDefault())
@@ -347,7 +439,7 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
     val headline: @Composable (Modifier) -> Unit = { place ->
         Column(place, verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text("이달 운행일지 ${summary.percent?.let { "$it%" } ?: "—"} 완성", style = MaterialTheme.typography.titleMedium, maxLines = 1)
-            Text(if (summary.left > 0) "남은 확인 ${summary.left}건" else "사람이 확인할 일 없음", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(autopilotSubline(summary), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
     val numbers: @Composable RowScope.() -> Unit = {
@@ -355,13 +447,23 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
         Stat("카드 자동 반영", "${summary.cardMatched}건 · ${formatWon(summary.cardWon)}", Modifier.weight(1.5f))
     }
     Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = pleos.surfaceHigh) {
-        BoxWithConstraints(Modifier.padding(horizontal = 18.dp, vertical = 14.dp).semantics(mergeDescendants = true) {}) {
-            if (maxWidth < 560.dp) Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                headline(Modifier)
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), content = numbers)
-            } else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                headline(Modifier.weight(1.2f))
-                numbers()
+        Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            BoxWithConstraints(Modifier.semantics(mergeDescendants = true) {}) {
+                if (maxWidth < 560.dp) Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    headline(Modifier)
+                    Row(horizontalArrangement = Arrangement.spacedBy(14.dp), content = numbers)
+                } else Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                    headline(Modifier.weight(1.2f))
+                    numbers()
+                }
+            }
+            if (waiting != null) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(chargeWaitingLine(waiting, waitingPrompt), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite })
+                    if (onEnterNow != null) QuietAction("지금 입력", onClick = onEnterNow)
+                }
             }
         }
     }
