@@ -16,7 +16,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** Used only while the stored logbook is loading; no artificial splash timer. */
+/**
+ * Car screen only, shown while the stored logbook is loading; no artificial splash timer. The phone draws
+ * [PhoneHomeSkeleton] instead, the shape of the screen that is about to appear.
+ */
 @Composable
 internal fun SharemateSplash(modifier: Modifier = Modifier) {
     SharemateTheme(dark = true) {
