@@ -16,11 +16,29 @@ import java.util.Locale
 sealed interface AssistantIntent {
     data class SetPurpose(val purpose: TripPurpose, val scope: TripScope) : AssistantIntent
     data class AddExpense(val type: ExpenseType, val amountWon: Long) : AssistantIntent
+    /** An expense named without a sum: the assistant asks for the amount instead of guessing one. */
+    data class AskAmount(val type: ExpenseType) : AssistantIntent
     data class Summary(val from: LocalDate, val to: LocalDate, val label: String) : AssistantIntent
+    /** "What still needs a purpose?": the unclassified trips, newest first, as tappable citations. */
+    data object ListPending : AssistantIntent
     data object Care : AssistantIntent
     data class MonthClose(val month: YearMonth) : AssistantIntent
     data object Unknown : AssistantIntent
 }
+
+/** How many unclassified trips a [AssistantIntent.ListPending] answer cites; the rest is a count. */
+internal const val ASSISTANT_PENDING_LIMIT = 5
+
+/** Sums the person can tap instead of typing when a cost was named without one; the charge card's own 1·2·3·5만 원 for charging. */
+internal fun quickAmounts(type: ExpenseType): List<Long> = when (type) {
+    ExpenseType.FUEL -> listOf(10_000, 20_000, 30_000, 50_000)
+    ExpenseType.TOLL -> listOf(1_000, 2_000, 3_600, 5_000)
+    ExpenseType.PARKING -> listOf(2_000, 3_000, 5_000, 10_000)
+    ExpenseType.MAINTENANCE, ExpenseType.OTHER -> listOf(10_000, 30_000, 50_000, 100_000)
+}
+
+/** The sentence a quick amount sends, phrased so [parseIntent] reads it back as the same expense type. */
+internal fun expensePhrase(type: ExpenseType, amountWon: Long) = "${type.label} ${formatWon(amountWon)} 추가해줘"
 
 /** Which trips a purpose applies to: the latest one, or every unclassified trip on a day. */
 sealed interface TripScope {
@@ -56,6 +74,14 @@ internal fun parseAmount(text: String): Long? {
 
 private fun String.hasAny(vararg words: String) = words.any { contains(it) }
 
+private fun expenseTypeOf(lower: String) = when {
+    lower.hasAny("통행", "톨", "하이패스", "고속도로") -> ExpenseType.TOLL
+    lower.hasAny("주차") -> ExpenseType.PARKING
+    lower.hasAny("주유", "충전", "기름", "연료") -> ExpenseType.FUEL
+    lower.hasAny("정비", "수리", "타이어", "세차", "오일") -> ExpenseType.MAINTENANCE
+    else -> ExpenseType.OTHER
+}
+
 /** Turns one short Korean request into an intent. Unknown is a valid answer: the panel then shows the chips again. */
 internal fun parseIntent(raw: String, today: LocalDate): AssistantIntent {
     val text = raw.trim().take(ASSISTANT_MAX_INPUT).replace(Regex("\\s+"), " ")
@@ -71,14 +97,11 @@ internal fun parseIntent(raw: String, today: LocalDate): AssistantIntent {
     if (lower.hasAny("검사", "보험", "리스", "렌트", "정비 주기", "차량 관리", "차량관리", "만기")) return AssistantIntent.Care
     val amount = parseAmount(text)
     if (amount != null && lower.hasAny("추가", "등록", "넣어", "기록", "결제", "냈", "썼", "비용", "경비", "료", "주차", "주유", "충전", "정비")) {
-        val type = when {
-            lower.hasAny("통행", "톨", "하이패스", "고속도로") -> ExpenseType.TOLL
-            lower.hasAny("주차") -> ExpenseType.PARKING
-            lower.hasAny("주유", "충전", "기름", "연료") -> ExpenseType.FUEL
-            lower.hasAny("정비", "수리", "타이어", "세차", "오일") -> ExpenseType.MAINTENANCE
-            else -> ExpenseType.OTHER
-        }
-        return AssistantIntent.AddExpense(type, amount)
+        return AssistantIntent.AddExpense(expenseTypeOf(lower), amount)
+    }
+    // "통행료 추가해줘" names a cost but no sum: ask, never invent one.
+    if (amount == null && lower.hasAny("추가", "등록", "넣어") && lower.hasAny("비용", "경비", "요금", "료", "주차", "주유", "충전", "톨", "하이패스", "정비")) {
+        return AssistantIntent.AskAmount(expenseTypeOf(lower))
     }
     val purpose = when {
         lower.hasAny("출퇴근", "출·퇴근", "출 퇴근", "퇴근", "출근") -> TripPurpose.COMMUTE
@@ -94,6 +117,7 @@ internal fun parseIntent(raw: String, today: LocalDate): AssistantIntent {
         }
         return AssistantIntent.SetPurpose(purpose, scope)
     }
+    if (lower.hasAny("미분류", "목적 확인", "확인 안 된", "확인 안된", "확인이 필요한", "남은 운행", "남았")) return AssistantIntent.ListPending
     if (lower.hasAny("요약", "얼마나", "몇 건", "몇건", "거리", "통계", "현황", "얼마", "비율", "알려", "보여", "정리")) {
         val (from, to, label) = when {
             lower.hasAny("오늘") -> Triple(today, today, "오늘")
@@ -122,6 +146,24 @@ internal fun purposeTargets(data: TripLogData, scope: TripScope, now: Long, zone
     }
 }
 
+internal fun pendingChargeOf(data: TripLogData): ChargeSession? = data.pendingCharge?.takeIf { it.demo == data.profile.demoMode }
+
+private fun chargeLabel(session: ChargeSession, zone: ZoneId) =
+    "${clock(session.startAt, zone)}~${clock(session.endAt, zone)}, ${session.socFrom ?: "?"}→${session.socTo ?: "?"}%"
+
+/**
+ * Where an expense lands. A charging cost while the car is still asking about a detected charge goes to that session
+ * (the same trip the charge card would pick); anything else goes to the latest trip.
+ */
+internal fun expenseTarget(data: TripLogData, type: ExpenseType, now: Long, zone: ZoneId): Pair<Trip?, ChargeSession?> {
+    val session = pendingChargeOf(data)?.takeIf { type == ExpenseType.FUEL }
+    if (session != null) {
+        val target = data.trips.filter { it.demo == session.demo && it.startAt <= session.endAt }.maxByOrNull { it.startAt }
+        if (target != null) return target to session
+    }
+    return purposeTargets(data, TripScope.Latest, now, zone).firstOrNull() to null
+}
+
 /** Chips that fit the moment: the log decides what is worth asking, so the first suggestion is usually the one to tap. */
 internal fun suggestedPrompts(data: TripLogData, now: Long, zone: ZoneId): List<String> {
     val demo = data.profile.demoMode
@@ -130,7 +172,7 @@ internal fun suggestedPrompts(data: TripLogData, now: Long, zone: ZoneId): List<
     val latest = purposeTargets(data, TripScope.Latest, now, zone).firstOrNull()
     if (latest != null && latest.purpose == TripPurpose.UNCLASSIFIED) {
         val guess = autoPurpose(latest, data.trips) ?: suggestPurpose(latest, data.trips)?.purpose
-        out += if (guess != null) "방금 운행 ${guess.label}로 기록해줘" else "방금 운행 업무로 기록해줘"
+        out += if (guess != null) "방금 운행 ${withRo(guess.label)} 기록해줘" else "방금 운행 업무로 기록해줘"
     }
     val yesterday = purposeTargets(data, TripScope.Day(today.minusDays(1)), now, zone)
     if (yesterday.size >= 2) out += "어제 운행 전부 업무로 기록해줘"
@@ -163,6 +205,16 @@ internal fun answerReadOnly(data: TripLogData, intent: AssistantIntent, now: Lon
             AssistantAnswer(text, listOf(AssistantStep("기간 조회", "${intent.from} ~ ${intent.to}"), AssistantStep("운행 ${totals.trips}건 집계")),
                 cited.map { AssistantCitation(it.id, tripLabel(it, zone)) }, intent)
         }
+        AssistantIntent.ListPending -> {
+            val pending = data.trips.filter { it.demo == demo && it.purpose == TripPurpose.UNCLASSIFIED }.sortedByDescending { it.startAt }
+            val text = when {
+                pending.isEmpty() -> "목적 확인이 남은 운행이 없어요. 모두 확인됐어요."
+                pending.size <= ASSISTANT_PENDING_LIMIT -> "목적 확인이 남은 운행이 ${pending.size}건 있어요. 아래 운행을 누르면 바로 확인할 수 있어요."
+                else -> "목적 확인이 남은 운행이 ${pending.size}건 있어요. 최근 ${ASSISTANT_PENDING_LIMIT}건을 보여 드려요. 나머지는 운행기록 탭에서 확인해 주세요."
+            }
+            AssistantAnswer(text, listOf(AssistantStep("미분류 운행 찾기", "${pending.size}건")),
+                pending.take(ASSISTANT_PENDING_LIMIT).map { AssistantCitation(it.id, tripLabel(it, zone)) }, intent)
+        }
         AssistantIntent.Care -> {
             val alerts = careAlerts(data.care, data.vehicle.odometerKm, today)
             val text = if (alerts.isEmpty()) "설정된 차량 기한이 없어요. 차량 탭에서 정기검사·보험·리스 만기와 정비 주기를 등록하면 미리 알려 드려요."
@@ -181,21 +233,48 @@ internal fun answerReadOnly(data: TripLogData, intent: AssistantIntent, now: Lon
         }
         is AssistantIntent.SetPurpose -> {
             val targets = purposeTargets(data, intent.scope, now, zone)
-            AssistantAnswer(if (targets.isEmpty()) "바꿀 운행을 찾지 못했어요." else "${targets.size}건을 ${intent.purpose.label}로 기록할게요.",
+            AssistantAnswer(if (targets.isEmpty()) "바꿀 운행을 찾지 못했어요." else "${targets.size}건을 ${withRo(intent.purpose.label)} 기록할게요.",
                 citations = targets.take(3).map { AssistantCitation(it.id, tripLabel(it, zone)) }, intent = intent)
         }
         is AssistantIntent.AddExpense -> {
-            val target = purposeTargets(data, TripScope.Latest, now, zone).firstOrNull()
-            AssistantAnswer(if (target == null) "비용을 연결할 최근 운행이 없어요." else "${intent.type.label} ${won(intent.amountWon)}을 최근 운행에 추가할게요.",
-                citations = listOfNotNull(target?.let { AssistantCitation(it.id, tripLabel(it, zone)) }), intent = intent)
+            val (target, session) = expenseTarget(data, intent.type, now, zone)
+            val text = when {
+                target == null -> "비용을 연결할 최근 운행이 없어요."
+                session != null -> "${won(intent.amountWon)}을 차량이 감지한 충전(${chargeLabel(session, zone)}) 비용으로 ${tripLabel(target, zone)} 운행에 추가할게요."
+                else -> "${intent.type.label} ${won(intent.amountWon)}을 최근 운행에 추가할게요."
+            }
+            AssistantAnswer(text, citations = listOfNotNull(target?.let { AssistantCitation(it.id, tripLabel(it, zone)) }), intent = intent)
         }
-        AssistantIntent.Unknown -> AssistantAnswer("아직 알아듣지 못했어요. 아래 예시처럼 말씀해 주세요.", intent = intent)
+        is AssistantIntent.AskAmount -> {
+            val session = pendingChargeOf(data)?.takeIf { intent.type == ExpenseType.FUEL }
+            val text = if (session != null) "차량이 감지한 충전(${chargeLabel(session, zone)})이 기다리고 있어요. 금액을 함께 말해 주세요. 예: 충전 비용 32,000원 등록해줘"
+                else "얼마였는지 함께 말해 주세요. 예: ${intent.type.label} 4,500원 추가해줘"
+            AssistantAnswer(text, intent = intent)
+        }
+        AssistantIntent.Unknown -> AssistantAnswer("아직 알아듣지 못했어요. 할 수 있는 일은 목적 기록, 비용 추가, 운행 요약·확인이에요. 예: 통행료 3,600원 추가해줘", intent = intent)
     }
 }
 
+/** True for the two intents that change the log; the sheet shows their interpretation first and runs them only on a tap. */
+internal fun writesLog(intent: AssistantIntent) = intent is AssistantIntent.SetPurpose || intent is AssistantIntent.AddExpense
+
+/**
+ * Where the three actions land. The car writes the repository directly; the phone sends the same intents to the car as
+ * sync commands and answers read-only questions from its mirrored copy. The sheet only ever talks to this interface.
+ */
+interface AssistantWriter {
+    /** False while a write cannot land right now (phone not paired); questions that only read still work. */
+    val canWrite: Boolean get() = true
+    /** Said under answers that read a copy rather than the car's own log, so the number's provenance is never a guess. */
+    val sourceNote: String? get() = null
+    suspend fun run(text: String, now: Long = System.currentTimeMillis(), zone: ZoneId = ZoneId.systemDefault()): AssistantAnswer
+    /** Puts back what [run] changed; a no-op for answers with `changed == false`. */
+    suspend fun undo(answer: AssistantAnswer)
+}
+
 /** Runs an intent against the repository, so purposes and expenses land with the same checks and history as any tap. */
-class AssistantRunner(private val repository: TripLogRepository) {
-    suspend fun run(text: String, now: Long = System.currentTimeMillis(), zone: ZoneId = ZoneId.systemDefault()): AssistantAnswer {
+class AssistantRunner(private val repository: TripLogRepository) : AssistantWriter {
+    override suspend fun run(text: String, now: Long, zone: ZoneId): AssistantAnswer {
         val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
         val intent = parseIntent(text, today)
         val data = repository.ensureLoaded()
@@ -206,17 +285,21 @@ class AssistantRunner(private val repository: TripLogRepository) {
                 val before = targets.associate { it.id to (it.purpose to it.purposeSource) }
                 if (targets.size == 1) repository.classify(targets[0].id, intent.purpose, EditSource.ASSISTANT)
                 else repository.classifyMany(targets.map { it.id }, intent.purpose, EditSource.ASSISTANT)
-                AssistantAnswer("${targets.size}건을 ${intent.purpose.label}로 기록했어요. 휴대폰에도 반영됐어요.",
+                AssistantAnswer("${targets.size}건을 ${withRo(intent.purpose.label)} 기록했어요. 휴대폰에도 반영됐어요.",
                     listOf(AssistantStep("운행 찾기", targets.first().let { tripLabel(it, zone) } + if (targets.size > 1) " 외 ${targets.size - 1}건" else ""),
                         AssistantStep("목적 기록", "${intent.purpose.label} · 화면 비서 출처"), AssistantStep("저장 완료")),
                     targets.take(3).map { AssistantCitation(it.id, tripLabel(it, zone)) }, intent, changed = true, undoPurposes = before)
             }
             is AssistantIntent.AddExpense -> {
-                val target = purposeTargets(data, TripScope.Latest, now, zone).firstOrNull() ?: return answerReadOnly(data, intent, now, zone)
-                repository.addExpense(target.id, intent.type, intent.amountWon, EditSource.ASSISTANT)
+                val (target, session) = expenseTarget(data, intent.type, now, zone)
+                if (target == null) return answerReadOnly(data, intent, now, zone)
+                if (session != null) repository.resolveCharge(intent.amountWon, EditSource.ASSISTANT)
+                else repository.addExpense(target.id, intent.type, intent.amountWon, EditSource.ASSISTANT)
                 val index = repository.ensureLoaded().let { (it.trips + listOfNotNull(it.open)).first { t -> t.id == target.id } }.expenses.lastIndex
-                AssistantAnswer("${intent.type.label} ${won(intent.amountWon)}을 ${tripLabel(target, zone)} 운행에 추가했어요.",
-                    listOf(AssistantStep("운행 찾기", tripLabel(target, zone)), AssistantStep("비용 추가", "${intent.type.label} ${won(intent.amountWon)}"), AssistantStep("저장 완료")),
+                val what = if (session != null) "충전 ${won(intent.amountWon)}" else "${intent.type.label} ${won(intent.amountWon)}"
+                AssistantAnswer("${what}을 ${tripLabel(target, zone)} 운행에 추가했어요." + if (session != null) " 충전 비용 안내는 닫았어요." else "",
+                    listOfNotNull(if (session != null) AssistantStep("충전 감지 확인", chargeLabel(session, zone)) else null,
+                        AssistantStep("운행 찾기", tripLabel(target, zone)), AssistantStep("비용 추가", what), AssistantStep("저장 완료")),
                     listOf(AssistantCitation(target.id, tripLabel(target, zone))), intent, changed = true, undoExpense = target.id to index)
             }
             else -> answerReadOnly(data, intent, now, zone)
@@ -224,8 +307,67 @@ class AssistantRunner(private val repository: TripLogRepository) {
     }
 
     /** Puts back what [run] changed; purposes return to their previous source so later suggestions stay honest. */
-    suspend fun undo(answer: AssistantAnswer) {
+    override suspend fun undo(answer: AssistantAnswer) {
         answer.undoPurposes.forEach { (id, previous) -> repository.classify(id, previous.first, previous.second ?: EditSource.DRIVER) }
         answer.undoExpense?.let { (tripId, index) -> repository.removeExpense(tripId, index) }
+    }
+}
+
+/**
+ * Phone side of the same assistant. Writes become the sync commands the phone already uses for taps, so the car
+ * stays the only writer and every change comes back through the mirror; questions are answered from the phone's copy.
+ * [send] throws when the car refuses or cannot be reached, and the sheet shows that message inline.
+ */
+class PhoneAssistantWriter(
+    private val data: () -> TripLogData,
+    private val paired: () -> Boolean,
+    private val send: suspend (SyncCommand) -> Unit,
+) : AssistantWriter {
+    constructor(sync: PhoneSyncClient, data: () -> TripLogData) : this(data, { sync.paired }, { sync.send(it) })
+
+    override val canWrite: Boolean get() = paired()
+    override val sourceNote: String = "휴대폰 사본 기준"
+
+    override suspend fun run(text: String, now: Long, zone: ZoneId): AssistantAnswer {
+        val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+        val intent = parseIntent(text, today)
+        val snapshot = data()
+        return when (intent) {
+            is AssistantIntent.SetPurpose -> {
+                val targets = purposeTargets(snapshot, intent.scope, now, zone)
+                val preview = answerReadOnly(snapshot, intent, now, zone)
+                if (targets.isEmpty()) return preview
+                if (!paired()) return preview.copy(text = UNPAIRED_NOTE)
+                val before = targets.associate { it.id to (it.purpose to it.purposeSource) }
+                send(if (targets.size == 1) SyncCommand.Classify(targets[0].id, intent.purpose) else SyncCommand.ClassifyMany(targets.map { it.id }, intent.purpose))
+                AssistantAnswer("${targets.size}건을 ${withRo(intent.purpose.label)} 차량에 기록했어요. 차량 기록이 돌아오면 목록에도 보여요.",
+                    listOf(AssistantStep("운행 찾기", tripLabel(targets.first(), zone) + if (targets.size > 1) " 외 ${targets.size - 1}건" else ""),
+                        AssistantStep("차량에 전송", "${intent.purpose.label} · 휴대폰 출처"), AssistantStep("차량이 받았어요")),
+                    targets.take(3).map { AssistantCitation(it.id, tripLabel(it, zone)) }, intent, changed = true, undoPurposes = before)
+            }
+            is AssistantIntent.AddExpense -> {
+                val (target, session) = expenseTarget(snapshot, intent.type, now, zone)
+                val preview = answerReadOnly(snapshot, intent, now, zone)
+                if (target == null) return preview
+                if (!paired()) return preview.copy(text = UNPAIRED_NOTE)
+                send(if (session != null) SyncCommand.ResolveCharge(intent.amountWon) else SyncCommand.AddExpense(target.id, intent.type, intent.amountWon))
+                val what = if (session != null) "충전 ${won(intent.amountWon)}" else "${intent.type.label} ${won(intent.amountWon)}"
+                // The car appends, so the new expense sits right after the ones this copy already knows about.
+                AssistantAnswer("${what}을 ${tripLabel(target, zone)} 운행에 추가하도록 차량에 보냈어요.",
+                    listOfNotNull(if (session != null) AssistantStep("충전 감지 확인", chargeLabel(session, zone)) else null,
+                        AssistantStep("운행 찾기", tripLabel(target, zone)), AssistantStep("차량에 전송", what), AssistantStep("차량이 받았어요")),
+                    listOf(AssistantCitation(target.id, tripLabel(target, zone))), intent, changed = true, undoExpense = target.id to target.expenses.size)
+            }
+            else -> answerReadOnly(snapshot, intent, now, zone)
+        }
+    }
+
+    override suspend fun undo(answer: AssistantAnswer) {
+        answer.undoPurposes.forEach { (id, previous) -> send(SyncCommand.Classify(id, previous.first)) }
+        answer.undoExpense?.let { (tripId, index) -> send(SyncCommand.RemoveExpense(tripId, index)) }
+    }
+
+    companion object {
+        internal const val UNPAIRED_NOTE = "차량과 연결되면 기록할 수 있어요. 지금은 요약과 확인만 돼요."
     }
 }
