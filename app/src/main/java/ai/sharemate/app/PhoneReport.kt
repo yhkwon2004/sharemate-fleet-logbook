@@ -60,7 +60,7 @@ internal fun canGoForward(month: YearMonth, today: LocalDate) = month < YearMont
 internal data class ReportStep(val label: String, val done: Boolean)
 
 /** The four steps of a month close, with what is left in each; the last two complete together when the month is closed. */
-internal fun monthCloseSteps(status: MonthStatus): List<ReportStep> = listOf(
+internal fun phoneCloseSteps(status: MonthStatus): List<ReportStep> = listOf(
     ReportStep("목적·사용자 확인 ${status.unfinished}건", status.unfinished == 0),
     ReportStep("카드 확인 ${status.reviews}건", status.reviews == 0),
     ReportStep("Excel 저장", status.closed != null),
@@ -85,8 +85,7 @@ internal fun issueActionLabel(type: IssueType): String? = when (type) {
 internal fun closedLabel(close: MonthClose): String = "마감됨 · ${phoneTime(close.closedAt, "M/d HH:mm")}"
 
 /** The repository marks edits to a sealed month in the trip's history; the phone shows that as a chip, never as a lock. */
-internal const val CLOSED_MONTH_EDIT_HISTORY = "마감된 달의 기록 수정"
-internal fun phoneEditedAfterClose(trip: Trip): Boolean = trip.history.any { it.contains(CLOSED_MONTH_EDIT_HISTORY) }
+internal fun phoneEditedAfterClose(trip: Trip): Boolean = editedAfterClose(trip)
 
 private fun ratioLabel(totals: LogbookTotals) = totals.ratio?.let { "업무 ${(it * 100).toInt()}%" } ?: "업무 비율 –"
 
@@ -159,7 +158,7 @@ internal fun tripsOfDriver(trips: List<Trip>, drivers: List<Driver>, driverId: S
     val pleos = LocalPleosColors.current
     val key = monthKey(status.month)
     val name = "${status.month.monthValue}월"
-    val steps = monthCloseSteps(status)
+    val steps = phoneCloseSteps(status)
     Panel(padding = 20.dp) {
         Eyebrow("이달 운행일지")
         if (status.trips == 0) {

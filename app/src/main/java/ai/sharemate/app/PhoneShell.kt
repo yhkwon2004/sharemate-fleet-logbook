@@ -1,5 +1,6 @@
 package ai.sharemate.app
 
+import androidx.core.content.edit
 import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
@@ -199,9 +200,9 @@ private const val PREF_EMPLOYEE = "employeeFilter"
 private const val PREF_SWIPE_HINT = "swipeHintShown"
 
 internal fun rememberedEmployeeFilter(context: Context): String? = phoneUiPrefs(context).getString(PREF_EMPLOYEE, "\u0000")?.takeIf { it != "\u0000" }
-internal fun rememberEmployeeFilter(context: Context, filter: String?) { phoneUiPrefs(context).edit().putString(PREF_EMPLOYEE, filter ?: "\u0000").apply() }
+internal fun rememberEmployeeFilter(context: Context, filter: String?) { phoneUiPrefs(context).edit { putString(PREF_EMPLOYEE, filter ?: "\u0000") } }
 internal fun swipeHintShown(context: Context) = phoneUiPrefs(context).getBoolean(PREF_SWIPE_HINT, false)
-internal fun markSwipeHintShown(context: Context) { phoneUiPrefs(context).edit().putBoolean(PREF_SWIPE_HINT, true).apply() }
+internal fun markSwipeHintShown(context: Context) { phoneUiPrefs(context).edit { putBoolean(PREF_SWIPE_HINT, true) } }
 
 /** Arguments the shell hands to the 경비 tab (built by PhoneExpensesTab in PhoneExpenses.kt). */
 internal class PhoneExpensesArgs(val data: TripLogData, val month: YearMonth, val employeeFilter: String?, val paired: Boolean, val busy: Boolean,
@@ -337,7 +338,7 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
     LaunchedEffect(paired, link.connected) {
         if (paired && !link.connected) { delay(10_000); offline = true } else { offline = false; if (ui.dismissedBanners.contains("offline")) ui = ui.copy(dismissedBanners = ui.dismissedBanners - "offline") }
     }
-    val minute by produceState(0) { while (true) { delay(60_000); value++ } }
+    val minute by produceState(0) { while (true) { delay(60_000); value = value + 1 } }
     val lastSeen = remember(link.lastSeenAt, minute, offline) { lastSeenText(link.lastSeenAt, System.currentTimeMillis(), zone) }
 
     var assistantOpen by rememberSaveable { mutableStateOf(false) }

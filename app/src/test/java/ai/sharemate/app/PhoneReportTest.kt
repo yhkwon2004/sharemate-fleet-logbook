@@ -26,12 +26,12 @@ class PhoneReportTest {
     }
 
     @Test fun closeStepsCompleteInOrderAndTheLastTwoTogether() {
-        val open = monthCloseSteps(MonthStatus(YearMonth.of(2026, 10), trips = 12, unfinished = 3, reviews = 1, closed = null))
+        val open = phoneCloseSteps(MonthStatus(YearMonth.of(2026, 10), trips = 12, unfinished = 3, reviews = 1, closed = null))
         assertEquals(listOf("목적·사용자 확인 3건", "카드 확인 1건", "Excel 저장", "마감"), open.map { it.label })
         assertEquals(listOf(false, false, false, false), open.map { it.done })
-        val ready = monthCloseSteps(MonthStatus(YearMonth.of(2026, 10), 12, 0, 0, null))
+        val ready = phoneCloseSteps(MonthStatus(YearMonth.of(2026, 10), 12, 0, 0, null))
         assertEquals(listOf(true, true, false, false), ready.map { it.done })
-        val closed = monthCloseSteps(MonthStatus(YearMonth.of(2026, 10), 12, 0, 0, MonthClose("2026-10", at(31, 18), 12, 300.0, 200.0, 0)))
+        val closed = phoneCloseSteps(MonthStatus(YearMonth.of(2026, 10), 12, 0, 0, MonthClose("2026-10", at(31, 18), 12, 300.0, 200.0, 0)))
         assertEquals(listOf(true, true, true, true), closed.map { it.done })
         assertTrue(closedLabel(MonthClose("2026-10", at(31, 18), 12, 300.0, 200.0, 0)).startsWith("마감됨 · "))
     }
@@ -62,6 +62,6 @@ class PhoneReportTest {
     @Test fun editsAfterCloseAreReadFromTheHistoryLine() {
         assertFalse(phoneEditedAfterClose(trip("a", 1, kim.id)))
         assertTrue(phoneEditedAfterClose(trip("b", 2, kim.id, history = listOf("휴대폰에서 목적 변경", "마감된 달의 기록 수정 · 11/2 09:10"))))
-        assertEquals(CLOSED_MONTH_EDIT_HISTORY, "마감된 달의 기록 수정")
+        assertEquals(SEALED_EDIT_MARK, "마감된 달의 기록 수정")
     }
 }

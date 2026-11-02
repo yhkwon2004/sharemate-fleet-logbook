@@ -130,8 +130,8 @@ internal fun AssistantSheet(
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = MaterialTheme.colorScheme.surface,
         contentColor = MaterialTheme.colorScheme.onSurface, sheetMaxWidth = if (compact) BottomSheetDefaults.SheetMaxWidth else 960.dp,
         dragHandle = { BottomSheetDefaults.DragHandle(color = MaterialTheme.colorScheme.outline) }) {
-        AssistantBody(data, now, writer, act, followUp, onOpenTrip, onDismiss, compact, initialText,
-            Modifier.fillMaxHeight(if (compact) 0.92f else 0.88f))
+        AssistantBody(data, now, writer, act, followUp, onOpenTrip, onDismiss, compact,
+            Modifier.fillMaxHeight(if (compact) 0.92f else 0.88f), initialText)
     }
 }
 
@@ -147,8 +147,8 @@ internal fun AssistantBody(
     onOpenTrip: (String) -> Unit,
     onClose: (() -> Unit)?,
     compact: Boolean,
-    initialText: String? = null,
     modifier: Modifier = Modifier,
+    initialText: String? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val haptic = LocalHapticFeedback.current
@@ -401,7 +401,7 @@ internal fun AssistantBody(
     val colors = MaterialTheme.colorScheme
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         steps.forEachIndexed { index, step ->
-            Appear(index) {
+            Appear(index = index) {
                 Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) { stateDescription = if (undone) "되돌림" else "완료" },
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Box(Modifier.size(22.dp).background(if (undone) colors.surfaceVariant else LocalPleosColors.current.chartActive.copy(alpha = .18f), RoundedCornerShape(50)), contentAlignment = Alignment.Center) {

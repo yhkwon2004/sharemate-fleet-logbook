@@ -115,8 +115,6 @@ internal fun swipeTargets(trip: Trip, history: List<Trip>): Pair<Pair<TripPurpos
     return right to left
 }
 
-/** A trip edited after its month was closed carries the car's sealed-month history line. */
-internal fun phoneEditedAfterClose(trip: Trip) = trip.history.any { it.contains("마감된 달의 기록 수정") }
 
 private sealed interface ListEntry {
     data class Month(val group: TripMonthGroup) : ListEntry
@@ -180,8 +178,8 @@ private fun entries(groups: List<TripMonthGroup>, shown: Int, firstMonth: YearMo
                 TextButton(onClick = { selected = emptySet() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("모두 해제") }
             }
         }
-        if (filtered.isEmpty() && groups.size <= 1) PhoneEmpty(if (all.isEmpty()) "아직 운행이 없어요" else "이 직원의 운행이 없어요",
-            if (all.isEmpty()) "차량이 출발하면 운행이 여기에 나타나요" else "다른 직원을 고르거나 ‘전체 직원’으로 바꿔 보세요", Modifier.weight(1f))
+        if (filtered.isEmpty() && groups.size <= 1) PhoneEmpty(if (all.isEmpty()) "아직 운행이 없어요" else "이 직원의 운행이 없어요", Modifier.weight(1f),
+            if (all.isEmpty()) "차량이 출발하면 운행이 여기에 나타나요" else "다른 직원을 고르거나 ‘전체 직원’으로 바꿔 보세요")
         else LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = listState, contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (!paired && filtered.isNotEmpty()) item(key = "unpaired") {
                 Muted("파일 사본이에요 · 차량과 연결되면 밀어서 목적을 정할 수 있어요", Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 8.dp))

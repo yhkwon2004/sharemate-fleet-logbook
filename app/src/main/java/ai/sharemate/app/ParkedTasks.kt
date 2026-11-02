@@ -54,18 +54,9 @@ internal fun pendingChargeVisible(data: TripLogData, now: Long, prompt: ChargePr
 internal fun hiddenPendingCharge(data: TripLogData, now: Long, prompt: ChargePrompt = ChargePrompt.AUTO): ChargeSession? =
     pendingChargeSession(data)?.takeUnless { pendingChargeVisible(data, now, prompt) }
 
-/** Stable key for one threshold crossing of a care alert, so a snooze ends when the deadline itself changes. */
-internal fun careSnoozeKey(care: VehicleCare, alert: CareAlert): String = when (alert.kind) {
-    CareKind.INSPECTION -> "INSPECTION|${care.inspectionDue}"
-    CareKind.INSURANCE -> "INSURANCE|${care.insuranceDue}"
-    CareKind.LEASE -> "LEASE|${care.leaseEnd}"
-    CareKind.SERVICE -> "SERVICE|${care.lastServiceKm}|${care.serviceIntervalKm}|${alert.level}"
-}
-
-/** Care alerts that deserve a home card: near or past a deadline and not snoozed for this threshold. */
+/** Care alerts that deserve a home card: near or past a deadline and not snoozed for this threshold (keys from [careSnoozeKey] in FleetCareUi). */
 internal fun dueCareAlerts(data: TripLogData, odometerKm: Double?, today: LocalDate, snoozedCare: Set<String>): List<CareAlert> =
-    careAlerts(data.care, odometerKm ?: data.vehicle.odometerKm, today)
-        .filter { it.level != CareLevel.INFO && careSnoozeKey(data.care, it) !in snoozedCare }
+    careDueAlerts(data.care, odometerKm ?: data.vehicle.odometerKm, today, snoozedCare)
 
 /**
  * Everything the parked screen will ask for, most urgent first. Demo and real records never mix: only the current

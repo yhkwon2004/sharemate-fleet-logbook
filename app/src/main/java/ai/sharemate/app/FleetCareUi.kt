@@ -1,5 +1,6 @@
 package ai.sharemate.app
 
+import androidx.core.content.edit
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -94,7 +95,7 @@ internal fun careSnoozes(context: Context, now: Long = System.currentTimeMillis(
 internal fun snoozeCare(context: Context, key: String, now: Long = System.currentTimeMillis()): Set<String> {
     val prefs = context.getSharedPreferences(FLEET_UI_PREFS, Context.MODE_PRIVATE)
     val next = withCareSnooze(prefs.getStringSet(CARE_SNOOZE_PREF, emptySet()) ?: emptySet(), key, now)
-    prefs.edit().putStringSet(CARE_SNOOZE_PREF, next).apply()
+    prefs.edit { putStringSet(CARE_SNOOZE_PREF, next) }
     return activeCareSnoozes(next, now)
 }
 

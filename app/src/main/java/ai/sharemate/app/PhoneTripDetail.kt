@@ -136,7 +136,7 @@ internal fun expenseStillAt(trip: Trip?, index: Int, snapshot: TripExpense): Boo
             }
             if (paired && data.drivers.isEmpty()) Muted("차량 설정 › 사용자에서 직원을 등록하면 여기서 지정할 수 있어요")
 
-            PhoneSectionTitle("운행 비용", if (trip.expenses.isNotEmpty()) formatWon(trip.expenseWon) else null)
+            PhoneSectionTitle("운행 비용", trailing = if (trip.expenses.isNotEmpty()) formatWon(trip.expenseWon) else null)
             if (trip.expenses.isEmpty()) Muted("등록된 비용이 없어요")
             trip.expenses.forEachIndexed { index, expense ->
                 key(index, expense.at, expense.amountWon) {

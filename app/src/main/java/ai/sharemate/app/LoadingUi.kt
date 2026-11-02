@@ -55,7 +55,7 @@ import androidx.compose.ui.unit.dp
  * [PrimaryAction] that shows progress while [loading]: same 64dp height, a 20dp ring and [loadingLabel] in place of the
  * label. The button is disabled while loading so one tap cannot start the work twice; TalkBack hears the state change.
  */
-@Composable internal fun LoadingAction(label: String, loading: Boolean, loadingLabel: String = "저장 중…", modifier: Modifier = Modifier,
+@Composable internal fun LoadingAction(label: String, loading: Boolean, modifier: Modifier = Modifier, loadingLabel: String = "저장 중…",
     enabled: Boolean = true, onClick: () -> Unit) {
     Button(onClick = onClick, enabled = enabled && !loading, shape = RoundedCornerShape(20.dp),
         modifier = modifier.heightIn(min = 64.dp).semantics { if (loading) { stateDescription = "진행 중"; liveRegion = LiveRegionMode.Polite } },
@@ -78,7 +78,7 @@ import androidx.compose.ui.unit.dp
     block: suspend () -> Unit) {
     var loading by remember { mutableStateOf(false) }
     val latest by rememberUpdatedState(block)
-    LoadingAction(label, loading, loadingLabel, modifier, enabled) {
+    LoadingAction(label, loading, modifier, loadingLabel, enabled) {
         if (!loading) {
             loading = true
             act { try { latest() } finally { loading = false } }
@@ -90,7 +90,7 @@ import androidx.compose.ui.unit.dp
  * The shape of a table that is still being computed: a header band and [rows] rows of [columns] blocks in surfaceHigh,
  * pulsing together once every 1.2 s, or static under reduced motion. One accessibility node that says what is happening.
  */
-@Composable internal fun SkeletonTable(columns: Int, rows: Int, compact: Boolean = false, modifier: Modifier = Modifier, label: String = "미리보기 만드는 중") {
+@Composable internal fun SkeletonTable(columns: Int, rows: Int, modifier: Modifier = Modifier, compact: Boolean = false, label: String = "미리보기 만드는 중") {
     val colors = MaterialTheme.colorScheme
     val block = LocalPleosColors.current.surfaceHigh
     val alpha = if (LocalReduceMotion.current) 1f else {

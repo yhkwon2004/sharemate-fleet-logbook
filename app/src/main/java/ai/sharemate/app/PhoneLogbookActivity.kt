@@ -187,10 +187,30 @@ private fun readLogbook(context: android.content.Context, uri: Uri): TripLogData
         saver.launch(name)
     }
 
+    // The two tabs built in PhoneExpenses.kt / PhoneReport.kt and the assistant sheet plug into the shell here. The lambdas
+    // read `state`, `link` and `exportName` through their State delegates, so they stay live although the host is remembered.
+    val assistantWriter = remember(sync, repository) { PhoneAssistantWriter(sync) { repository.state.value.data } }
     val host = remember(sync, repository) {
         PhoneHost(repository, sync, capture = capture, fetchPhoto = fetchPhoto, importStatement = importStatement, pickFile = pickFile, exportXlsx = exportXlsx,
             openAlertSettings = openAlertSettings, pair = { endpoint, code -> sync.pair(endpoint, code); paired = true }, unpair = { sync.unpair(); paired = false },
-            expensesTab = { args -> PhoneExpensesPlaceholder(args) }, reportTab = { args -> PhoneReportPlaceholder(args) }, assistant = null)
+            expensesTab = { a ->
+                PhoneExpensesTab(a.data, state, link, a.busy, a.send, importStatement, a.cardAlerts, a.openAlertSettings, a.queued,
+                    month = a.month, employeeFilter = a.employeeFilter, paired = a.paired, zone = a.zone, importer = rememberStatementImporter(sync, a.data, a.zone, a.paired))
+            },
+            reportTab = { a ->
+                val monthTrips = tripsIn(a.data.trips.filter { it.demo == a.data.profile.demoMode }, a.month.atDay(1), a.month.atEndOfMonth(), zone)
+                    .filter { a.employeeFilter == null || it.driverId.orEmpty() == a.employeeFilter }
+                val plate = a.data.profile.plateNumber.ifBlank { "차량" }.replace(Regex("[\\\\/:*?\"<>|\\s]"), "")
+                val who = a.employeeFilter?.let { id -> a.data.drivers.firstOrNull { it.id == id }?.name ?: "직원미지정" }?.let { "_$it" }.orEmpty()
+                val name = "${if (a.data.profile.demoMode) "시연_" else ""}운행기록부_${plate}${who}_${a.month}.xlsx"
+                PhoneReportTab(a.data, state, a.month, a.onMonth, a.busy, exporting = exportName != null, a.send,
+                    export = { hostRun { a.exportXlsx(monthTrips, name) } }, openTrip = a.onOpenTrip, openEmployee = { a.onOpenEmployee(it ?: "") },
+                    employeeFilter = a.employeeFilter, paired = a.paired, zone = zone)
+            },
+            assistant = { onClose, onOpenTrip ->
+                AssistantSheet(open = true, onDismiss = onClose, data = state.data, now = System.currentTimeMillis(), writer = assistantWriter,
+                    act = ::hostRun, followUp = followUp, onOpenTrip = onOpenTrip, compact = true)
+            })
     }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -211,18 +231,3 @@ private fun readLogbook(context: android.content.Context, uri: Uri): TripLogData
     }
 }
 
-/*
- * The 경비 and 현황 tab bodies are built by WP5 as PhoneExpensesTab(...) and PhoneReportTab(...). Until the orchestrator
- * wires them, these placeholders keep the shell honest: they say what is coming and offer the actions that already exist.
- */
-@Composable private fun PhoneExpensesPlaceholder(args: PhoneExpensesArgs) {
-    Column(Modifier.fillMaxSize().padding(20.dp)) {
-        PhoneEmpty("경비 탭을 준비하고 있어요", "카드 확인 ${args.data.charges.count { it.state == ChargeState.REVIEW && it.demo == args.data.profile.demoMode }}건 · 홈에서 처리할 수 있어요")
-    }
-}
-
-@Composable private fun PhoneReportPlaceholder(args: PhoneReportArgs) {
-    Column(Modifier.fillMaxSize().padding(20.dp)) {
-        PhoneEmpty("현황 탭을 준비하고 있어요", "${args.month.year}년 ${args.month.monthValue}월 · 운행 ${tripsIn(phoneTrips(args.data), args.month.atDay(1), args.month.atEndOfMonth(), ZoneId.systemDefault()).size}건")
-    }
-}

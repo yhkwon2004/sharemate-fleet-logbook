@@ -149,7 +149,7 @@ internal fun phoneRun(scope: kotlinx.coroutines.CoroutineScope, onError: (String
 }
 
 /** A section title on the phone: eyebrow plus optional trailing text, marked as a heading. */
-@Composable internal fun PhoneSectionTitle(title: String, trailing: String? = null, modifier: Modifier = Modifier) {
+@Composable internal fun PhoneSectionTitle(title: String, modifier: Modifier = Modifier, trailing: String? = null) {
     Row(modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f).semantics { heading() })
         if (trailing != null) Text(trailing, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -157,7 +157,7 @@ internal fun phoneRun(scope: kotlinx.coroutines.CoroutineScope, onError: (String
 }
 
 /** Empty-state copy block, centred, without a spinner or illustration that pretends something is coming. */
-@Composable internal fun PhoneEmpty(title: String, detail: String? = null, modifier: Modifier = Modifier) {
+@Composable internal fun PhoneEmpty(title: String, modifier: Modifier = Modifier, detail: String? = null) {
     Box(modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(title, style = MaterialTheme.typography.titleSmall)

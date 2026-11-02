@@ -114,7 +114,7 @@ private val shownKeysSaver = listSaver<MutableState<Set<String>>, String>(save =
         if (open != null) HomeAppear("open", index++, shown) { PhoneOpenTripCard(open, link) }
         if (paired) {
             if (taskCount > 0) {
-                HomeAppear("tasks-title", index++, shown) { PhoneSectionTitle("지금 할 일", "${taskCount}건") }
+                HomeAppear("tasks-title", index++, shown) { PhoneSectionTitle("지금 할 일", trailing = "${taskCount}건") }
                 incidents.forEach { incident ->
                     HomeAppear("incident:${incident.id}", index++, shown) { PhoneIncidentCard(incident, data, busy, commands.send, photos, photoVersion, capture, fetchPhoto) }
                 }
@@ -149,7 +149,7 @@ private val shownKeysSaver = listSaver<MutableState<Set<String>>, String>(save =
             }
         }
         HomeAppear("month", index++, shown) { MonthLogbookCard(data, now, zone) }
-        if (paired) HomeAppear("incident-buttons", index++, shown) { PhoneIncidentButtons(busy, commands.send) }
+        if (paired) HomeAppear("incident-buttons", index++, shown) { PhoneIncidentButtons(busy, commands.send, data, paired) }
         if (paired) Muted("차량이 원본이에요. 여기서 바꾼 것은 차량에 ‘휴대폰’ 출처로 기록되고 다시 내려와요.", Modifier.padding(horizontal = 4.dp))
     }
 }

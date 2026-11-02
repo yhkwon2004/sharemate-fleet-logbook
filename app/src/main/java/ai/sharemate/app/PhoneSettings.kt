@@ -48,7 +48,7 @@ internal const val PAIR_UNREACHABLE = "차량에 닿지 않아요. 주소와 포
     var working by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        PhoneConnectCard(busy || working) { endpoint, code ->
+        PhoneConnectCard(busy || working, error) { endpoint, code ->
             error = null
             scope.launch {
                 working = true
@@ -60,7 +60,6 @@ internal const val PAIR_UNREACHABLE = "차량에 닿지 않아요. 주소와 포
             }
         }
         if (working) Muted("차량에 연결하는 중…", Modifier.padding(horizontal = 6.dp).semantics { liveRegion = LiveRegionMode.Polite })
-        InlineError(error, Modifier.padding(horizontal = 6.dp))
     }
 }
 

@@ -1,5 +1,6 @@
 package ai.sharemate.app
 
+import androidx.core.content.edit
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.foundation.BorderStroke
@@ -23,6 +24,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -229,7 +231,7 @@ private class PendingIncidentReport(val kind: IncidentKind, val tappedAt: Long, 
             val done = index in marks
             Row(Modifier.fillMaxWidth().toggleable(value = done, role = Role.Checkbox) { checked ->
                 marks = if (checked) marks + index else marks - index
-                prefs?.edit()?.putString(incidentStepsKey(incident.id), encodeStepMarks(marks))?.apply()
+                prefs?.edit { putString(incidentStepsKey(incident.id), encodeStepMarks(marks)) }
             }.heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Checkbox(checked = done, onCheckedChange = null)
                 Text("${index + 1}. $step", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).alpha(if (done) .6f else 1f))
@@ -273,38 +275,6 @@ private class PendingIncidentReport(val kind: IncidentKind, val tappedAt: Long, 
     }
 }
 
-/** Purpose, expense and note edits for one trip, each sent as a single command. */
-@Composable internal fun PhoneTripEditor(trip: Trip, busy: Boolean, send: (SyncCommand) -> Unit) {
-    var type by rememberSaveable(trip.id) { mutableStateOf(ExpenseType.TOLL.name) }
-    var amount by rememberSaveable(trip.id) { mutableStateOf("") }
-    var note by rememberSaveable(trip.id, trip.note) { mutableStateOf(trip.note) }
-    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-    Eyebrow("운행 목적")
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf(TripPurpose.COMMUTE, TripPurpose.BUSINESS, TripPurpose.PERSONAL).forEach { purpose ->
-            val selected = purpose == trip.purpose
-            OutlinedButton(onClick = { send(SyncCommand.Classify(trip.id, purpose)) }, enabled = !busy && !selected, modifier = Modifier.weight(1f).heightIn(min = 44.dp),
-                shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
-                colors = ButtonDefaults.outlinedButtonColors(containerColor = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = .15f) else Color.Transparent)) {
-                Text(purpose.label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
-            }
-        }
-    }
-    Eyebrow("경비 추가")
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        ExpenseType.entries.forEach { candidate ->
-            FilterChip(selected = type == candidate.name, onClick = { type = candidate.name }, label = { Text(candidate.label, style = MaterialTheme.typography.labelSmall) })
-        }
-    }
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(amount, { if (it.length <= 8 && it.all(Char::isDigit)) amount = it }, Modifier.weight(1f), singleLine = true,
-            label = { Text("금액 (원)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), shape = RoundedCornerShape(14.dp))
-        Button(onClick = { send(SyncCommand.AddExpense(trip.id, ExpenseType.valueOf(type), amount.toLong())); amount = "" },
-            enabled = !busy && (amount.toLongOrNull() ?: 0) > 0, shape = RoundedCornerShape(12.dp)) { Text("추가") }
-    }
-    OutlinedTextField(note, { if (it.length <= 300) note = it }, Modifier.fillMaxWidth(), label = { Text("메모") }, shape = RoundedCornerShape(14.dp))
-    if (note != trip.note) TextButton(onClick = { send(SyncCommand.Note(trip.id, note)) }, enabled = !busy) { Text("메모 저장") }
-}
 
 /**
  * Status and setup for the card feed. The permission is asked once; "나중에" folds the card to one line for 30 days
@@ -314,7 +284,7 @@ private class PendingIncidentReport(val kind: IncidentKind, val tappedAt: Long, 
 @Composable internal fun PhoneCardLinkCard(granted: Boolean, queued: Int, busy: Boolean, openSettings: () -> Unit, importStatement: () -> Unit, showImport: Boolean = true) {
     val context = LocalContext.current
     val prefs = remember(context) { runCatching { phoneUiPreferences(context) }.getOrNull() }
-    var laterUntil by remember { mutableStateOf(prefs?.getLong(ALERT_PROMPT_LATER_KEY, 0L) ?: 0L) }
+    var laterUntil by remember { mutableLongStateOf(prefs?.getLong(ALERT_PROMPT_LATER_KEY, 0L) ?: 0L) }
     val deferred = !granted && alertPromptDeferred(laterUntil, System.currentTimeMillis())
     if (deferred) {
         Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))) {
@@ -338,7 +308,7 @@ private class PendingIncidentReport(val kind: IncidentKind, val tappedAt: Long, 
             Button(onClick = openSettings, modifier = Modifier.weight(1f).heightIn(min = 52.dp), shape = RoundedCornerShape(14.dp)) { Text("알림 접근 허용") }
             OutlinedButton(onClick = {
                 val until = System.currentTimeMillis() + ALERT_PROMPT_LATER_MILLIS
-                prefs?.edit()?.putLong(ALERT_PROMPT_LATER_KEY, until)?.apply()
+                prefs?.edit { putLong(ALERT_PROMPT_LATER_KEY, until) }
                 laterUntil = until
             }, modifier = Modifier.weight(1f).heightIn(min = 52.dp), shape = RoundedCornerShape(14.dp)) { Text("나중에") }
         }
