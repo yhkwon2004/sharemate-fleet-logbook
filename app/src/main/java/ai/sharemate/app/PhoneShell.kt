@@ -4,7 +4,7 @@ import androidx.core.content.edit
 import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
@@ -29,21 +29,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -62,6 +56,8 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -72,6 +68,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -93,6 +90,7 @@ sealed class PhoneRoute {
     data object Settings : PhoneRoute()
     data class TripDetail(val id: String) : PhoneRoute()
     data class Employee(val id: String) : PhoneRoute()
+    data object Vehicle : PhoneRoute()
 }
 
 internal fun encodeRoute(route: PhoneRoute): String = when (route) {
@@ -100,11 +98,13 @@ internal fun encodeRoute(route: PhoneRoute): String = when (route) {
     PhoneRoute.Settings -> "settings"
     is PhoneRoute.TripDetail -> "trip:${route.id}"
     is PhoneRoute.Employee -> "employee:${route.id}"
+    PhoneRoute.Vehicle -> "vehicle"
 }
 
 internal fun decodeRoute(text: String): PhoneRoute? = when {
     text == "tab" -> PhoneRoute.Tab
     text == "settings" -> PhoneRoute.Settings
+    text == "vehicle" -> PhoneRoute.Vehicle
     text.startsWith("trip:") -> PhoneRoute.TripDetail(text.removePrefix("trip:"))
     text.startsWith("employee:") -> PhoneRoute.Employee(text.removePrefix("employee:"))
     else -> null
@@ -344,23 +344,22 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
     var assistantOpen by rememberSaveable { mutableStateOf(false) }
     val badges = remember(data, month) { phoneBadges(data, month, zone) }
     val reduce = LocalReduceMotion.current
+    val swapForward = pageSwap(forward = true)
+    val swapBack = pageSwap(forward = false)
 
     CompositionLocalProvider(LocalFollowUp provides followUp) {
-        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            Scaffold(containerColor = MaterialTheme.colorScheme.background,
+        // 2.8: the phone shares the car's Midnight backdrop; the scaffold is transparent so the glow and the city show through.
+        Box(Modifier.fillMaxSize().midnightBackdrop()) {
+            // One background layer for every screen: the night city at full strength behind home, dimmed behind the other
+            // tabs and full-screen routes, moving on the page clock so header, nav and backdrop never jump between screens.
+            val skyLevel = if (!hasLog) .34f else if (ui.route == PhoneRoute.Tab && ui.tab == 0) 1f else .30f
+            val skyAlpha by animateFloatAsState(skyLevel, if (reduce) snap() else tween(MOTION_PAGE_MS), label = "phone-sky")
+            PhoneHomeBackdrop(Modifier.matchParentSize().graphicsLayer { alpha = skyAlpha })
+            Scaffold(containerColor = Color.Transparent,
                 snackbarHost = { PhoneSnackbarHost(snackbar, Modifier.padding(horizontal = 12.dp)) },
                 bottomBar = {
-                    if (hasLog && ui.routes.isEmpty()) NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
-                        PhoneTab.entries.forEachIndexed { index, tab ->
-                            val count = badges[index]
-                            NavigationBarItem(selected = ui.tab == index, onClick = { ui = ui.copy(tab = index) },
-                                icon = {
-                                    BadgedBox(badge = { if (count > 0) Badge(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError) { Text("${count.coerceAtMost(99)}") } }) {
-                                        Icon(painterResource(tab.icon), contentDescription = if (count > 0) "${tab.badgeLabel} ${count}건" else null, modifier = Modifier.size(24.dp))
-                                    }
-                                },
-                                label = { Text(tab.label, style = MaterialTheme.typography.labelMedium) })
-                        }
+                    if (hasLog && ui.routes.isEmpty()) PhoneGlassNav(PhoneTab.entries.mapIndexed { index, tab -> NavTab(tab.label, tab.icon, badges[index]) }, ui.tab) {
+                        ui = ui.copy(tab = it)
                     }
                 }) { padding ->
                 Box(Modifier.fillMaxSize().padding(padding)) {
@@ -377,6 +376,7 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
                             is PhoneRoute.TripDetail -> PhoneTripDetailScreen(route.id, data, paired, busy, send, onBack = { ui = ui.pop() },
                                 onPickDriver = { driverFor = listOf(route.id) }, pendingEdit = ui.pendingEdits[route.id], classify = classify)
                             is PhoneRoute.Employee -> PhoneEmployeeScreen(route.id, data, paired, busy, now, ui.pendingEdits, commands, onBack = { ui = ui.pop() })
+                            PhoneRoute.Vehicle -> PhoneVehicleScreen(data, now, onBack = { ui = ui.pop() })
                             PhoneRoute.Tab -> Column(Modifier.fillMaxSize()) {
                                 PhoneHeader(data, link, paired, hasAssistant = host.assistant != null, onAssistant = { assistantOpen = true }, onSettings = { ui = ui.push(PhoneRoute.Settings) })
                                 PhoneBanner(offline && !ui.dismissedBanners.contains("offline"),
@@ -385,12 +385,13 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
                                 if (!hasLog) PhoneConnectScreen(state, link, paired, busy, host.pair, host.pickFile, Modifier.weight(1f))
                                 else {
                                     if (ui.tab == 1 || ui.tab == 2) PhoneEmployeeChips(data, ui.employeeFilter) { ui = ui.copy(employeeFilter = it) }
-                                    Crossfade(targetState = ui.tab, modifier = Modifier.weight(1f).fillMaxWidth(), animationSpec = pageFade(), label = "phone-tab") { tab ->
+                                    AnimatedContent(targetState = ui.tab, modifier = Modifier.weight(1f).fillMaxWidth(), transitionSpec = { if (targetState > initialState) swapForward else swapBack }, label = "phone-tab") { tab ->
                                         pageStates.SaveableStateProvider(tab) {
                                             val pullable = tab != 3
                                             val body: @Composable () -> Unit = {
                                                 when (tab) {
-                                                    0 -> PhoneHomeTab(data, link, paired, busy, now, host.repository.photos, photoVersion, host.capture, host.fetchPhoto, commands, ui.pendingEdits)
+                                                    0 -> PhoneHomeTab(data, link, paired, busy, now, host.repository.photos, photoVersion, host.capture, host.fetchPhoto, commands, ui.pendingEdits,
+                                                        onVehicle = { ui = ui.push(PhoneRoute.Vehicle) })
                                                     1 -> PhoneTripList(data, ui.employeeFilter, paired, busy, now, ui.pendingEdits, commands, Modifier.fillMaxSize())
                                                     2 -> host.expensesTab(PhoneExpensesArgs(data, month, ui.employeeFilter, paired, busy, send, cardAlerts, queued, host.openAlertSettings, zone))
                                                     else -> host.reportTab(PhoneReportArgs(data, month, { ui = ui.copy(month = it.toString()) }, ui.employeeFilter, paired, busy, send,
@@ -423,19 +424,25 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
 
 /** Brand on the left, the link badge and the two header actions on the right. Replaces the permanent status line. */
 @Composable private fun PhoneHeader(data: TripLogData, link: PhoneLink, paired: Boolean, hasAssistant: Boolean, onAssistant: () -> Unit, onSettings: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 12.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = null, tint = Midnight.brand, modifier = Modifier.size(34.dp))
         Column(Modifier.weight(1f).semantics(mergeDescendants = true) { heading() }) {
-            Text("SHAREMATE", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text("SHAREMATE", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, maxLines = 1, softWrap = false)
             Text(if (data.trips.isEmpty() && data.open == null) "법인차 운행 · 경비" else listOf(data.profile.plateNumber.ifBlank { "차량번호 미입력" }, data.profile.companyName)
                 .filter { it.isNotBlank() }.joinToString(" · ") + if (data.profile.demoMode) " · 시연" else "",
                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (paired) PhoneLinkBadge(link)
-        else Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.surfaceVariant) {
+        else Surface(shape = RoundedCornerShape(50), color = Midnight.glass, border = Midnight.edge) {
             Text("파일 사본", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
         }
-        if (hasAssistant) TextButton(onClick = onAssistant, modifier = Modifier.heightIn(min = 48.dp)) { Text("도우미") }
-        IconButton(onClick = onSettings, modifier = Modifier.size(48.dp)) { Icon(Icons.Default.Settings, contentDescription = "설정") }
+        if (hasAssistant) Surface(onClick = onAssistant, shape = RoundedCornerShape(50), color = Midnight.glass, border = Midnight.edge,
+            modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "운행 비서 열기" }) {
+            Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(painterResource(R.drawable.ic_search), null, Modifier.size(18.dp)); Text("비서", style = MaterialTheme.typography.labelLarge)
+            }
+        }
+        IconButton(onClick = onSettings, modifier = Modifier.size(48.dp)) { Icon(painterResource(R.drawable.ic_tune), contentDescription = "설정", modifier = Modifier.size(24.dp)) }
     }
 }
 

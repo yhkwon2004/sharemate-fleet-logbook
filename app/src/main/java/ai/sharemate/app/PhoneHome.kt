@@ -90,7 +90,8 @@ private val shownKeysSaver = listSaver<MutableState<Set<String>>, String>(save =
 }
 
 @Composable internal fun PhoneHomeTab(data: TripLogData, link: PhoneLink, paired: Boolean, busy: Boolean, now: Long, photos: PhotoStore, photoVersion: Int,
-    capture: (String) -> Unit, fetchPhoto: (String) -> Unit, commands: PhoneCommands, pending: Map<String, PendingEdit>, modifier: Modifier = Modifier) {
+    capture: (String) -> Unit, fetchPhoto: (String) -> Unit, commands: PhoneCommands, pending: Map<String, PendingEdit>, modifier: Modifier = Modifier,
+    onVehicle: () -> Unit = {}) {
     val zone = remember { ZoneId.systemDefault() }
     val followUp = LocalFollowUp.current
     val demo = data.profile.demoMode
@@ -111,6 +112,9 @@ private val shownKeysSaver = listSaver<MutableState<Set<String>>, String>(save =
     }
     var index = 0
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        // The car's home in phone size: greeting and the three destinations over the night city, then today and this month.
+        PhoneHomeHero(data, link, paired, now, onVehicle = onVehicle, onLog = { commands.openTab(1) }, onExport = { commands.openTab(3) })
+        PhoneWidgets(data, now) { commands.openTab(3) }
         if (open != null) HomeAppear("open", index++, shown) { PhoneOpenTripCard(open, link) }
         if (paired) {
             if (taskCount > 0) {
@@ -148,7 +152,6 @@ private val shownKeysSaver = listSaver<MutableState<Set<String>>, String>(save =
                 TextButton(onClick = commands.openSettings, modifier = Modifier.heightIn(min = 48.dp)) { Text("설정에서 연결") }
             }
         }
-        HomeAppear("month", index++, shown) { MonthLogbookCard(data, now, zone) }
         if (paired) HomeAppear("incident-buttons", index++, shown) { PhoneIncidentButtons(busy, commands.send, data, paired) }
         if (paired) Muted("차량이 원본이에요. 여기서 바꾼 것은 차량에 ‘휴대폰’ 출처로 기록되고 다시 내려와요.", Modifier.padding(horizontal = 4.dp))
     }
@@ -221,47 +224,3 @@ private val shownKeysSaver = listSaver<MutableState<Set<String>>, String>(save =
     }
 }
 
-/** This month's logbook: completion ring from the autopilot summary, its numbers, then the distance hero. */
-@Composable private fun MonthLogbookCard(data: TripLogData, now: Long, zone: ZoneId) {
-    val today = localDate(now, zone)
-    val first = today.withDayOfMonth(1)
-    val summary = remember(data, today) { autopilotSummary(data, first, today, zone) }
-    val totals = remember(data, today) { logbookTotals(tripsIn(phoneTrips(data), first, today, zone)) }
-    Panel(padding = 20.dp) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Eyebrow("이달 운행일지 · ${today.monthValue}월")
-            Text("${summary.trips}건", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
-        }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-            RatioRing(summary.percent?.let { it / 100.0 }, 96.dp, "완성률")
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Stat("남은 확인", if (summary.trips == 0) "운행 없음" else "${summary.left}건")
-                Stat("목적 자동 분류", "${summary.autoPurpose}건")
-                Stat("카드 자동 반영", "${summary.cardMatched}건 · ${formatWon(summary.cardWon)}")
-            }
-        }
-        if (summary.waiting > 0) Muted("카드 결제 ${summary.waiting}건이 차량 기록을 기다리고 있어요")
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        SharemateTheme(compact = true, dark = true) {
-            Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFF1D1E21), modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Eyebrow(if (data.profile.demoMode) "DEMO / 시연 월간 현황" else "MONTHLY / 이달의 이동", Color(0xFFE1B69C))
-                    Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("%.1f".format(Locale.KOREA, totals.totalKm), style = scaledDisplay(MaterialTheme.typography.displaySmall, MaterialTheme.typography.headlineMedium).copy(fontFeatureSettings = "tnum"))
-                        Text("km · 전체 운행", style = MaterialTheme.typography.labelMedium, color = Color(0xFFC7C9CE), modifier = Modifier.padding(bottom = 6.dp))
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        Stat("업무 거리", kmText(totals.businessKm), Modifier.weight(1.2f), valueColor = Color(0xFFE1B69C))
-                        Stat("업무 비율", ratioText(totals.ratio), Modifier.weight(0.8f))
-                        Stat("등록 경비", formatWon(totals.expenseWon), Modifier.weight(1.2f))
-                    }
-                }
-            }
-        }
-        Muted(when {
-            summary.trips == 0 -> "이번 달 운행이 아직 없어요."
-            summary.left > 0 -> "미분류·사용자 미지정 운행은 업무 합계에서 빠져요. 현황 탭에서 한눈에 볼 수 있어요."
-            else -> "이달 운행의 목적을 모두 확인했어요. 현황 탭에서 Excel로 저장할 수 있어요."
-        })
-    }
-}

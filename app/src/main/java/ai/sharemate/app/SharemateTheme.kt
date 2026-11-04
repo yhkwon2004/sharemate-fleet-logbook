@@ -11,7 +11,9 @@ import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -126,6 +128,33 @@ fun cardSwap(snap: Boolean = false): ContentTransform {
         targetContentEnter = fadeIn(tween(MOTION_SWAP_MS, easing = ease)) + slideInVertically(tween(MOTION_SWAP_MS, easing = ease)) { lift },
         initialContentExit = fadeOut(tween(MOTION_SWAP_MS, easing = ease)) + slideOutVertically(tween(MOTION_SWAP_MS, easing = ease)) { -lift },
         sizeTransform = SizeTransform(clip = false) { _, _ -> tween(MOTION_SWAP_MS, easing = ease) },
+    )
+}
+
+/** Page change between tabs: 220 ms. */
+internal const val MOTION_PAGE_MS = 220
+
+/** Tab highlight colors move on the same 220 ms clock as the page they open; immediate under reduced motion. */
+@Composable
+fun <T> tabColorSpec(): androidx.compose.animation.core.AnimationSpec<T> = if (LocalReduceMotion.current) snap() else tween(MOTION_PAGE_MS, easing = FastOutSlowInEasing)
+
+/**
+ * One page transition for every tab change on the car and the phone: the new page fades in while sliding 24 dp from the
+ * side it lies on (right for a later tab, left for an earlier one), the old page fades out sliding 12 dp the other way.
+ * The header, the tab bar and the backdrop stay put, so only the content moves. Snaps under reduced motion.
+ */
+@Composable
+fun pageSwap(forward: Boolean): ContentTransform {
+    if (LocalReduceMotion.current) return snapSwap()
+    val density = LocalDensity.current
+    val enter = with(density) { 24.dp.roundToPx() }
+    val exit = with(density) { 12.dp.roundToPx() }
+    val ease = FastOutSlowInEasing
+    return ContentTransform(
+        targetContentEnter = fadeIn(tween(MOTION_PAGE_MS, delayMillis = 40, easing = ease)) +
+            slideInHorizontally(tween(MOTION_PAGE_MS, easing = ease)) { if (forward) enter else -enter },
+        initialContentExit = fadeOut(tween(140, easing = ease)) + slideOutHorizontally(tween(MOTION_PAGE_MS, easing = ease)) { if (forward) -exit else exit },
+        sizeTransform = null,
     )
 }
 

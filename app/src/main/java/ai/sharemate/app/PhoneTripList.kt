@@ -235,9 +235,10 @@ private fun entries(groups: List<TripMonthGroup>, shown: Int, firstMonth: YearMo
 
 /** The sticky line for one month, with the month picker folded underneath it. */
 @Composable private fun MonthHeader(group: TripMonthGroup, groups: List<TripMonthGroup>, open: Boolean, onToggle: () -> Unit, onPick: (YearMonth) -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxWidth()) {
+    // Near-opaque glass, not flat black: the header stays readable over rows scrolling under it and matches every other surface.
+    Surface(color = Midnight.glass.copy(alpha = .96f), shape = RoundedCornerShape(18.dp), border = Midnight.edge, modifier = Modifier.fillMaxWidth()) {
         Column {
-            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(monthHeaderText(group), style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f).semantics { heading() }, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 TextButton(onClick = onToggle, modifier = Modifier.heightIn(min = 48.dp)) { Text(if (open) "닫기" else "월 선택 ▾") }
             }

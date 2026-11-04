@@ -3,8 +3,12 @@ package ai.sharemate.app
 import android.content.ActivityNotFoundException
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -35,6 +39,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -272,30 +277,32 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
             BoxWithConstraints(Modifier.fillMaxSize().midnightBackdrop().safeDrawingPadding()) {
                 val wide = maxWidth >= 1100.dp
                 val gutter = if (wide) 36.dp else 20.dp
-                // Home is the hub and carries its own clock, status, employee, tutorial and 설정 chips; the other panes
-                // share one glass header with the tabs (there is no side rail, so the content gets the whole width).
-                val driverRow: @Composable (Modifier) -> Unit = { modifier ->
-                    DriverConfirmRow(state, now, openDriver, driverConfirmed, { driverConfirmed = it }, modifier)
-                }
+                // One header on every tab, home included (no side rail, so content gets the whole width): it never appears or
+                // disappears between pages, only its lit tab moves. The daily driver question sits under it once for all pages.
                 val bar: @Composable (List<NavTab>) -> Unit = { tabs ->
-                    if (tab != 0) {
-                        TopBar(state, wide, gutter, tabs, tab, { tab = it }, { openDriver(null) }, { tutorial = true }) { assistant = true }
-                        driverRow(Modifier.padding(horizontal = gutter))
-                    }
+                    TopBar(state, wide, gutter, tabs, tab, { tab = it }, { openDriver(null) }, { tutorial = true }) { assistant = true }
+                    DriverConfirmRow(state, now, openDriver, driverConfirmed, { driverConfirmed = it }, Modifier.padding(horizontal = gutter))
                 }
                 val openLog: (Int, YearMonth?) -> Unit = { filter, month -> goLog(filter, month, null) }
+                // One background layer for every page: the night city at full strength on home, dimmed behind the other
+                // pages, moving on the same clock as the page change so the layers never jump.
+                val skyLevel = when { blocked || !state.loaded -> 0f; tab == 0 -> 1f; else -> .34f }
+                val skyAlpha by animateFloatAsState(skyLevel, if (LocalReduceMotion.current) snap() else tween(MOTION_PAGE_MS), label = "home-sky")
+                if (skyAlpha > 0f) HomeBackdrop(Modifier.matchParentSize().graphicsLayer { alpha = skyAlpha })
                 Column(Modifier.fillMaxSize()) {
                     when {
                         blocked -> DrivingOverview(state, now, driving.available, Modifier.weight(1f))
                         !state.loaded -> SharemateSplash(Modifier.weight(1f))
                         else -> {
                             val body: @Composable (Modifier) -> Unit = { modifier ->
-                                Crossfade(targetState = tab, modifier = modifier.padding(start = gutter, end = gutter, top = if (tab == 0) 20.dp else 8.dp, bottom = 20.dp),
-                                    animationSpec = pageFade(), label = "parked-page") { page ->
+                                val swapForward = pageSwap(forward = true)
+                                val swapBack = pageSwap(forward = false)
+                                AnimatedContent(targetState = tab, modifier = modifier.padding(start = gutter, end = gutter, top = 8.dp, bottom = 20.dp),
+                                    transitionSpec = { if (targetState > initialState) swapForward else swapBack }, label = "parked-page") { page ->
                                   pageStates.SaveableStateProvider(page) {
                                     when (page) {
                                         0 -> DrivePane(state, now, wide, act, repository, openDriver, requestPermissions, { tab = 4 }, { tab = it }, openLog,
-                                            { assistant = true }, { tutorial = true }, snoozes, driverRow, bannerCharges, { bannerCharges = it })
+                                            { assistant = true }, snoozes, bannerCharges, { bannerCharges = it })
                                         1 -> LogPane(state, now, wide, act, repository, openDriver, expenseTripId, logFilter, logMonth)
                                         2 -> ReportPane(state, now, wide, pendingExportName != null, export, act, repository, { tab = 4 }, { tab = 0 }) { month -> openLog(1, month) }
                                         3 -> VehiclePane(state, now, act, repository, goSettings = { tab = 4 })
@@ -528,8 +535,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
  */
 @Composable private fun DrivePane(state: TripLogState, now: Long, wide: Boolean, act: Act, repository: TripLogRepository,
     openDriver: (String?) -> Unit, requestPermissions: () -> Unit, goSettings: () -> Unit, navigate: (Int) -> Unit, openLog: (Int, YearMonth?) -> Unit,
-    assistant: () -> Unit, tutorial: () -> Unit, snoozes: MutableState<Set<String>>, driverRow: @Composable (Modifier) -> Unit,
-    banner: List<CardCharge> = emptyList(), onBanner: (List<CardCharge>) -> Unit = {}) {
+    assistant: () -> Unit, snoozes: MutableState<Set<String>>, banner: List<CardCharge> = emptyList(), onBanner: (List<CardCharge>) -> Unit = {}) {
     val data = state.data
     val today = localDate(now)
     val prompt = rememberChargePrompt(data)
@@ -557,18 +563,14 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
         HomeCardSpec("운행일지 확인", lines.log, R.drawable.ic_journal, lines.logPending) { openLog(if (lines.logPending > 0) 1 else 0, YearMonth.from(today)) },
         HomeCardSpec("정보 내보내기", lines.export, R.drawable.ic_export, 0) { navigate(2) },
     )
-    // The tutorial is for a car that has not recorded anything yet; once real trips exist it stays reachable from settings.
-    val showTutorial = data.trips.none { !it.demo }
     val demoControls: @Composable () -> Unit = {
         if (data.profile.demoMode) DemoControls { act { repository.ingestCardEvents(listOf(demoCardApproval(repository.state.value.data, System.currentTimeMillis()))) } }
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val heroHeight = (maxHeight * .72f).coerceIn(460.dp, 660.dp)
+        val heroHeight = (maxHeight * .70f).coerceIn(420.dp, 600.dp)
         val compactHero = maxWidth < 760.dp
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            HomeHero(state, now, compactHero, heroHeight, showTutorial, { openDriver(null) }, tutorial, assistant, goSettings, requestPermissions, demoControls, cards) {
-                driverRow(Modifier)
-            }
+            HomeHero(state, now, compactHero, heroHeight, assistant, requestPermissions, demoControls, cards)
             MatchedBanner(banner, onShow = { onBanner(emptyList()); openLog(2, YearMonth.from(today)) }, onDismiss = { onBanner(emptyList()) })
             if (!closeCardShown) MonthCloseBannerHost(data, now, onOpen = { navigate(2) })
             taskStack()

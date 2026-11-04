@@ -54,7 +54,7 @@ class PhoneLogbookActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_AUTOMOTIVE)) { finish(); return }
-        setContent { SharemateTheme(compact = true) { PhoneLogbookApp(intent?.data) } }
+        setContent { SharemateTheme(compact = true, dark = true) { PhoneLogbookApp(intent?.data) } }
     }
 }
 

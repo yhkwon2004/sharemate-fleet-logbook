@@ -140,11 +140,11 @@ internal fun reasonSteps(reason: String): List<String> = reason.split(" · ").ma
 
 @Composable internal fun PhoneOpenTripCard(open: Trip, link: PhoneLink) {
     SharemateTheme(compact = true, dark = true) {
-        Panel(color = Color(0xFF1D1E21), padding = 20.dp) {
-            Eyebrow("지금 운행 중 · ${phoneTime(open.startAt)} 출발", Color(0xFFE4BFA6))
+        Panel(color = Midnight.glass, padding = 20.dp) {
+            Eyebrow("지금 운행 중 · ${phoneTime(open.startAt)} 출발", Midnight.brand)
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("%.1f".format(Locale.KOREA, open.distanceKm), style = MaterialTheme.typography.displaySmall)
-                Text("km", style = MaterialTheme.typography.titleMedium, color = Color(0xFFC7C9CE), modifier = Modifier.padding(bottom = 6.dp))
+                Text("km", style = MaterialTheme.typography.titleMedium, color = Midnight.textSecondary, modifier = Modifier.padding(bottom = 6.dp))
             }
             Muted(listOfNotNull(open.startAddress, open.destination?.let { "→ $it" }, link.live?.socPercent?.let { "배터리 $it%" }).joinToString(" · ").ifBlank { "차량 신호 수신 중" })
         }

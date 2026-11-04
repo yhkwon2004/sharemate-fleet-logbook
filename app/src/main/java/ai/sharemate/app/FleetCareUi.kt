@@ -176,12 +176,12 @@ internal fun careDoneExplanation(kind: CareKind) = when (kind) {
 private fun kmLabel(value: Double) = String.format(Locale.KOREA, "%,.0f km", value)
 private fun shortDate(at: Long) = SimpleDateFormat("M/d", Locale.KOREA).format(Date(at))
 
-@Composable private fun careLevelColor(level: CareLevel): Color {
+@Composable internal fun careLevelColor(level: CareLevel): Color {
     val pleos = LocalPleosColors.current
     return when (level) { CareLevel.OVERDUE -> pleos.negative; CareLevel.SOON -> MaterialTheme.colorScheme.secondary; CareLevel.INFO -> pleos.chartActive }
 }
 
-private fun careLevelState(level: CareLevel) = when (level) { CareLevel.OVERDUE -> "기한 지남"; CareLevel.SOON -> "곧 만기"; CareLevel.INFO -> "여유 있음" }
+internal fun careLevelState(level: CareLevel) = when (level) { CareLevel.OVERDUE -> "기한 지남"; CareLevel.SOON -> "곧 만기"; CareLevel.INFO -> "여유 있음" }
 
 // ───────────────────────── 설정 › 법인·차량 ─────────────────────────
 
