@@ -8,6 +8,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -268,16 +269,17 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     SharemateTheme(dark = true) {
       CompositionLocalProvider(LocalFollowUp provides followUp) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
+            BoxWithConstraints(Modifier.fillMaxSize().midnightBackdrop().safeDrawingPadding()) {
                 val wide = maxWidth >= 1100.dp
-                val gutter = if (wide) 32.dp else 20.dp
-                // The home hero carries its own clock, status, employee and tutorial chips; other panes keep the top bar.
+                val gutter = if (wide) 36.dp else 20.dp
+                // Home is the hub and carries its own clock, status, employee, tutorial and 설정 chips; the other panes
+                // share one glass header with the tabs (there is no side rail, so the content gets the whole width).
                 val driverRow: @Composable (Modifier) -> Unit = { modifier ->
                     DriverConfirmRow(state, now, openDriver, driverConfirmed, { driverConfirmed = it }, modifier)
                 }
-                val bar: @Composable () -> Unit = {
+                val bar: @Composable (List<NavTab>) -> Unit = { tabs ->
                     if (tab != 0) {
-                        TopBar(state, now, wide, gutter, { openDriver(null) }, { tutorial = true }) { assistant = true }
+                        TopBar(state, wide, gutter, tabs, tab, { tab = it }, { openDriver(null) }, { tutorial = true }) { assistant = true }
                         driverRow(Modifier.padding(horizontal = gutter))
                     }
                 }
@@ -303,18 +305,19 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                                   }
                                 }
                             }
-                            val labels = listOf("홈", "운행기록", "월간·Excel", "차량", "설정")
                             val closeIssues = (monthCloseTarget(state.data, localDate(now), zone) ?: monthStatus(state.data, YearMonth.from(localDate(now)), zone)).issues
                             val homeTasks = parkedTasks(state.data, state.sync, now, zone, snoozes.value)
                             // The 운행기록 badge is the 점검 필요 count of this month, the same number the home card and the list show.
                             val reviewCount = remember(state.data.trips, YearMonth.from(localDate(now))) { logReview(state.data, YearMonth.from(localDate(now)), zone).issues }
-                            val badges = listOf(parkedTaskBadge(homeTasks), reviewCount, closeIssues, openIncidents(state.data).size, 0)
-                            if (wide) Row(Modifier.weight(1f)) {
-                                NavRail(labels, badges, tab) { tab = it }
-                                Column(Modifier.weight(1f).fillMaxHeight()) { bar(); body(Modifier.weight(1f).fillMaxWidth()) }
-                            } else Column(Modifier.weight(1f)) {
-                                bar()
-                                Segmented(listOf("홈", "기록", "Excel", "차량", "설정"), tab, Modifier.padding(horizontal = gutter).padding(top = 12.dp, bottom = 8.dp)) { tab = it }
+                            val tabs = listOf(
+                                NavTab("홈", R.drawable.ic_dashboard, parkedTaskBadge(homeTasks)),
+                                NavTab("운행기록", R.drawable.ic_journal, reviewCount),
+                                NavTab("월간·Excel", R.drawable.ic_report, closeIssues),
+                                NavTab("차량", R.drawable.ic_vehicle, openIncidents(state.data).size),
+                                NavTab("설정", R.drawable.ic_tune, 0),
+                            )
+                            Column(Modifier.weight(1f)) {
+                                bar(tabs)
                                 body(Modifier.weight(1f).fillMaxWidth())
                             }
                         }
@@ -358,44 +361,51 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     }
 }
 
-@Composable private fun TopBar(state: TripLogState, now: Long, wide: Boolean, gutter: Dp, onDriver: () -> Unit, onTutorial: () -> Unit, onAssistant: () -> Unit = {}) {
+/**
+ * The header of every pane except home (home is the hub: its cards and its 설정 chip lead everywhere). One glass row:
+ * the brand mark, the five tabs with their counts, then the recording state, the employee and the assistant. In a narrow
+ * window the tabs drop to their own scrolling row.
+ */
+@Composable private fun TopBar(state: TripLogState, wide: Boolean, gutter: Dp, tabs: List<NavTab>, selected: Int, onSelect: (Int) -> Unit,
+    onDriver: () -> Unit, onTutorial: () -> Unit, onAssistant: () -> Unit = {}) {
     val colors = MaterialTheme.colorScheme
     val driver = state.data.drivers.firstOrNull { it.id == state.data.currentDriverId }
     // The tutorial is for a car that has not recorded anything yet; once real trips exist it stays reachable from settings.
     val showTutorial = state.data.trips.none { !it.demo }
-    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = gutter, vertical = 12.dp)) {
-    val narrow = maxWidth < 720.dp
-    val brand: @Composable () -> Unit = {
-        Column(Modifier.semantics(mergeDescendants = true) { heading() }) {
-            Text("SHAREMATE", style = MaterialTheme.typography.titleLarge, letterSpacing = 4.sp, fontWeight = FontWeight.Bold)
-            Text("FLEET JOURNAL  /  법인차 운행일지", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
-        }
-    }
     val employee: @Composable () -> Unit = {
-        Surface(onClick = onDriver, shape = RoundedCornerShape(16.dp), color = colors.surface, modifier = Modifier.heightIn(min = 56.dp)
-            .semantics { contentDescription = "이용 직원 ${driver?.label ?: "미선택"}, 변경" }) {
-            Column(Modifier.padding(horizontal = 18.dp, vertical = 8.dp)) {
-                Text("이용 직원", style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+        Surface(onClick = onDriver, shape = RoundedCornerShape(50), color = Midnight.glass, border = BorderStroke(1.dp, Midnight.glassBorder),
+            modifier = Modifier.heightIn(min = 56.dp).semantics { contentDescription = "이용 직원 ${driver?.label ?: "미선택"}, 변경" }) {
+            Column(Modifier.padding(horizontal = 20.dp, vertical = 6.dp)) {
+                Text("이용 직원", style = MaterialTheme.typography.labelSmall, color = Midnight.textSecondary)
                 Text(driver?.label ?: "직원 선택", style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.widthIn(max = if (wide) 230.dp else 140.dp))
             }
         }
     }
-    if (narrow) Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f)) { brand() }
-            TextButton(onClick = onAssistant, modifier = Modifier.heightIn(min = 56.dp)) { Text("운행 비서") }
-            if (showTutorial) TextButton(onClick = onTutorial, modifier = Modifier.heightIn(min = 56.dp)) { Text("시연 체험") }
+    val tools: @Composable () -> Unit = {
+        OutlinedButton(onClick = onAssistant, modifier = Modifier.heightIn(min = 56.dp), border = BorderStroke(1.dp, Midnight.glassBorder)) {
+            Icon(painterResource(R.drawable.ic_search), null, Modifier.size(22.dp)); Spacer(Modifier.width(8.dp)); Text("운행 비서")
         }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) { Box(Modifier.weight(1f)) { StatusPill(state) }; employee() }
-    } else Row(Modifier.fillMaxWidth().heightIn(min = 80.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        Box(Modifier.weight(1f)) { brand() }
-        StatusPill(state)
-        employee()
-        OutlinedButton(onClick = onAssistant, modifier = Modifier.heightIn(min = 56.dp), border = BorderStroke(1.dp, colors.outlineVariant)) { Text("운행 비서") }
         if (showTutorial) OutlinedButton(onClick = onTutorial, modifier = Modifier.heightIn(min = 56.dp), border = BorderStroke(1.dp, colors.outlineVariant)) { Text("시연 체험") }
     }
+    val mark: @Composable () -> Unit = {
+        Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = "SHAREMATE", tint = Color(0xFFE4BFA6), modifier = Modifier.size(52.dp))
+    }
+    Column(Modifier.fillMaxWidth().padding(horizontal = gutter, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (wide) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            mark()
+            GlassTabs(tabs, selected, onSelect)
+            Spacer(Modifier.weight(1f))
+            StatusPill(state)
+            employee()
+            tools()
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                mark(); Spacer(Modifier.weight(1f)); tools()
+            }
+            GlassTabs(tabs, selected, onSelect, Modifier.horizontalScroll(rememberScrollState()))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) { Box(Modifier.weight(1f)) { StatusPill(state) }; employee() }
+        }
     }
 }
 
@@ -421,52 +431,20 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     }
 }
 
-/** The left dock: brand mark, then five tabs; the active one glows cyan so it reads at a glance from the driver's seat. */
-@Composable private fun NavRail(labels: List<String>, badges: List<Int>, selected: Int, onSelect: (Int) -> Unit) {
-    val icons = listOf(R.drawable.ic_dashboard, R.drawable.ic_journal, R.drawable.ic_report, R.drawable.ic_vehicle, R.drawable.ic_tune)
-    Column(Modifier.width(132.dp).fillMaxHeight().background(Midnight.rail).drawBehind {
-            drawLine(Color.White.copy(alpha = .06f), Offset(size.width, 0f), Offset(size.width, size.height), strokeWidth = 1.5f)
-        }.padding(horizontal = 14.dp, vertical = 20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = "SHAREMATE", tint = Color(0xFFE4BFA6),
-            modifier = Modifier.size(60.dp).padding(bottom = 4.dp))
-        Spacer(Modifier.height(8.dp))
-        labels.forEachIndexed { index, label ->
-            val active = index == selected
-            val tint = if (active) Midnight.glow else Midnight.textMuted
-            Box(Modifier.fillMaxWidth().heightIn(min = 100.dp).clip(RoundedCornerShape(22.dp))
-                .background(if (active) Midnight.glow.copy(alpha = .10f) else Color.Transparent)
-                .then(if (active) Modifier.drawBehind {
-                    drawCircle(Brush.radialGradient(listOf(Midnight.glow.copy(alpha = .30f), Color.Transparent), center = Offset(size.width / 2, size.height * .38f),
-                        radius = size.width * .46f), radius = size.width * .46f, center = Offset(size.width / 2, size.height * .38f))
-                } else Modifier)
-                .clickable { onSelect(index) }
-                .clearAndSetSemantics {
-                    this.selected = active; role = Role.Tab
-                    contentDescription = if (badges[index] > 0) "$label, 확인 필요 ${badges[index]}건" else label
-                }, contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(painterResource(icons[index]), contentDescription = null, modifier = Modifier.size(32.dp), tint = tint)
-                    Text(label, style = MaterialTheme.typography.labelLarge, color = tint, maxLines = 1)
-                }
-                if (badges[index] > 0) Box(Modifier.align(Alignment.TopEnd).padding(8.dp).heightIn(min = 24.dp).widthIn(min = 24.dp).clip(CircleShape)
-                    .background(Midnight.badge).padding(horizontal = 6.dp), contentAlignment = Alignment.Center) {
-                    Text("${badges[index].coerceAtMost(99)}", style = MaterialTheme.typography.labelSmall, color = Color.White, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-    }
-}
-
+/** Segment control in the same glass as the header tabs: the chosen segment is lit cyan, the others read in soft white. */
 @Composable internal fun Segmented(labels: List<String>, selected: Int, modifier: Modifier = Modifier, onSelect: (Int) -> Unit) {
     val colors = MaterialTheme.colorScheme
-    Row(modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(colors.surface).padding(5.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-        labels.forEachIndexed { index, label ->
-            val active = index == selected
-            Box(Modifier.weight(1f).heightIn(min = 56.dp).clip(RoundedCornerShape(16.dp)).background(if (active) colors.primary else Color.Transparent)
-                .semantics { this.selected = active; role = Role.Tab }.clickable { onSelect(index) }, contentAlignment = Alignment.Center) {
-                Text(label, style = MaterialTheme.typography.labelLarge, color = if (active) colors.onPrimary else colors.onSurfaceVariant,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 8.dp))
+    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), color = colors.surface, border = Midnight.edge) {
+        Row(Modifier.padding(5.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            labels.forEachIndexed { index, label ->
+                val active = index == selected
+                Box(Modifier.weight(1f).heightIn(min = 56.dp).clip(RoundedCornerShape(17.dp))
+                    .background(if (active) Midnight.glow.copy(alpha = .14f) else Color.Transparent)
+                    .then(if (active) Modifier.border(1.dp, Midnight.glow.copy(alpha = .45f), RoundedCornerShape(17.dp)) else Modifier)
+                    .semantics { this.selected = active; role = Role.Tab }.clickable { onSelect(index) }, contentAlignment = Alignment.Center) {
+                    Text(label, style = MaterialTheme.typography.labelLarge, color = if (active) Midnight.glow else colors.onSurfaceVariant,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 8.dp))
+                }
             }
         }
     }
@@ -474,7 +452,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 
 @Composable internal fun Panel(modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.surface, padding: Dp = 28.dp, content: @Composable ColumnScope.() -> Unit) {
     Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = color, contentColor = MaterialTheme.colorScheme.onSurface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))) {
+        border = Midnight.edge) {
         Column(Modifier.padding(padding), verticalArrangement = Arrangement.spacedBy(16.dp), content = content)
     }
 }
@@ -575,7 +553,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     // The clock recomposes this pane every second; the card lines only change with the data, the readings and the day.
     val lines = remember(data, soc, odometer, odometerLive, today, snoozes.value) { homeCardLines(data, soc, odometer, odometerLive, today, zone, snoozes.value) }
     val cards = listOf(
-        HomeCardSpec("차량 정보", lines.vehicle, R.drawable.ic_vehicle, 0) { navigate(3) },
+        HomeCardSpec("차량 정보", lines.vehicle, R.drawable.ic_vehicle, openIncidents(data).size) { navigate(3) },
         HomeCardSpec("운행일지 확인", lines.log, R.drawable.ic_journal, lines.logPending) { openLog(if (lines.logPending > 0) 1 else 0, YearMonth.from(today)) },
         HomeCardSpec("정보 내보내기", lines.export, R.drawable.ic_export, 0) { navigate(2) },
     )
@@ -588,7 +566,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
         val heroHeight = (maxHeight * .72f).coerceIn(460.dp, 660.dp)
         val compactHero = maxWidth < 760.dp
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            HomeHero(state, now, compactHero, heroHeight, showTutorial, { openDriver(null) }, tutorial, assistant, requestPermissions, demoControls, cards) {
+            HomeHero(state, now, compactHero, heroHeight, showTutorial, { openDriver(null) }, tutorial, assistant, goSettings, requestPermissions, demoControls, cards) {
                 driverRow(Modifier)
             }
             MatchedBanner(banner, onShow = { onBanner(emptyList()); openLog(2, YearMonth.from(today)) }, onDismiss = { onBanner(emptyList()) })

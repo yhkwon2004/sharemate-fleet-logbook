@@ -3,6 +3,7 @@ package ai.sharemate.app
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
@@ -31,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -47,12 +49,14 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
@@ -78,6 +82,45 @@ internal object Midnight {
     val warn = Color(0xFFFFB45C)
     // Count badges: white digits need 4.5:1, which the brighter status red (#FF4C28, about 3.3:1) does not give.
     val badge = Color(0xFFC8321A)
+    val brand = Color(0xFFE4BFA6)
+    /** A lit top edge fading down the sides: the glass catches light from above, like a dashboard bezel. */
+    val edge = BorderStroke(1.dp, Brush.verticalGradient(listOf(Color(0x52FFFFFF), Color(0x14FFFFFF), Color(0x0AFFFFFF))))
+}
+
+/** The car app's backdrop: deep navy with a cool glow from the upper left and a faint violet one from the lower right. */
+internal fun Modifier.midnightBackdrop(): Modifier = drawWithCache {
+    val cool = Brush.radialGradient(listOf(Color(0x3D2D5BFF), Color.Transparent), center = Offset(size.width * .18f, 0f), radius = size.maxDimension * .62f)
+    val warm = Brush.radialGradient(listOf(Color(0x2B8A4FD8), Color.Transparent), center = Offset(size.width, size.height), radius = size.maxDimension * .55f)
+    onDrawBehind { drawRect(Midnight.bg); drawRect(cool); drawRect(warm) }
+}
+
+// ───────────────────────── header tabs (every pane but home) ─────────────────────────
+
+@Immutable
+internal data class NavTab(val label: String, val icon: Int, val badge: Int)
+
+/** The five destinations as one glass pill; the active tab is lit cyan. Counts sit inside the tab they belong to. */
+@Composable internal fun GlassTabs(tabs: List<NavTab>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
+    Surface(modifier, shape = RoundedCornerShape(50), color = Midnight.glass.copy(alpha = .92f), border = Midnight.edge) {
+        Row(Modifier.padding(6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            tabs.forEachIndexed { index, tab ->
+                val active = index == selected
+                val tint = if (active) Midnight.glow else Midnight.textSecondary
+                Row(Modifier.clip(RoundedCornerShape(50)).background(if (active) Midnight.glow.copy(alpha = .14f) else Color.Transparent)
+                    .then(if (active) Modifier.border(1.dp, Midnight.glow.copy(alpha = .45f), RoundedCornerShape(50)) else Modifier)
+                    .clickable { onSelect(index) }
+                    .clearAndSetSemantics {
+                        this.selected = active; role = Role.Tab
+                        contentDescription = if (tab.badge > 0) "${tab.label}, 확인 필요 ${tab.badge}건" else tab.label
+                    }
+                    .heightIn(min = 56.dp).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Icon(painterResource(tab.icon), null, Modifier.size(24.dp), tint = tint)
+                    Text(tab.label, style = MaterialTheme.typography.labelLarge, color = if (active) Midnight.glow else Midnight.text, maxLines = 1)
+                    if (tab.badge > 0) CountBadge(tab.badge)
+                }
+            }
+        }
+    }
 }
 
 // ───────────────────────── pure copy (unit-tested) ─────────────────────────
@@ -146,7 +189,7 @@ internal fun homeCardLines(data: TripLogData, socPercent: Int?, odometerKm: Doub
 }
 
 @Immutable
-internal data class MonthWidgetInfo(val title: String, val headline: String, val detail: String, val tone: Int, val auto: String? = null)
+internal data class MonthWidgetInfo(val title: String, val headline: String, val detail: String, val tone: Int, val auto: String? = null, val percent: Int? = null)
 
 /**
  * The month widget's one word (대기 · 완성 · 마감됨 · 확인 N건) and its detail line, from [monthStatus] and the totals.
@@ -167,10 +210,10 @@ internal fun monthWidgetInfo(data: TripLogData, today: LocalDate, zone: ZoneId):
         status.trips == 0 && recording -> MonthWidgetInfo(title, "기록 중", "이번 달 첫 운행을 기록하고 있어요", 0)
         status.trips == 0 -> MonthWidgetInfo(title, "대기", "이번 달 운행이 아직 없어요", 0)
         // A closed month that gained an unconfirmed trip or card since is not 'done'; it says what is left.
-        status.closed != null && status.issues > 0 -> MonthWidgetInfo(title, "마감 후 확인 ${status.issues}건", detail, 2, auto)
-        status.closed != null -> MonthWidgetInfo(title, "마감됨", detail, 1, auto)
-        status.issues == 0 -> MonthWidgetInfo(title, "완성", detail, 1, auto)
-        else -> MonthWidgetInfo(title, "확인 ${status.issues}건", detail, 2, auto)
+        status.closed != null && status.issues > 0 -> MonthWidgetInfo(title, "마감 후 확인 ${status.issues}건", detail, 2, auto, status.percent)
+        status.closed != null -> MonthWidgetInfo(title, "마감됨", detail, 1, auto, status.percent)
+        status.issues == 0 -> MonthWidgetInfo(title, "완성", detail, 1, auto, status.percent)
+        else -> MonthWidgetInfo(title, "확인 ${status.issues}건", detail, 2, auto, status.percent)
     }
 }
 
@@ -241,14 +284,28 @@ private fun skylineScene(): SkyScene {
         val farWarm = windows(scene.far, false); val farCool = windows(scene.far, true)
         val nearWarm = windows(scene.near, false); val nearCool = windows(scene.near, true)
         val antennas = scene.near.filter { it.crown == 1 && it.height > .26f }
+        val moon = Offset(w * .53f, h * .40f)
+        val moonHalo = Brush.radialGradient(listOf(Color(0x40F6EBD3), Color.Transparent), center = moon, radius = h * .16f)
+        // A soft glow around every few warm windows so the towers read as lit from inside rather than dotted.
+        val bloom = Path().apply {
+            scene.near.filter { !it.cool }.forEach { t ->
+                val left = w * t.left; val tw = w * t.width; val th = h * t.height * .86f; val top = horizon - h * t.height + h * t.height * .1f
+                t.lit.forEachIndexed { i, p -> if (i % 4 == 0) addOval(Rect(Offset(left + tw * p.x, top + th * p.y), 6f)) }
+            }
+        }
         onDrawBehind {
             drawRect(sky, size = Size(w, horizon))
             drawRect(glow, size = Size(w, horizon))
             scene.stars.forEach { (x, y, a) -> drawCircle(Color.White.copy(alpha = a), radius = 1.2f + a, center = Offset(w * x, h * y)) }
+            // A low moon resting just above the skyline, right of the search bar so it never sits behind text or chips.
+            drawCircle(moonHalo, radius = h * .16f, center = moon)
+            drawCircle(Color(0xFFF6EBD3), radius = h * .038f, center = moon)
+            drawCircle(Color(0x1A0B111C), radius = h * .030f, center = moon + Offset(h * .012f, -h * .006f))
             drawPath(ridge, Color(0xFF2A2350))
             drawPath(farBodies, Color(0xFF1A1C3C))
             drawPath(farWarm, Color(0x66FFCF8A)); drawPath(farCool, Color(0x557FC8FF))
             drawPath(nearBodies, Color(0xFF0E1128))
+            drawPath(bloom, Color(0x14FFD9A0))
             drawPath(nearWarm, Color(0xD9FFDDA0)); drawPath(nearCool, Color(0xB39FD8FF))
             antennas.forEach { t ->
                 val x = w * (t.left + t.width / 2); val top = horizon - h * t.height
@@ -286,8 +343,8 @@ internal class HomeCardSpec(val title: String, val subtitle: String, val icon: I
  * Grows past [minHeight] when the font scale needs room instead of clipping.
  */
 @Composable internal fun HomeHero(state: TripLogState, now: Long, compact: Boolean, minHeight: Dp, showTutorial: Boolean,
-    onDriver: () -> Unit, onTutorial: () -> Unit, onAssistant: () -> Unit, requestPermissions: () -> Unit, demoControls: @Composable () -> Unit,
-    cards: List<HomeCardSpec>, header: @Composable () -> Unit = {}) {
+    onDriver: () -> Unit, onTutorial: () -> Unit, onAssistant: () -> Unit, onSettings: () -> Unit, requestPermissions: () -> Unit,
+    demoControls: @Composable () -> Unit, cards: List<HomeCardSpec>, header: @Composable () -> Unit = {}) {
     val data = state.data
     val demo = data.profile.demoMode
     val open = data.open?.takeIf { it.demo == demo }
@@ -295,7 +352,7 @@ internal class HomeCardSpec(val title: String, val subtitle: String, val icon: I
     val driver = data.drivers.firstOrNull { it.id == data.currentDriverId }
     val hour = Instant.ofEpochMilli(now).atZone(zone).hour
     val shape = RoundedCornerShape(32.dp)
-    Box(Modifier.fillMaxWidth().clip(shape).border(1.dp, Midnight.glassBorder, shape)) {
+    Box(Modifier.fillMaxWidth().clip(shape).border(Midnight.edge, shape)) {
         NightSkyline(Modifier.matchParentSize())
         // Scrims keep the copy at 7:1 or better over the brightest part of the sky and the cards over the water.
         Box(Modifier.matchParentSize().background(Brush.horizontalGradient(0f to Midnight.bg.copy(alpha = .94f), .40f to Midnight.bg.copy(alpha = .66f), .80f to Color.Transparent)))
@@ -303,10 +360,14 @@ internal class HomeCardSpec(val title: String, val subtitle: String, val icon: I
         Column(Modifier.fillMaxWidth().heightIn(min = minHeight).padding(horizontal = if (compact) 22.dp else 36.dp, vertical = if (compact) 22.dp else 28.dp),
             verticalArrangement = Arrangement.SpaceBetween) {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                HeroHeader(now, overview, open != null, compact, driver?.label, showTutorial, onDriver, onTutorial)
+                HeroHeader(now, overview, open != null, compact, driver?.label, showTutorial, onDriver, onTutorial, onSettings)
                 header()
             }
             Column(Modifier.padding(vertical = if (compact) 16.dp else 22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.clearAndSetSemantics {}) {
+                    Icon(painterResource(R.drawable.ic_splash_logo), null, Modifier.size(30.dp), tint = Midnight.brand)
+                    Text("SHAREMATE  ·  FLEET JOURNAL", style = MaterialTheme.typography.labelLarge, color = Midnight.brand, letterSpacing = 3.sp)
+                }
                 Text(homeGreeting(hour, driver?.name, open != null), style = if (compact) MaterialTheme.typography.headlineLarge else scaledDisplay(MaterialTheme.typography.displaySmall, MaterialTheme.typography.headlineLarge),
                     color = Midnight.text, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
                 Text(homeSubtitle(state.signal, demo, open), style = MaterialTheme.typography.bodyLarge, color = Midnight.textSecondary)
@@ -323,7 +384,7 @@ internal class HomeCardSpec(val title: String, val subtitle: String, val icon: I
 }
 
 @Composable private fun HeroHeader(now: Long, overview: DrivingOverviewInfo, recording: Boolean, compact: Boolean, driverLabel: String?, showTutorial: Boolean,
-    onDriver: () -> Unit, onTutorial: () -> Unit) {
+    onDriver: () -> Unit, onTutorial: () -> Unit, onSettings: () -> Unit) {
     val pleos = LocalPleosColors.current
     val clock: @Composable () -> Unit = {
         Row(Modifier.semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -354,6 +415,11 @@ internal class HomeCardSpec(val title: String, val subtitle: String, val icon: I
         if (showTutorial) GlassChip(onTutorial, Modifier.semantics { role = Role.Button }) {
             Text("시연 체험", style = MaterialTheme.typography.labelLarge, color = Midnight.text)
         }
+        // With no side rail, settings live here on home; every other pane has them in its header tabs.
+        GlassChip(onSettings, Modifier.semantics { contentDescription = "설정 열기"; role = Role.Button }) {
+            Icon(painterResource(R.drawable.ic_tune), null, Modifier.size(24.dp), tint = Midnight.text)
+            Text("설정", style = MaterialTheme.typography.labelLarge, color = Midnight.text)
+        }
     }
     if (compact) Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         clock()
@@ -373,8 +439,8 @@ internal class HomeCardSpec(val title: String, val subtitle: String, val icon: I
             horizontalArrangement = Arrangement.spacedBy(10.dp), content = content)
     }
     // Near-opaque glass: the chips sit over the brightest part of the sunset, where a thin tint would drop text below 4.5:1.
-    if (onClick != null) Surface(onClick = onClick, modifier = modifier, shape = shape, color = Midnight.glass.copy(alpha = .88f), border = BorderStroke(1.dp, Midnight.glassBorder)) { inner() }
-    else Surface(modifier = modifier, shape = shape, color = Midnight.glass.copy(alpha = .88f), border = BorderStroke(1.dp, Midnight.glassBorder)) { inner() }
+    if (onClick != null) Surface(onClick = onClick, modifier = modifier, shape = shape, color = Midnight.glass.copy(alpha = .88f), border = Midnight.edge) { inner() }
+    else Surface(modifier = modifier, shape = shape, color = Midnight.glass.copy(alpha = .88f), border = Midnight.edge) { inner() }
 }
 
 /** The search-bar entry to the assistant: it opens the sheet, where the driver picks a suggestion or types one line. */
@@ -394,7 +460,7 @@ internal class HomeCardSpec(val title: String, val subtitle: String, val icon: I
 @Composable internal fun HomeActionCard(spec: HomeCardSpec, modifier: Modifier = Modifier, horizontal: Boolean = false) {
     val shape = RoundedCornerShape(26.dp)
     val description = "${spec.title}, ${spec.subtitle}" + if (spec.badge > 0) ", 확인 필요 ${spec.badge}건" else ""
-    Surface(onClick = spec.onClick, shape = shape, color = Midnight.glass.copy(alpha = .78f), border = BorderStroke(1.dp, Midnight.glassBorder),
+    Surface(onClick = spec.onClick, shape = shape, color = Midnight.glass.copy(alpha = .78f), border = Midnight.edge,
         modifier = modifier.semantics(mergeDescendants = true) { contentDescription = description; role = Role.Button }) {
         Box(Modifier.background(Brush.verticalGradient(listOf(Color.White.copy(alpha = .07f), Color.Transparent)))) {
             if (horizontal) Row(Modifier.fillMaxWidth().heightIn(min = 96.dp).padding(horizontal = 20.dp, vertical = 14.dp),
@@ -421,11 +487,16 @@ internal class HomeCardSpec(val title: String, val subtitle: String, val icon: I
     }
 }
 
+/** The card icon on a blue-to-cyan tile, with a soft cyan halo behind it so the three destinations read as lit buttons. */
 @Composable private fun IconTile(icon: Int) {
-    val shape = RoundedCornerShape(18.dp)
-    Box(Modifier.size(72.dp).clip(shape).background(Brush.linearGradient(listOf(Color(0x593B6FFF), Color(0x4D39D5F0)))).border(1.dp, Color.White.copy(alpha = .16f), shape),
-        contentAlignment = Alignment.Center) {
-        Icon(painterResource(icon), null, Modifier.size(36.dp), tint = Color(0xFFEAF3FF))
+    val shape = RoundedCornerShape(20.dp)
+    Box(Modifier.size(96.dp).drawBehind {
+        drawCircle(Brush.radialGradient(listOf(Midnight.glow.copy(alpha = .30f), Color.Transparent), center = center, radius = size.minDimension / 2), radius = size.minDimension / 2)
+    }, contentAlignment = Alignment.Center) {
+        Box(Modifier.size(72.dp).clip(shape).background(Brush.linearGradient(listOf(Color(0x803B6FFF), Color(0x6639D5F0)))).border(Midnight.edge, shape),
+            contentAlignment = Alignment.Center) {
+            Icon(painterResource(icon), null, Modifier.size(36.dp), tint = Color(0xFFF2F8FF))
+        }
     }
 }
 
@@ -448,8 +519,8 @@ internal class HomeCardSpec(val title: String, val subtitle: String, val icon: I
             horizontalArrangement = Arrangement.spacedBy(28.dp), content = content)
     }
     val semantics = Modifier.semantics(mergeDescendants = true) { contentDescription = description }
-    if (onClick != null) Surface(onClick = onClick, shape = shape, color = Midnight.glass, border = BorderStroke(1.dp, Midnight.glassBorder), modifier = modifier.then(semantics)) { inner() }
-    else Surface(shape = shape, color = Midnight.glass, border = BorderStroke(1.dp, Midnight.glassBorder), modifier = modifier.then(semantics)) { inner() }
+    if (onClick != null) Surface(onClick = onClick, shape = shape, color = Midnight.glass, border = Midnight.edge, modifier = modifier.then(semantics)) { inner() }
+    else Surface(shape = shape, color = Midnight.glass, border = Midnight.edge, modifier = modifier.then(semantics)) { inner() }
 }
 
 /** Today at a glance: distance (the live trip included), finished trips, expenses, and the odometer when the signal is fresh. */
@@ -499,7 +570,26 @@ internal class HomeCardSpec(val title: String, val subtitle: String, val icon: I
             }
             info.auto?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Midnight.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }
+        CompletionRing(info.percent, color)
         Chevron()
+    }
+}
+
+/** How much of the month is confirmed, as a ring lit in the widget's tone; a dash when the month has no trips yet. Decorative for TalkBack (the widget speaks the numbers). */
+@Composable private fun CompletionRing(percent: Int?, color: Color) {
+    Box(Modifier.size(104.dp).clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
+        Spacer(Modifier.matchParentSize().drawBehind {
+            val stroke = 10.dp.toPx()
+            val inset = stroke / 2
+            val arc = Size(size.width - stroke, size.height - stroke)
+            drawArc(Color.White.copy(alpha = .10f), -90f, 360f, false, Offset(inset, inset), arc, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
+            if (percent != null && percent > 0) drawArc(Brush.sweepGradient(listOf(Color(0xFF3B6FFF), color, Color(0xFF3B6FFF))), -90f, 360f * percent / 100f, false,
+                Offset(inset, inset), arc, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke, cap = StrokeCap.Round))
+        })
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(percent?.let { "$it%" } ?: "—", style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum"), color = Midnight.text, fontWeight = FontWeight.Bold)
+            Text("완성률", style = MaterialTheme.typography.labelSmall, color = Midnight.textMuted)
+        }
     }
 }
 
