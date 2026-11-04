@@ -1,0 +1,502 @@
+package ai.sharemate.app
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.util.UUID
+
+/*
+ * The phone's 예약 tab (2.9). The phone only asks: a booking is a request sent over the paired link, and the car decides,
+ * so two phones can never both win the same hour. The phone checks locally first with the same rules the car uses, so
+ * an obvious clash is caught under the form instead of after a round trip.
+ */
+
+// ───────────────────────── pure helpers (unit-tested) ─────────────────────────
+
+internal const val SLOT_STEP_MINUTES = 30
+internal const val DAY_MINUTES = 24 * 60
+internal const val BOOKING_STRIP_DAYS = 14
+internal const val TIMELINE_FIRST_HOUR = 6
+/** The last hour row (23:00–24:00). */
+internal const val TIMELINE_LAST_HOUR = 23
+internal const val DEFAULT_SLOT_MINUTES = 120
+internal const val DEFAULT_START_MINUTES = 9 * 60
+internal const val BOOKING_DESTINATION_MAX = 60
+internal const val BOOKING_NOTE_MAX = 200
+private const val STEP_MILLIS = SLOT_STEP_MINUTES * 60_000L
+
+/** [now] rounded up to the next half hour in [zone]; a time already on the half hour stays (09:00:00 → 09:00, 09:00:01 → 09:30). */
+internal fun nextHalfHourMillis(now: Long, zone: ZoneId): Long {
+    val start = Instant.ofEpochMilli(now).atZone(zone).toLocalDate().atStartOfDay(zone).toInstant().toEpochMilli()
+    val elapsed = now - start
+    return start + (elapsed + STEP_MILLIS - 1) / STEP_MILLIS * STEP_MILLIS
+}
+
+/** The epoch millis of [minutes] after midnight on [date] in [zone]; 1440 is the next midnight. */
+internal fun epochMillisAt(date: LocalDate, minutes: Int, zone: ZoneId): Long =
+    date.atStartOfDay(zone).plusMinutes(minutes.toLong()).toInstant().toEpochMilli()
+
+/** Minutes after midnight of [date] at [at], clamped to the day (0..1440). */
+internal fun minutesOfDay(at: Long, date: LocalDate, zone: ZoneId): Int {
+    val from = date.atStartOfDay(zone).toInstant().toEpochMilli()
+    return ((at - from) / 60_000L).coerceIn(0L, DAY_MINUTES.toLong()).toInt()
+}
+
+/** "09:00"; 1440 reads "24:00". */
+internal fun minutesText(minutes: Int): String = "%02d:%02d".format(minutes / 60, minutes % 60)
+
+/** The dates the strip offers: today and the next [count] − 1 days. */
+internal fun stripDates(today: LocalDate, count: Int = BOOKING_STRIP_DAYS): List<LocalDate> = (0 until count).map { today.plusDays(it.toLong()) }
+
+/** "오늘", "내일", then "11/20 (금)". */
+internal fun stripLabel(date: LocalDate, today: LocalDate): String = when (date) {
+    today -> "오늘"
+    today.plusDays(1) -> "내일"
+    else -> "${date.monthValue}/${date.dayOfMonth} (${weekday(date)})"
+}
+
+/** What a screen reader hears for a strip chip: "오늘, 11월 4일 (수), 예약 2건". */
+internal fun stripDescription(date: LocalDate, today: LocalDate, bookings: Int): String =
+    listOfNotNull(stripLabel(date, today).takeIf { date == today || date == today.plusDays(1) }, dayLabel(date),
+        if (bookings > 0) "예약 ${bookings}건" else null).joinToString(", ")
+
+/** The form's start and end (minutes after midnight) for [date]: the next half hour today, 09:00 on later days, two hours long. */
+internal fun defaultSlot(date: LocalDate, now: Long, zone: ZoneId): Pair<Int, Int> {
+    val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+    val start = when {
+        date.isAfter(today) -> DEFAULT_START_MINUTES
+        date == today -> {
+            val next = nextHalfHourMillis(now, zone)
+            if (Instant.ofEpochMilli(next).atZone(zone).toLocalDate() == today) minutesOfDay(next, today, zone) else DAY_MINUTES - SLOT_STEP_MINUTES
+        }
+        else -> DEFAULT_START_MINUTES
+    }.coerceIn(0, DAY_MINUTES - SLOT_STEP_MINUTES)
+    return start to (start + DEFAULT_SLOT_MINUTES).coerceAtMost(DAY_MINUTES)
+}
+
+/** Moves the start by [delta] minutes and keeps the length, as long as the day allows; the end never comes before start + 30. */
+internal fun shiftStart(start: Int, end: Int, delta: Int): Pair<Int, Int> {
+    val next = (start + delta).coerceIn(0, DAY_MINUTES - SLOT_STEP_MINUTES)
+    val length = (end - start).coerceAtLeast(SLOT_STEP_MINUTES)
+    return next to (next + length).coerceIn(next + SLOT_STEP_MINUTES, DAY_MINUTES)
+}
+
+/** Moves the end by [delta] minutes, between start + 30 and 24:00. */
+internal fun shiftEnd(start: Int, end: Int, delta: Int): Pair<Int, Int> = start to (end + delta).coerceIn(start + SLOT_STEP_MINUTES, DAY_MINUTES)
+
+/**
+ * The slot a tap on the free [hour] row fills in: from the hour (or the next half hour when it is under way), two hours
+ * long, stopped at the next booking that day so the pre-filled slot is free.
+ */
+internal fun slotFromHour(hour: Int, date: LocalDate, dayBookings: List<Reservation>, now: Long, zone: ZoneId): Pair<Int, Int> {
+    val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+    var start = hour * 60
+    if (date == today) {
+        val next = nextHalfHourMillis(now, zone)
+        if (Instant.ofEpochMilli(next).atZone(zone).toLocalDate() == today) start = maxOf(start, minutesOfDay(next, today, zone))
+    }
+    start = start.coerceIn(0, DAY_MINUTES - SLOT_STEP_MINUTES)
+    val nextBooking = dayBookings.map { minutesOfDay(it.startAt, date, zone) }.filter { it > start }.minOrNull() ?: DAY_MINUTES
+    val end = minOf(start + DEFAULT_SLOT_MINUTES, nextBooking, DAY_MINUTES).coerceAtLeast(start + SLOT_STEP_MINUTES)
+    return start to end
+}
+
+/** The first booking touching [hour]:00–[hour+1]:00 on [date]. */
+internal fun hourOccupant(dayBookings: List<Reservation>, date: LocalDate, hour: Int, zone: ZoneId): Reservation? {
+    val from = epochMillisAt(date, hour * 60, zone)
+    val to = epochMillisAt(date, (hour + 1) * 60, zone)
+    return dayBookings.firstOrNull { it.startAt < to && from < it.endAt }
+}
+
+/** True once the whole hour row is over. */
+internal fun hourIsPast(date: LocalDate, hour: Int, now: Long, zone: ZoneId): Boolean = epochMillisAt(date, (hour + 1) * 60, zone) <= now
+
+/** Where the 'now' line sits inside the [hour] row (0..1), or null when now is not in that hour. */
+internal fun nowFraction(date: LocalDate, hour: Int, now: Long, zone: ZoneId): Float? {
+    val from = epochMillisAt(date, hour * 60, zone)
+    val to = epochMillisAt(date, (hour + 1) * 60, zone)
+    return if (now in from until to) (now - from).toFloat() / (to - from) else null
+}
+
+/** The booker's label on the car's driver list. */
+internal fun bookerLabel(data: TripLogData, driverId: String): String = data.drivers.firstOrNull { it.id == driverId }?.label ?: "목록에 없는 직원"
+
+/** "영업 · 김 · 일반 업무 · 본사 → 수원"; a booking without a purpose says so. */
+internal fun reservationDetailText(data: TripLogData, reservation: Reservation): String =
+    listOfNotNull(bookerLabel(data, reservation.driverId), reservation.purpose?.label ?: "목적 미정", reservation.destination.ifBlank { null }).joinToString(" · ")
+
+/** The booked part of [date]: "09:00–12:00", clamped to the day. */
+internal fun dayWindowText(reservation: Reservation, date: LocalDate, zone: ZoneId): String =
+    "${minutesText(minutesOfDay(reservation.startAt, date, zone))}–${minutesText(minutesOfDay(reservation.endAt, date, zone))}"
+
+/** The follow-up after a request goes out: "11월 20일 (금) 09:00–12:00 예약을 차량에 보냈어요". */
+internal fun reservationSentText(date: LocalDate, start: Int, end: Int): String = "${dayLabel(date)} ${minutesText(start)}–${minutesText(end)} 예약을 차량에 보냈어요"
+
+/** "2시간 30분", "30분". */
+internal fun slotLengthText(start: Int, end: Int): String {
+    val minutes = (end - start).coerceAtLeast(0)
+    return when { minutes < 60 -> "${minutes}분"; minutes % 60 == 0 -> "${minutes / 60}시간"; else -> "${minutes / 60}시간 ${minutes % 60}분" }
+}
+
+/** The account's employee id when it is on this car's driver list; null means the phone must ask who the user is first. */
+internal fun bookingDriverId(account: PhoneAccount?, data: TripLogData): String? = account?.driverId?.takeIf { id -> data.drivers.any { it.id == id } }
+
+/** Why the form cannot send right now, or null when it can. */
+internal fun bookingBlockedReason(paired: Boolean, connected: Boolean): String? = when {
+    !paired -> "예약은 연결된 차량이 확정해요. 설정에서 차량과 연결하면 여기서 신청할 수 있어요."
+    !connected -> "지금은 차량과 연결되지 않아 신청할 수 없어요. 겹치는 예약은 차량이 판단하니 연결된 뒤 다시 신청해 주세요."
+    else -> null
+}
+
+/** Upcoming bookings split into the user's own and everyone else's. */
+internal fun splitReservations(upcoming: List<Reservation>, driverId: String?): Pair<List<Reservation>, List<Reservation>> =
+    upcoming.partition { driverId != null && it.driverId == driverId }
+
+/** The sentence shown under the form when the slot is taken, or null when it is free. */
+internal fun slotConflictText(data: TripLogData, startAt: Long, endAt: Long, zone: ZoneId): String? =
+    reservationConflict(data.reservations, startAt, endAt, data.profile.demoMode)?.let { other ->
+        "${reservationWindowText(other, zone)}에 ${bookerLabel(data, other.driverId)} 님 예약이 있어요."
+    }
+
+/** The same checks the car runs, done on the phone first; returns the sentence to show, or null when the request may go out. */
+internal fun precheckReservation(data: TripLogData, request: Reservation, now: Long, zone: ZoneId): String? =
+    try { validateReservationRequest(data, request, now, zone); null } catch (e: IllegalArgumentException) { e.message ?: "예약 내용을 확인해 주세요." }
+
+// ───────────────────────── tab ─────────────────────────
+
+/**
+ * The 예약 tab: the car's state at a glance, a 14-day strip, the chosen day from 06:00 to 24:00, the request form and the
+ * upcoming bookings. [send] dispatches to the car (the shell reports a failed send); [onPickMe] opens the employee list
+ * so the account can say which employee it is.
+ */
+@Composable internal fun PhoneReservationsTab(data: TripLogData, account: PhoneAccount?, paired: Boolean, connected: Boolean, busy: Boolean, now: Long,
+    send: (SyncCommand) -> Unit, onPickMe: () -> Unit, modifier: Modifier = Modifier) {
+    val tz = remember { ZoneId.systemDefault() }
+    val followUp = LocalFollowUp.current
+    val today = Instant.ofEpochMilli(now).atZone(tz).toLocalDate()
+    val dates = remember(today) { stripDates(today) }
+    var selectedDay by rememberSaveable { mutableLongStateOf(today.toEpochDay()) }
+    val selected = LocalDate.ofEpochDay(selectedDay).takeIf { it in dates } ?: today
+    val dayBookings = remember(data, selected) { reservationsOn(data, selected, tz) }
+    val driverId = bookingDriverId(account, data)
+    val blocked = bookingBlockedReason(paired, connected)
+
+    var start by rememberSaveable(selected.toEpochDay()) { mutableIntStateOf(defaultSlot(selected, now, tz).first) }
+    var end by rememberSaveable(selected.toEpochDay()) { mutableIntStateOf(defaultSlot(selected, now, tz).second) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val setSlot: (Pair<Int, Int>) -> Unit = { (s, e) -> start = s; end = e; error = null }
+
+    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(top = 8.dp, bottom = 96.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        AvailabilityCard(data, now, tz)
+        DateStrip(dates, selected, today, data, tz) { selectedDay = it.toEpochDay(); error = null }
+        DayTimeline(selected, today, dayBookings, data, driverId, now, tz, enabled = blocked == null) { hour -> setSlot(slotFromHour(hour, selected, dayBookings, now, tz)) }
+        ReservationForm(data, selected, start, end, driverId, blocked, busy, error, tz, onSlot = setSlot, onPickMe = onPickMe, onError = { error = it }) { request ->
+            send(SyncCommand.Reserve(request))
+            followUp(FollowUp(reservationSentText(selected, start, end)))
+        }
+        ReservationLists(data, driverId, now, tz, enabled = blocked == null && !busy) { reservation ->
+            send(SyncCommand.CancelReservation(reservation.id))
+            followUp(FollowUp("예약을 취소했어요", "실행 취소") { send(SyncCommand.RestoreReservation(reservation.id)) })
+        }
+    }
+}
+
+@Composable private fun AvailabilityCard(data: TripLogData, now: Long, tz: ZoneId) {
+    val availability = remember(data, now) { vehicleAvailability(data, now) }
+    val text = availabilityText(availability, now, tz)
+    val dot = when (availability) {
+        is VehicleAvailability.InUse -> Midnight.warn
+        is VehicleAvailability.Reserved -> Midnight.glow
+        is VehicleAvailability.Free -> LocalPleosColors.current.active
+    }
+    val plate = data.profile.plateNumber.ifBlank { "차량번호 미등록" }
+    val model = (data.vehicle.model ?: data.profile.carModel).ifBlank { null }
+    Surface(shape = RoundedCornerShape(26.dp), color = Midnight.glass, border = Midnight.edge,
+        modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("차량 예약", style = MaterialTheme.typography.labelMedium, color = Midnight.brand, letterSpacing = 1.sp)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.size(10.dp).clip(CircleShape).background(dot))
+                Text(text, style = MaterialTheme.typography.titleLarge, color = Midnight.text, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.semantics { heading() })
+            }
+            Text(listOfNotNull(plate, model).joinToString(" · "), style = MaterialTheme.typography.bodyMedium, color = Midnight.textSecondary,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable private fun DateStrip(dates: List<LocalDate>, selected: LocalDate, today: LocalDate, data: TripLogData, tz: ZoneId, onSelect: (LocalDate) -> Unit) {
+    val counts = remember(data, dates) { dates.associateWith { reservationsOn(data, it, tz).size } }
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        dates.forEach { date ->
+            val active = date == selected
+            val count = counts[date] ?: 0
+            Surface(selected = active, onClick = { onSelect(date) }, shape = RoundedCornerShape(18.dp),
+                color = if (active) Midnight.glow.copy(alpha = .16f) else Midnight.glass,
+                border = if (active) BorderStroke(1.dp, Midnight.glow.copy(alpha = .6f)) else Midnight.edge,
+                modifier = Modifier.heightIn(min = 52.dp).widthIn(min = 64.dp).semantics { contentDescription = stripDescription(date, today, count); role = Role.Tab }) {
+                Column(Modifier.clearAndSetSemantics {}.padding(horizontal = 14.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically)) {
+                    Text(stripLabel(date, today), style = MaterialTheme.typography.labelLarge, color = if (active) Midnight.glow else Midnight.text, maxLines = 1)
+                    Box(Modifier.size(5.dp).clip(CircleShape).background(if (count > 0) Midnight.brand else Color.Transparent))
+                }
+            }
+        }
+    }
+}
+
+@Composable private fun DayTimeline(date: LocalDate, today: LocalDate, dayBookings: List<Reservation>, data: TripLogData, driverId: String?, now: Long, tz: ZoneId,
+    enabled: Boolean, onPickHour: (Int) -> Unit) {
+    val early = dayBookings.any { it.startAt < epochMillisAt(date, TIMELINE_FIRST_HOUR * 60, tz) }
+    Panel(color = Midnight.glass, padding = 16.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("${stripLabel(date, today)} 예약 현황", style = MaterialTheme.typography.titleSmall, color = Midnight.text,
+                modifier = Modifier.weight(1f).semantics { heading() })
+            Text("${dayBookings.size}건", style = MaterialTheme.typography.labelMedium, color = Midnight.textMuted)
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            for (hour in TIMELINE_FIRST_HOUR..TIMELINE_LAST_HOUR) {
+                val occupant = hourOccupant(dayBookings, date, hour, tz)
+                val first = occupant != null && (hour == TIMELINE_FIRST_HOUR || hourOccupant(dayBookings, date, hour - 1, tz)?.id != occupant.id)
+                HourRow(hour, occupant, first, data, mine = occupant != null && occupant.driverId == driverId, past = hourIsPast(date, hour, now, tz),
+                    marker = nowFraction(date, hour, now, tz), date = date, tz = tz, onPick = if (enabled) ({ onPickHour(hour) }) else null)
+            }
+        }
+        if (early) Muted("06:00 전에 시작하는 예약은 아래 목록에서 볼 수 있어요.")
+        if (enabled) Muted("빈 시간을 누르면 아래 신청서의 시작 시각이 채워져요.")
+    }
+}
+
+@Composable private fun HourRow(hour: Int, occupant: Reservation?, first: Boolean, data: TripLogData, mine: Boolean, past: Boolean, marker: Float?,
+    date: LocalDate, tz: ZoneId, onPick: (() -> Unit)?) {
+    val shape = RoundedCornerShape(14.dp)
+    val fill = when {
+        occupant == null -> Color.White.copy(alpha = .03f)
+        mine -> Midnight.glow.copy(alpha = .20f)
+        else -> Midnight.brand.copy(alpha = .16f)
+    }
+    val tappable = occupant == null && !past && onPick != null
+    val label = when {
+        occupant != null && first -> "${bookerLabel(data, occupant.driverId)} · ${dayWindowText(occupant, date, tz)}"
+        occupant != null -> "예약 계속"
+        past -> "지난 시간"
+        else -> "비어 있어요"
+    }
+    val description = "${minutesText(hour * 60)}, " + (if (occupant != null) "${bookerLabel(data, occupant.driverId)} 님 예약 ${dayWindowText(occupant, date, tz)}" else label) +
+        if (marker != null) ", 지금" else ""
+    Row(Modifier.fillMaxWidth().alpha(if (past) .45f else 1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(minutesText(hour * 60), style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"), color = Midnight.textMuted,
+            modifier = Modifier.width(44.dp).clearAndSetSemantics {})
+        Box(Modifier.weight(1f).heightIn(min = 48.dp).clip(shape).background(fill)
+            .then(if (occupant != null && first) Modifier.border(1.dp, (if (mine) Midnight.glow else Midnight.brand).copy(alpha = .5f), shape) else Modifier)
+            .then(if (tappable) Modifier.clickable(onClickLabel = "이 시간으로 신청서 채우기", role = Role.Button) { onPick?.invoke() } else Modifier)
+            .drawWithContent {
+                drawContent()
+                if (marker != null) {
+                    val y = size.height * marker
+                    drawLine(Midnight.glow, Offset(0f, y), Offset(size.width, y), strokeWidth = 2.dp.toPx())
+                    drawCircle(Midnight.glow, radius = 4.dp.toPx(), center = Offset(4.dp.toPx(), y))
+                }
+            }
+            .semantics(mergeDescendants = true) { contentDescription = description }
+            .padding(horizontal = 14.dp, vertical = 8.dp), contentAlignment = Alignment.CenterStart) {
+            Text(label, Modifier.clearAndSetSemantics {}, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                color = when { occupant != null && first -> Midnight.text; occupant != null -> Midnight.textMuted; else -> Midnight.textSecondary })
+        }
+    }
+}
+
+@Composable private fun ReservationForm(data: TripLogData, date: LocalDate, start: Int, end: Int, driverId: String?, blocked: String?, busy: Boolean, error: String?, tz: ZoneId,
+    onSlot: (Pair<Int, Int>) -> Unit, onPickMe: () -> Unit, onError: (String?) -> Unit, onSubmit: (Reservation) -> Unit) {
+    var purposeName by rememberSaveable { mutableStateOf("") }
+    var destination by rememberSaveable { mutableStateOf("") }
+    var note by rememberSaveable { mutableStateOf("") }
+    val purpose = purposeChoices.firstOrNull { it.name == purposeName }
+    val editable = blocked == null
+    val startAt = epochMillisAt(date, start, tz)
+    val endAt = epochMillisAt(date, end, tz)
+    val conflict = remember(data, startAt, endAt) { slotConflictText(data, startAt, endAt, tz) }
+    Panel(color = Midnight.glass, padding = 18.dp) {
+        Text("새 예약", style = MaterialTheme.typography.labelMedium, color = Midnight.brand, letterSpacing = 1.sp)
+        Text(dayLabel(date), style = MaterialTheme.typography.titleMedium, color = Midnight.text, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+        if (blocked != null) Text(blocked, style = MaterialTheme.typography.bodyMedium, color = Midnight.warn, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+        if (driverId == null) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("먼저 나를 직원 목록에서 선택해 주세요", style = MaterialTheme.typography.bodyMedium, color = Midnight.textSecondary)
+                OutlinedButton(onClick = onPickMe, modifier = Modifier.heightIn(min = 48.dp), shape = RoundedCornerShape(14.dp)) { Text("직원 목록 열기") }
+            }
+        } else Text("예약자 · ${bookerLabel(data, driverId)}", style = MaterialTheme.typography.bodyMedium, color = Midnight.textSecondary)
+
+        TimeStepper("시작", start, editable, canMinus = start > 0, canPlus = start < DAY_MINUTES - SLOT_STEP_MINUTES,
+            onMinus = { onSlot(shiftStart(start, end, -SLOT_STEP_MINUTES)) }, onPlus = { onSlot(shiftStart(start, end, SLOT_STEP_MINUTES)) })
+        TimeStepper("끝", end, editable, canMinus = end > start + SLOT_STEP_MINUTES, canPlus = end < DAY_MINUTES,
+            onMinus = { onSlot(shiftEnd(start, end, -SLOT_STEP_MINUTES)) }, onPlus = { onSlot(shiftEnd(start, end, SLOT_STEP_MINUTES)) })
+        Text("${slotLengthText(start, end)} 동안 · 30분 단위", style = MaterialTheme.typography.labelMedium, color = Midnight.textMuted)
+
+        Text("목적", style = MaterialTheme.typography.titleSmall, color = Midnight.text)
+        val options: List<Pair<String, String>> = purposeChoices.map { it.name to it.label } + ("" to "정하지 않음")
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            options.chunked(2).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    row.forEach { (name, label) ->
+                        PurposeRadio(label, name == purposeName, editable, Modifier.weight(1f)) { purposeName = name; onError(null) }
+                    }
+                }
+            }
+        }
+        if (purpose != null && data.profile.autopilot) Text("예약한 시간의 운행은 ${withRo(purpose.label)} 기록돼요.", style = MaterialTheme.typography.labelMedium, color = Midnight.textMuted)
+
+        BookingField("목적지", destination, BOOKING_DESTINATION_MAX, editable, done = false) { destination = it; onError(null) }
+        BookingField("메모", note, BOOKING_NOTE_MAX, editable, done = true) { note = it; onError(null) }
+
+        InlineError(error ?: conflict)
+        PhoneLoadingButton("예약 신청", loading = busy, loadingLabel = "보내는 중", enabled = editable && driverId != null, modifier = Modifier.fillMaxWidth()) {
+            val id = driverId ?: return@PhoneLoadingButton
+            val request = Reservation(UUID.randomUUID().toString(), id, startAt, endAt, purpose, destination.trim(), note.trim())
+            val problem = precheckReservation(data, request, System.currentTimeMillis(), tz)
+            if (problem != null) onError(problem)
+            else { onError(null); onSubmit(request); destination = ""; note = "" }
+        }
+        Text("겹치는 예약이 있는지는 차량이 마지막으로 확인해요. 확정되면 아래 목록에 나타나요.", style = MaterialTheme.typography.labelMedium, color = Midnight.textMuted)
+    }
+}
+
+@Composable private fun TimeStepper(label: String, minutes: Int, enabled: Boolean, canMinus: Boolean, canPlus: Boolean, onMinus: () -> Unit, onPlus: () -> Unit) {
+    Surface(shape = RoundedCornerShape(18.dp), color = Color.White.copy(alpha = .04f), border = Midnight.edge, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(horizontal = 14.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(label, style = MaterialTheme.typography.titleSmall, color = Midnight.textSecondary, modifier = Modifier.weight(1f))
+            StepButton("−", "$label 30분 앞당기기", enabled && canMinus, onMinus)
+            Text(minutesText(minutes), style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum"), color = Midnight.text, textAlign = TextAlign.Center,
+                modifier = Modifier.width(76.dp).semantics { contentDescription = "$label ${minutesText(minutes)}"; liveRegion = LiveRegionMode.Polite })
+            StepButton("+", "$label 30분 늦추기", enabled && canPlus, onPlus)
+        }
+    }
+}
+
+@Composable private fun StepButton(symbol: String, description: String, enabled: Boolean, onClick: () -> Unit) {
+    Surface(onClick = onClick, enabled = enabled, shape = CircleShape, color = if (enabled) Midnight.glow.copy(alpha = .14f) else Color.Transparent,
+        modifier = Modifier.size(48.dp).semantics { contentDescription = description }) {
+        Box(Modifier.clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
+            Text(symbol, style = MaterialTheme.typography.titleLarge, color = if (enabled) Midnight.glow else Midnight.textMuted)
+        }
+    }
+}
+
+@Composable private fun PurposeRadio(label: String, selected: Boolean, enabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Surface(selected = selected, onClick = onClick, enabled = enabled, shape = RoundedCornerShape(16.dp),
+        color = if (selected) Midnight.glow.copy(alpha = .16f) else Color.White.copy(alpha = .04f),
+        border = if (selected) BorderStroke(1.dp, Midnight.glow.copy(alpha = .6f)) else Midnight.edge,
+        modifier = modifier.heightIn(min = 52.dp).semantics { role = Role.RadioButton }) {
+        Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Box(Modifier.size(16.dp).clip(CircleShape).border(2.dp, if (selected) Midnight.glow else Midnight.textMuted, CircleShape), contentAlignment = Alignment.Center) {
+                if (selected) Box(Modifier.size(8.dp).clip(CircleShape).background(Midnight.glow))
+            }
+            Text(label, style = MaterialTheme.typography.labelLarge, color = if (selected) Midnight.glow else Midnight.text, maxLines = 1)
+        }
+    }
+}
+
+@Composable private fun BookingField(label: String, value: String, max: Int, enabled: Boolean, done: Boolean, onChange: (String) -> Unit) {
+    OutlinedTextField(value, { onChange(it.take(max)) }, Modifier.fillMaxWidth().heightIn(min = 56.dp), enabled = enabled, singleLine = max <= BOOKING_DESTINATION_MAX,
+        label = { Text(label) }, shape = RoundedCornerShape(16.dp), textStyle = MaterialTheme.typography.bodyLarge,
+        supportingText = { Text("${value.length}/$max", style = MaterialTheme.typography.labelSmall) },
+        keyboardOptions = KeyboardOptions(imeAction = if (done) ImeAction.Done else ImeAction.Next),
+        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Midnight.glow, unfocusedBorderColor = Midnight.glassBorder, focusedLabelColor = Midnight.glow,
+            unfocusedLabelColor = Midnight.textMuted, focusedTextColor = Midnight.text, unfocusedTextColor = Midnight.text, cursorColor = Midnight.glow,
+            unfocusedContainerColor = Color.White.copy(alpha = .03f), focusedContainerColor = Color.White.copy(alpha = .05f)))
+}
+
+@Composable private fun ReservationLists(data: TripLogData, driverId: String?, now: Long, tz: ZoneId, enabled: Boolean, onCancel: (Reservation) -> Unit) {
+    val upcoming = remember(data, now) { upcomingReservations(data, now) }
+    val (mine, others) = remember(upcoming, driverId) { splitReservations(upcoming, driverId) }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        PhoneSectionTitle("내 예약", trailing = "${mine.size}건")
+        if (mine.isEmpty()) Muted(if (driverId == null) "직원 목록에서 나를 선택하면 내 예약을 따로 모아 보여 줘요." else "다가오는 내 예약이 없어요.", Modifier.padding(horizontal = 4.dp))
+        mine.forEach { ReservationRow(it, data, now, tz, enabled, mine = true) { onCancel(it) } }
+        Spacer(Modifier.height(4.dp))
+        PhoneSectionTitle("다른 예약", trailing = "${others.size}건")
+        if (others.isEmpty()) Muted("다른 직원의 다가오는 예약이 없어요.", Modifier.padding(horizontal = 4.dp))
+        others.forEach { ReservationRow(it, data, now, tz, enabled, mine = false) { onCancel(it) } }
+    }
+}
+
+@Composable private fun ReservationRow(reservation: Reservation, data: TripLogData, now: Long, tz: ZoneId, enabled: Boolean, mine: Boolean, onCancel: () -> Unit) {
+    val window = reservationWindowText(reservation, tz)
+    val ongoing = reservation.startAt <= now
+    Surface(shape = RoundedCornerShape(20.dp), color = Midnight.glass, border = if (mine) BorderStroke(1.dp, Midnight.glow.copy(alpha = .35f)) else Midnight.edge,
+        modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(start = 16.dp, end = 6.dp, top = 10.dp, bottom = 10.dp).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}, verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                if (ongoing) Text("사용 중", style = MaterialTheme.typography.labelMedium, color = Midnight.glow)
+                Text(window, style = MaterialTheme.typography.titleSmall, color = Midnight.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(reservationDetailText(data, reservation), style = MaterialTheme.typography.bodySmall, color = Midnight.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (reservation.note.isNotBlank()) Text(reservation.note, style = MaterialTheme.typography.bodySmall, color = Midnight.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            TextButton(onClick = onCancel, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp).widthIn(min = 56.dp)
+                .semantics { contentDescription = "$window ${bookerLabel(data, reservation.driverId)} 예약 취소" }) {
+                Text("취소", color = if (enabled) LocalPleosColors.current.negative else Midnight.textMuted)
+            }
+        }
+    }
+}
