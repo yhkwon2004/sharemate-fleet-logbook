@@ -82,15 +82,15 @@ class PhoneFleetUiTest {
     }
 
     @Test fun manualFormChecksThePlateAndPlacesTheMessage() {
-        assertNull(manualVehicleError("12가 3456", "아이오닉 5", "쉐어메이트"))
-        assertNull(manualVehicleError(" 12가3456 ", "", ""))
-        val blank = manualVehicleError("", "", "")!!
+        assertNull(vehicleFormError("12가 3456", "아이오닉 5", "쉐어메이트"))
+        assertNull(vehicleFormError(" 12가3456 ", "", ""))
+        val blank = vehicleFormError("", "", "")!!
         assertTrue(fleetErrorIsPlate(blank))
-        assertTrue(fleetErrorIsPlate(manualVehicleError("12가-3456", "", "")!!))
-        val long = manualVehicleError("12가 3456", "가".repeat(FLEET_MODEL_MAX + 1), "")!!
+        assertTrue(fleetErrorIsPlate(vehicleFormError("12가-3456", "", "")!!))
+        val long = vehicleFormError("12가 3456", "가".repeat(FLEET_MODEL_MAX + 1), "")!!
         assertFalse(fleetErrorIsPlate(long))
-        assertNull("입력 한도는 검증 한도와 같음", manualVehicleError("12가 3456", "가".repeat(FLEET_MODEL_MAX), "가".repeat(FLEET_COMPANY_MAX)))
-        assertNull(manualVehicleError("가".repeat(FLEET_PLATE_MAX), "", ""))
+        assertNull("입력 한도는 검증 한도와 같음", vehicleFormError("12가 3456", "가".repeat(FLEET_MODEL_MAX), "가".repeat(FLEET_COMPANY_MAX)))
+        assertNull(vehicleFormError("가".repeat(FLEET_PLATE_MAX), "", ""))
         assertTrue(fleetErrorIsPlate("이미 등록된 차량번호예요."))
         assertFalse(fleetErrorIsPlate("차량은 30대까지 등록할 수 있어요."))
     }

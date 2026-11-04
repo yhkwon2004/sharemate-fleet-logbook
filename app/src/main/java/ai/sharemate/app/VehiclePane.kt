@@ -54,13 +54,17 @@ internal fun VehiclePane(state: TripLogState, now: Long, act: Act, repository: T
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(20.dp)) { care(Modifier); link() }
-                    IncidentHistory(state.data, act, repository, Modifier.weight(1f))
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                        CarReservationsCard(state = state, now = now, act = act, repository = repository)
+                        IncidentHistory(state.data, act, repository)
+                    }
                 }
             } else {
                 hero(Modifier.fillMaxWidth().height(heroHeight))
                 details(Modifier.fillMaxWidth().height(heroHeight * 1.1f))
                 care(Modifier.fillMaxWidth())
                 link()
+                CarReservationsCard(state = state, now = now, act = act, repository = repository)
                 IncidentHistory(state.data, act, repository)
             }
         }

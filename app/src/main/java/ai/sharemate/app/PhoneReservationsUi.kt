@@ -7,6 +7,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -160,6 +164,10 @@ internal fun slotFromHour(hour: Int, date: LocalDate, dayBookings: List<Reservat
     return start to end
 }
 
+/** After a request ending at [sentEnd] (minutes of day): the default-length slot right after it, or null when the day is used up. */
+internal fun slotAfterSent(sentEnd: Int): Pair<Int, Int>? =
+    if (sentEnd > DAY_MINUTES - SLOT_STEP_MINUTES) null else sentEnd to minOf(sentEnd + DEFAULT_SLOT_MINUTES, DAY_MINUTES)
+
 /** The first booking touching [hour]:00–[hour+1]:00 on [date]. */
 internal fun hourOccupant(dayBookings: List<Reservation>, date: LocalDate, hour: Int, zone: ZoneId): Reservation? {
     val from = epochMillisAt(date, hour * 60, zone)
@@ -244,15 +252,23 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
     var end by rememberSaveable(selected.toEpochDay()) { mutableIntStateOf(defaultSlot(selected, now, tz).second) }
     var error by remember { mutableStateOf<String?>(null) }
     val setSlot: (Pair<Int, Int>) -> Unit = { (s, e) -> start = s; end = e; error = null }
+    // Picking an hour fills the form below; the form then scrolls into view so the next step is on screen.
+    val formView = remember { BringIntoViewRequester() }
+    val scope = rememberCoroutineScope()
 
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(top = 8.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)) {
         AvailabilityCard(data, now, tz)
         DateStrip(dates, selected, today, data, tz) { selectedDay = it.toEpochDay(); error = null }
-        DayTimeline(selected, today, dayBookings, data, driverId, now, tz, enabled = blocked == null) { hour -> setSlot(slotFromHour(hour, selected, dayBookings, now, tz)) }
+        DayTimeline(selected, today, dayBookings, data, driverId, now, tz, enabled = blocked == null) { hour -> setSlot(slotFromHour(hour, selected, dayBookings, now, tz)); scope.launch { formView.bringIntoView() } }
+        Box(Modifier.bringIntoViewRequester(formView)) {
         ReservationForm(data, selected, start, end, driverId, blocked, busy, error, tz, onSlot = setSlot, onPickMe = onPickMe, onError = { error = it }) { request ->
             send(SyncCommand.Reserve(request))
             followUp(FollowUp(reservationSentText(selected, start, end)))
+            // The sent window is now the car's booking; the form moves on to the time right after it instead of flagging its own request.
+            val next = slotAfterSent(end)
+            if (next != null) setSlot(next) else { selectedDay = selected.plusDays(1).toEpochDay(); error = null }
+        }
         }
         ReservationLists(data, driverId, now, tz, enabled = blocked == null && !busy) { reservation ->
             send(SyncCommand.CancelReservation(reservation.id))
@@ -315,8 +331,12 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
                 modifier = Modifier.weight(1f).semantics { heading() })
             Text("${dayBookings.size}건", style = MaterialTheme.typography.labelMedium, color = Midnight.textMuted)
         }
+        // Hours already over with nothing booked fold into one line, so today opens at the hour that can still be booked.
+        val skipped = (TIMELINE_FIRST_HOUR..TIMELINE_LAST_HOUR).takeWhile { hourIsPast(date, it, now, tz) && hourOccupant(dayBookings, date, it, tz) == null }
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            for (hour in TIMELINE_FIRST_HOUR..TIMELINE_LAST_HOUR) {
+            if (skipped.size > 1) Text("%02d:00–%02d:00 · 지난 시간".format(skipped.first(), skipped.last() + 1), style = MaterialTheme.typography.labelMedium,
+                color = Midnight.textMuted, modifier = Modifier.padding(vertical = 6.dp))
+            for (hour in (if (skipped.size > 1) skipped.last() + 1 else TIMELINE_FIRST_HOUR)..TIMELINE_LAST_HOUR) {
                 val occupant = hourOccupant(dayBookings, date, hour, tz)
                 val first = occupant != null && (hour == TIMELINE_FIRST_HOUR || hourOccupant(dayBookings, date, hour - 1, tz)?.id != occupant.id)
                 HourRow(hour, occupant, first, data, mine = occupant != null && occupant.driverId == driverId, past = hourIsPast(date, hour, now, tz),
@@ -352,12 +372,13 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
             .then(if (occupant != null && first) Modifier.border(1.dp, (if (mine) Midnight.glow else Midnight.brand).copy(alpha = .5f), shape) else Modifier)
             .then(if (tappable) Modifier.clickable(onClickLabel = "이 시간으로 신청서 채우기", role = Role.Button) { onPick?.invoke() } else Modifier)
             .drawWithContent {
-                drawContent()
+                // The now line runs under the row's text so "비어 있어요" never reads as struck through.
                 if (marker != null) {
                     val y = size.height * marker
-                    drawLine(Midnight.glow, Offset(0f, y), Offset(size.width, y), strokeWidth = 2.dp.toPx())
+                    drawLine(Midnight.glow.copy(alpha = .55f), Offset(0f, y), Offset(size.width, y), strokeWidth = 2.dp.toPx())
                     drawCircle(Midnight.glow, radius = 4.dp.toPx(), center = Offset(4.dp.toPx(), y))
                 }
+                drawContent()
             }
             .semantics(mergeDescendants = true) { contentDescription = description }
             .padding(horizontal = 14.dp, vertical = 8.dp), contentAlignment = Alignment.CenterStart) {

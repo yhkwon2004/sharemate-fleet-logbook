@@ -65,7 +65,8 @@ internal const val PAIR_UNREACHABLE = "차량에 닿지 않아요. 주소와 포
 
 /** Full-screen settings: car link (connect or disconnect), card alerts and statements, the logbook file, and what the app does. */
 @Composable internal fun PhoneSettingsPage(data: TripLogData, link: PhoneLink, paired: Boolean, busy: Boolean, pair: suspend (String, String) -> Unit,
-    unpair: suspend () -> Unit, cardAlerts: Boolean, queued: Int, openAlertSettings: () -> Unit, importStatement: () -> Unit, pickFile: () -> Unit, onBack: () -> Unit) {
+    unpair: suspend () -> Unit, cardAlerts: Boolean, queued: Int, openAlertSettings: () -> Unit, importStatement: () -> Unit, pickFile: () -> Unit, onBack: () -> Unit,
+    accountSlot: @Composable () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val followUp = LocalFollowUp.current
     val zone = remember { ZoneId.systemDefault() }
@@ -73,6 +74,7 @@ internal const val PAIR_UNREACHABLE = "차량에 닿지 않아요. 주소와 포
     Column(Modifier.fillMaxSize()) {
         PhoneRouteHeader("설정", onBack = onBack)
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(top = 4.dp, bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            accountSlot()
             if (paired) Panel(padding = 20.dp) {
                 Eyebrow("차량 연결")
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {

@@ -579,6 +579,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             HomeHero(state, now, compactHero, heroHeight, assistant, requestPermissions, demoControls, cards)
             MatchedBanner(banner, onShow = { onBanner(emptyList()); openLog(2, YearMonth.from(today)) }, onDismiss = { onBanner(emptyList()) })
+            NextReservationLine(data = state.data, now = now)
             if (!closeCardShown) MonthCloseBannerHost(data, now, onOpen = { navigate(2) })
             taskStack()
             HomeWidgets(state, now) { navigate(2) }

@@ -5,11 +5,18 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.AlertDialog
@@ -18,6 +25,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -28,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -54,6 +63,8 @@ class PhoneLogbookActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_AUTOMOTIVE)) { finish(); return }
+        // The night backdrop runs under both system bars; light icons on a dark scrim in every system theme.
+        enableEdgeToEdge(SystemBarStyle.dark(android.graphics.Color.TRANSPARENT), SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         setContent { SharemateTheme(compact = true, dark = true) { PhoneLogbookApp(intent?.data) } }
     }
 }
@@ -102,6 +113,46 @@ private fun readLogbook(context: android.content.Context, uri: Uri): TripLogData
     SideEffect { dispatchRef.value = followUp }
 
     LaunchedEffect(Unit) { repository.ensureLoaded(); sync.start() }
+
+    // 2.9: who is using the phone, and which company vehicle it shows. The account gates the shell; the fleet picks the car.
+    val accounts = remember { AccountStore.get(context) }
+    val account by accounts.account.collectAsState()
+    val fleet by sync.fleetState.collectAsState()
+    var signInBusy by remember { mutableStateOf(false) }
+    var signInError by remember { mutableStateOf<String?>(null) }
+    var pairError by remember { mutableStateOf<String?>(null) }
+    var fleetOpen by rememberSaveable { mutableStateOf(false) }
+    var addOpen by rememberSaveable { mutableStateOf(false) }
+    var pickMeOpen by rememberSaveable { mutableStateOf(false) }
+    val signIn: (suspend () -> PhoneAccount) -> Unit = { block ->
+        if (!signInBusy) scope.launch {
+            signInBusy = true; signInError = null
+            try { accounts.signIn(block()) }
+            catch (e: CancellationException) { throw e }
+            catch (e: SignInException) { if (!e.cancelled) signInError = e.message }
+            catch (_: Exception) { signInError = "로그인을 마치지 못했어요. 다시 시도해 주세요." }
+            finally { signInBusy = false }
+        }
+    }
+    // Pairing from onboarding or the add-vehicle sheet: the car's own sentence lands under the code field.
+    val pairVehicle: suspend (String, String) -> Unit = { endpoint, code ->
+        pairError = null
+        try { sync.pair(endpoint, code); paired = true }
+        catch (e: CancellationException) { throw e }
+        catch (e: IllegalArgumentException) { pairError = e.message ?: PAIR_UNREACHABLE; throw e }
+        catch (e: Exception) { pairError = PAIR_UNREACHABLE; throw IllegalArgumentException(PAIR_UNREACHABLE, e) }
+    }
+    // A typed vehicle becomes the shown one: the first one takes over an empty copy, a later one is switched to like any other.
+    val addManualVehicle: suspend (String, String, String) -> Unit = { plate, model, company ->
+        val before = sync.fleetState.value.selectedId
+        val vehicle = FleetStore.get(context).addManual(plate, model, company)
+        if (before != null) sync.switchTo(vehicle.id)
+        else if (repository.state.value.data.trips.isEmpty())
+            repository.importPhoneCopy(TripLogData(profile = FleetProfile(companyName = vehicle.company, plateNumber = vehicle.plate, carModel = vehicle.model)), live = true)
+        paired = sync.paired
+    }
+    // The sign-in screen is the confirmation; a bar queued now would only surface after the next sign-in.
+    val signOut: () -> Unit = { scope.launch { feedback.first.currentSnackbarData?.dismiss(); signOutEverywhere(context) } }
 
     // Camera: the capture is shrunk, stored under a fresh id, sent to the car, and the original deleted; the bar shows the real steps.
     var captureFor by rememberSaveable { mutableStateOf<String?>(null) }
@@ -207,6 +258,17 @@ private fun readLogbook(context: android.content.Context, uri: Uri): TripLogData
                     export = { hostRun { a.exportXlsx(monthTrips, name) } }, openTrip = a.onOpenTrip, openEmployee = { a.onOpenEmployee(it ?: "") },
                     employeeFilter = a.employeeFilter, paired = a.paired, zone = zone)
             },
+            bookingTab = { a ->
+                PhoneReservationsTab(data = a.data, account = account, paired = a.paired, connected = a.connected, busy = a.busy, now = a.now, send = a.send,
+                    onPickMe = { pickMeOpen = true })
+            },
+            vehicleSwitcher = { PhoneVehicleSwitcher(fleet = fleet, data = state.data, link = link, now = System.currentTimeMillis(), onClick = { fleetOpen = true }) },
+            accountCard = {
+                account?.let { me ->
+                    val driver = state.data.drivers.firstOrNull { it.id == me.driverId }
+                    PhoneAccountCard(account = me, driverLabel = driver?.let { listOf(it.department, it.name).filter(String::isNotBlank).joinToString(" · ") }, onSignOut = signOut)
+                }
+            },
             assistant = { onClose, onOpenTrip ->
                 AssistantSheet(open = true, onDismiss = onClose, data = state.data, now = System.currentTimeMillis(), writer = assistantWriter,
                     act = ::hostRun, followUp = followUp, onOpenTrip = onOpenTrip, compact = true)
@@ -214,8 +276,52 @@ private fun readLogbook(context: android.content.Context, uri: Uri): TripLogData
     }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        if (!state.loaded) PhoneHomeSkeleton(Modifier.fillMaxSize().safeDrawingPadding())
-        else PhoneShell(state, link, paired, host, feedback, cardAlerts, queuedCards, photoVersion, hostBusy)
+        val me = account
+        when {
+            !state.loaded -> PhoneHomeSkeleton(Modifier.fillMaxSize().safeDrawingPadding())
+            // Signed out: the sign-in screen. Debug builds also offer a labelled demo account so the flow can be shown without a Google project.
+            me == null -> PhoneSignInScreen(Modifier.fillMaxSize(), googleAvailable = googleSignInConfigured, busy = signInBusy, error = signInError,
+                onGoogle = { signIn { signInWithGoogle(context) } }, onDemo = if (BuildConfig.DEBUG) ({ signIn { demoAccount() } }) else null)
+            // First sign-in: profile, the first company vehicle, and which employee on the car this account is.
+            !me.onboarded -> CompositionLocalProvider(LocalFollowUp provides followUp) { Box(Modifier.fillMaxSize()) {
+                PhoneOnboarding(Modifier.fillMaxSize(), account = me, fleet = fleet, data = state.data, connected = link.connected, busy = hostBusy,
+                pairError = pairError,
+                onSaveProfile = { name, department -> accounts.update { it.copy(name = name.trim(), department = department.trim()) } },
+                onPair = pairVehicle, onAddManual = addManualVehicle,
+                onPickDriver = { id -> accounts.update { it.copy(driverId = id) } },
+                onFinish = { accounts.update { it.copy(onboarded = true) }; followUp(FollowUp("준비됐어요 · 예약 탭에서 회사 차량을 예약할 수 있어요")) })
+                PhoneSnackbarHost(feedback.first, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().imePadding().padding(12.dp))
+            } }
+            else -> PhoneShell(state, link, paired, host, feedback, cardAlerts, queuedCards, photoVersion, hostBusy)
+        }
+    }
+
+    if (fleetOpen) PhoneFleetSheet(fleet = fleet, selectedData = state.data, link = link, now = System.currentTimeMillis(), busy = hostBusy,
+        onSelect = { id -> fleetOpen = false; hostRun { sync.switchTo(id); paired = sync.paired; followUp(FollowUp("${sync.fleetState.value.selected?.title ?: "차량"}으로 바꿨어요")) } },
+        onAdd = { fleetOpen = false; pairError = null; addOpen = true },
+        onRemove = { id -> hostRun { val title = sync.fleetState.value.vehicles.firstOrNull { it.id == id }?.title; sync.removeVehicle(id); paired = sync.paired
+            followUp(FollowUp("${title ?: "차량"}을 이 휴대폰에서 지웠어요")) } },
+        onDismiss = { fleetOpen = false })
+    if (addOpen) PhoneAddVehicleSheet(busy = hostBusy, pairError = pairError,
+        onPair = { endpoint, code -> pairVehicle(endpoint, code); addOpen = false; followUp(FollowUp("차량과 연결됐어요 · 기록을 받고 있어요")) },
+        onAddManual = { plate, model, company -> addManualVehicle(plate, model, company); addOpen = false; followUp(FollowUp("$plate 을 등록했어요 · 차량과 연결하면 실시간으로 볼 수 있어요")) },
+        onDismiss = { addOpen = false })
+    // Booking needs to know which employee on the car's list this account is; one short list, saved on the phone.
+    if (pickMeOpen) {
+        val drivers = state.data.drivers
+        AlertDialog(onDismissRequest = { pickMeOpen = false }, title = { Text("나는 누구인가요?") },
+            text = {
+                Column {
+                    if (drivers.isEmpty()) Text("직원 목록은 차량과 연결하면 차량에서 받아와요.")
+                    drivers.forEach { driver ->
+                        TextButton(onClick = { pickMeOpen = false; scope.launch { accounts.update { it.copy(driverId = driver.id) }; followUp(FollowUp("${driver.name} 님으로 예약해요")) } },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                            Text(listOf(driver.department, driver.name).filter(String::isNotBlank).joinToString(" · "), modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { pickMeOpen = false }) { Text("닫기") } })
     }
 
     pendingCopy?.let { copy ->

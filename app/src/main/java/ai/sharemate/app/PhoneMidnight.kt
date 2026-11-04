@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -32,22 +34,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -66,23 +64,34 @@ import java.util.Locale
 // ───────────────────────── pure copy (unit-tested) ─────────────────────────
 
 @Immutable
-internal data class PhoneCardLines(val vehicle: String, val log: String, val logPending: Int, val export: String)
+internal data class PhoneCardLines(val vehicle: String, val log: String, val logPending: Int, val export: String, val exportMonth: YearMonth, val booking: String)
 
-/** Short lines for the three phone cards, from the phone's copy (current mode only), so they fit a third of a phone width. */
-internal fun phoneCardLines(data: TripLogData, today: LocalDate, zone: ZoneId): PhoneCardLines {
+/**
+ * Short lines for the four phone cards, from the phone's copy (current mode only). The log count is the 운행 tab's own badge
+ * (unclassified trips), so the card and the tab it opens never disagree; the export names the month 현황 opens on.
+ */
+internal fun phoneCardLines(data: TripLogData, today: LocalDate, zone: ZoneId, now: Long = today.atTime(12, 0).atZone(zone).toInstant().toEpochMilli(),
+    socPercent: Int? = null): PhoneCardLines {
     val mirror = data.copy(trips = phoneTrips(data))
     val care = careDueAlerts(data.care, data.vehicle.odometerKm, today, emptySet()).firstOrNull()?.title
-    val vehicle = care ?: data.vehicle.socPercent?.let { "배터리 $it%" } ?: data.vehicle.odometerKm?.takeIf { it > 0 }?.let { "마지막 ${kmText(it)}" } ?: "차량 상태"
+    val vehicle = care ?: (socPercent ?: data.vehicle.socPercent)?.let { "배터리 $it%" } ?: data.vehicle.odometerKm?.takeIf { it > 0 }?.let { "마지막 ${kmText(it)}" } ?: "차량 상태"
     val month = YearMonth.from(today)
-    val review = logReview(mirror, month, zone)
+    val monthTrips = tripsIn(mirror.trips, month.atDay(1), month.atEndOfMonth(), zone)
+    val pending = mirror.trips.count { it.purpose == TripPurpose.UNCLASSIFIED && !it.open }
     val log = when {
-        review.trips == 0 -> "${month.monthValue}월 운행 없음"
-        review.issues > 0 -> "확인 ${review.issues}건 남음"
-        else -> "${review.trips}건 · 모두 확인"
+        pending > 0 -> "미분류 ${pending}건"
+        monthTrips.isEmpty() -> "${month.monthValue}월 운행 없음"
+        else -> "${monthTrips.size}건 · 모두 확인"
     }
     val target = monthCloseTarget(mirror, today, zone)
-    val export = if (target != null && target.month != month) "${monthLabel(target.month, today)} 마감 전 Excel" else "${month.monthValue}월 Excel"
-    return PhoneCardLines(vehicle, log, review.issues, export)
+    val exportMonth = if (target != null && target.month != month) target.month else month
+    val export = if (exportMonth != month) "${monthLabel(exportMonth, today)} 마감 전 Excel" else "${month.monthValue}월 Excel"
+    val booking = when (val a = vehicleAvailability(mirror, now)) {
+        is VehicleAvailability.InUse -> "지금 운행 중"
+        is VehicleAvailability.Reserved -> "예약 사용 중"
+        is VehicleAvailability.Free -> a.next?.let { "다음 ${reservationStartText(it, now, zone)}" } ?: "지금 예약 가능"
+    }
+    return PhoneCardLines(vehicle, log, pending, export, exportMonth, booking)
 }
 
 /** The line under the phone greeting: the live link, or what the copy is when there is no car to ask. */
@@ -99,64 +108,71 @@ internal data class PhoneToday(val km: Double, val trips: Int, val expenseWon: L
 internal fun phoneToday(data: TripLogData, today: LocalDate, zone: ZoneId): PhoneToday {
     val trips = tripsIn(phoneTrips(data), today, today, zone)
     val open = data.open?.takeIf { it.demo == data.profile.demoMode && Instant.ofEpochMilli(it.startAt).atZone(zone).toLocalDate() == today }
-    return PhoneToday(trips.sumOf { it.distanceKm } + (open?.distanceKm ?: 0.0), trips.size, trips.sumOf { it.expenseWon })
+    // The open trip counts in both the distance and the number, so the two never disagree.
+    return PhoneToday(trips.sumOf { it.distanceKm } + (open?.distanceKm ?: 0.0), trips.size + (if (open != null) 1 else 0), trips.sumOf { it.expenseWon })
 }
 
 // ───────────────────────── home hero ─────────────────────────
 
 /**
- * The phone home's top: clock and link state, the brand line, the greeting and the three cards. Drawn over the night
- * backdrop the shell lays behind the home tab.
+ * The phone home's top: the date line, the greeting, the link line and four destination cards in a 2×2 grid (차량 정보 ·
+ * 차량 예약 · 운행일지 확인 · 정보 내보내기). Drawn over the night backdrop the shell lays behind the home tab.
  */
-@Composable internal fun PhoneHomeHero(data: TripLogData, link: PhoneLink, paired: Boolean, now: Long, onVehicle: () -> Unit, onLog: (Int) -> Unit, onExport: () -> Unit) {
+@Composable internal fun PhoneHomeHero(data: TripLogData, link: PhoneLink, paired: Boolean, now: Long, onVehicle: () -> Unit, onBook: () -> Unit,
+    onLog: () -> Unit, onExport: (YearMonth) -> Unit) {
     val zone = remember { ZoneId.systemDefault() }
     val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
     val demo = data.profile.demoMode
     val open = data.open?.takeIf { it.demo == demo }
     val driver = data.drivers.firstOrNull { it.id == data.currentDriverId }
-    val lines = remember(data, today) { phoneCardLines(data, today, zone) }
-    Column(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val soc = link.live?.takeIf { it.demo == demo }?.socPercent
+    // The minute is enough for the booking line; the clock tick does not rebuild the card copy every second.
+    val minute = now / 60_000
+    val lines = remember(data, today, minute, soc) { phoneCardLines(data, today, zone, now, soc) }
+    Column(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         // The phone status bar already shows the time and the header the brand, so the hero opens with the date in the brand tone.
         Text("${dayLabel(today)}  ·  FLEET JOURNAL", style = MaterialTheme.typography.labelLarge, color = Midnight.brand, letterSpacing = 1.sp,
             modifier = Modifier.clearAndSetSemantics {})
         Text(homeGreeting(Instant.ofEpochMilli(now).atZone(zone).hour, driver?.name, open != null), style = MaterialTheme.typography.headlineMedium,
             color = Midnight.text, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
-        Text(phoneSubtitle(paired, link.connected, open), style = MaterialTheme.typography.bodyMedium, color = Midnight.textSecondary,
-            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-        Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            PhoneActionCard("차량 정보", lines.vehicle, R.drawable.ic_vehicle, openIncidents(data).size, Modifier.weight(1f), onVehicle)
-            PhoneActionCard("운행일지 확인", lines.log, R.drawable.ic_journal, lines.logPending, Modifier.weight(1f)) { onLog(if (lines.logPending > 0) 1 else 0) }
-            PhoneActionCard("정보 내보내기", lines.export, R.drawable.ic_export, 0, Modifier.weight(1f), onExport)
+        // No live region here: the distance in this line changes on every poll while driving; the link badge announces state.
+        Text(phoneSubtitle(paired, link.connected, open), style = MaterialTheme.typography.bodyMedium, color = Midnight.textSecondary)
+        Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                PhoneActionCard("차량 정보", lines.vehicle, R.drawable.ic_vehicle, openIncidents(data).size, Modifier.weight(1f).fillMaxHeight(), onVehicle)
+                PhoneActionCard("차량 예약", lines.booking, R.drawable.ic_calendar, 0, Modifier.weight(1f).fillMaxHeight(), onBook)
+            }
+            Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                PhoneActionCard("운행일지 확인", lines.log, R.drawable.ic_journal, lines.logPending, Modifier.weight(1f).fillMaxHeight(), onLog)
+                PhoneActionCard("정보 내보내기", lines.export, R.drawable.ic_export, 0, Modifier.weight(1f).fillMaxHeight()) { onExport(lines.exportMonth) }
+            }
         }
     }
 }
 
-/** A third-width glass card: lit icon tile, two-line title, one-line real number. At least 120 dp tall. */
+/** A half-width glass card: lit icon tile on the left, the title on one line, one real number under it. At least 76 dp tall. */
 @Composable private fun PhoneActionCard(title: String, subtitle: String, icon: Int, badge: Int, modifier: Modifier, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(22.dp)
-    Surface(onClick = onClick, shape = shape, color = Midnight.glass.copy(alpha = .84f), border = Midnight.edge,
+    val shape = RoundedCornerShape(20.dp)
+    Surface(onClick = onClick, shape = shape, color = Midnight.glass.copy(alpha = .86f), border = Midnight.edge,
         modifier = modifier.semantics(mergeDescendants = true) {
             contentDescription = "$title, $subtitle" + if (badge > 0) ", 확인 필요 ${badge}건" else ""; role = Role.Button
         }) {
-        Column(Modifier.background(Brush.verticalGradient(listOf(Color.White.copy(alpha = .07f), Color.Transparent))).heightIn(min = 128.dp)
-            .padding(horizontal = 10.dp, vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.background(Brush.verticalGradient(listOf(Color.White.copy(alpha = .07f), Color.Transparent))).heightIn(min = 76.dp)
+            .padding(horizontal = 12.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Box {
-                val tile = RoundedCornerShape(14.dp)
-                Box(Modifier.size(64.dp).drawBehind {
-                    drawCircle(Brush.radialGradient(listOf(Midnight.glow.copy(alpha = .28f), Color.Transparent), center = center, radius = size.minDimension / 2), radius = size.minDimension / 2)
-                }, contentAlignment = Alignment.Center) {
-                    Box(Modifier.size(46.dp).clip(tile).background(Brush.linearGradient(listOf(Color(0x803B6FFF), Color(0x6639D5F0)))).border(Midnight.edge, tile),
-                        contentAlignment = Alignment.Center) { Icon(painterResource(icon), null, Modifier.size(24.dp), tint = Color(0xFFF2F8FF)) }
-                }
-                if (badge > 0) CountBadge(badge, Modifier.align(Alignment.TopEnd))
+                val tile = RoundedCornerShape(13.dp)
+                Box(Modifier.size(44.dp).clip(tile).background(Brush.linearGradient(listOf(Color(0x803B6FFF), Color(0x6639D5F0)))).border(Midnight.edge, tile),
+                    contentAlignment = Alignment.Center) { Icon(painterResource(icon), null, Modifier.size(24.dp), tint = Color(0xFFF2F8FF)) }
+                if (badge > 0) CountBadge(badge, Modifier.align(Alignment.TopEnd).offset(x = 8.dp, y = (-6).dp))
             }
-            Text(title, style = MaterialTheme.typography.titleSmall, color = Midnight.text, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 2)
-            Text(subtitle, style = MaterialTheme.typography.labelMedium, color = Midnight.textSecondary, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, color = Midnight.text, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, style = MaterialTheme.typography.labelMedium, color = Midnight.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }
 
-/** Today and this month side by side: distance, trips and expenses today; the month in one word with its completion ring. */
 @Composable internal fun PhoneWidgets(data: TripLogData, now: Long, onMonth: () -> Unit) {
     val zone = remember { ZoneId.systemDefault() }
     val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
@@ -180,9 +196,9 @@ internal fun phoneToday(data: TripLogData, today: LocalDate, zone: ZoneId): Phon
             Row(Modifier.heightIn(min = 132.dp).padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("이달 운행일지", style = MaterialTheme.typography.labelMedium, color = Midnight.textMuted)
-                    Text(month.headline, style = MaterialTheme.typography.titleLarge, color = tone, fontWeight = FontWeight.Bold, maxLines = 2)
+                    Text(month.headline, style = MaterialTheme.typography.titleMedium, color = tone, fontWeight = FontWeight.Bold, maxLines = 3)
                 }
-                CompletionRing(month.percent, tone, 64.dp, 7.dp)
+                CompletionRing(month.percent, tone, 52.dp, 6.dp)
             }
         }
     }
@@ -211,7 +227,7 @@ internal fun phoneToday(data: TripLogData, today: LocalDate, zone: ZoneId): Phon
                         .heightIn(min = 58.dp).padding(vertical = 6.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
                         Box {
                             Icon(painterResource(tab.icon), null, Modifier.size(24.dp), tint = tint)
-                            if (tab.badge > 0) CountBadge(tab.badge, Modifier.align(Alignment.TopEnd).padding(start = 18.dp))
+                            if (tab.badge > 0) CountBadge(tab.badge, Modifier.align(Alignment.TopEnd).offset(x = 10.dp, y = (-4).dp))
                         }
                         Text(tab.label, style = MaterialTheme.typography.labelMedium, color = label, maxLines = 1)
                     }
@@ -224,7 +240,7 @@ internal fun phoneToday(data: TripLogData, today: LocalDate, zone: ZoneId): Phon
 // ───────────────────────── vehicle screen ─────────────────────────
 
 /** 차량 정보 on the phone: the car card, care deadlines, maintenance and incidents from the copy. Read-only; the car keeps the original. */
-@Composable internal fun PhoneVehicleScreen(data: TripLogData, now: Long, onBack: () -> Unit) {
+@Composable internal fun PhoneVehicleScreen(data: TripLogData, link: PhoneLink, now: Long, onBack: () -> Unit) {
     val zone = remember { ZoneId.systemDefault() }
     val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
     val profile = data.profile
@@ -243,11 +259,13 @@ internal fun phoneToday(data: TripLogData, today: LocalDate, zone: ZoneId): Phon
                     Text((vehicle.model ?: profile.carModel).ifBlank { "차종 미등록" } + validVin(vehicle.vin)?.let { " · VIN …${it.takeLast(6)}" }.orEmpty(),
                         style = MaterialTheme.typography.bodyMedium, color = Midnight.textSecondary)
                     VehicleDrawing(Modifier.fillMaxWidth().height(150.dp))
+                    val live = link.live?.takeIf { it.demo == demo }
+                    val streaming = live != null && link.connected
                     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        Stat("배터리", vehicle.socPercent?.let { "$it%" } ?: "—", Modifier.weight(1f))
-                        Stat("계기판 · 마지막 수신", vehicle.odometerKm?.takeIf { it > 0 }?.let(::kmText) ?: "—", Modifier.weight(1.4f))
+                        Stat("배터리", (live?.socPercent ?: vehicle.socPercent)?.let { "$it%" } ?: "—", Modifier.weight(1f))
+                        Stat(if (streaming) "계기판 · 실시간" else "계기판 · 마지막 수신", (live?.odometerKm ?: vehicle.odometerKm)?.takeIf { it > 0 }?.let(::kmText) ?: "—", Modifier.weight(1.4f))
                     }
-                    Text("차량이 보낸 마지막 값이에요. 실시간 계기판은 차량 화면에서 확인해요.", style = MaterialTheme.typography.labelMedium, color = Midnight.textMuted)
+                    Text(if (streaming) "차량에서 실시간으로 받고 있어요." else "차량이 보낸 마지막 값이에요. 연결되면 실시간으로 바뀌어요.", style = MaterialTheme.typography.labelMedium, color = Midnight.textMuted)
                 }
             }
             Panel(padding = 18.dp) {

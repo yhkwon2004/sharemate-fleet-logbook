@@ -53,13 +53,13 @@ class PhoneShellTest {
 
     @Test fun badgesCountOnlyRealItemsInTheCarsMode() {
         // home = 1 unclassified + 1 review; trips = 1 unclassified; expenses = 1 review; report = issues in October (a: unclassified) only.
-        assertEquals(listOf(2, 1, 1, 1), phoneBadges(data, YearMonth.of(2026, 10), zone))
+        assertEquals(listOf(2, 0, 1, 1, 1), phoneBadges(data, YearMonth.of(2026, 10), zone))
         assertEquals(2, phoneHomeTasks(data))
         // April carries the trip without a driver; the demo trip never counts while the car is in real mode.
-        assertEquals(1, phoneBadges(data, YearMonth.of(2026, 4), zone)[3])
+        assertEquals(1, phoneBadges(data, YearMonth.of(2026, 4), zone)[4])
         val demoMode = data.copy(profile = FleetProfile(demoMode = true))
-        assertEquals(1, phoneBadges(demoMode, YearMonth.of(2026, 10), zone)[1])
-        assertEquals(0, phoneBadges(demoMode, YearMonth.of(2026, 10), zone)[2])
+        assertEquals(1, phoneBadges(demoMode, YearMonth.of(2026, 10), zone)[2])
+        assertEquals(0, phoneBadges(demoMode, YearMonth.of(2026, 10), zone)[3])
         assertTrue(matchesEmployee(data.trips[3], "")); assertFalse(matchesEmployee(data.trips[0], "")); assertTrue(matchesEmployee(data.trips[0], null))
     }
 

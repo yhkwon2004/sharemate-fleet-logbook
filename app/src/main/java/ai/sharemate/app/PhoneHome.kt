@@ -47,6 +47,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import java.time.YearMonth
 import java.time.ZoneId
 import java.util.Locale
 
@@ -108,13 +109,14 @@ private val shownKeysSaver = listSaver<MutableState<Set<String>>, String>(save =
     var celebrated by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(taskCount, paired) {
         if (taskCount > 0) sawTasks = true
-        else if (paired && sawTasks && !celebrated) { celebrated = true; followUp(FollowUp("이달 정리가 끝났어요", "현황 보기") { commands.openTab(3) }) }
+        else if (paired && sawTasks && !celebrated) { celebrated = true; followUp(FollowUp("이달 정리가 끝났어요", "현황 보기") { commands.openTab(PhoneTab.REPORT.ordinal) }) }
     }
     var index = 0
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         // The car's home in phone size: greeting and the three destinations over the night city, then today and this month.
-        PhoneHomeHero(data, link, paired, now, onVehicle = onVehicle, onLog = { commands.openTab(1) }, onExport = { commands.openTab(3) })
-        PhoneWidgets(data, now) { commands.openTab(3) }
+        PhoneHomeHero(data, link, paired, now, onVehicle = onVehicle, onBook = { commands.openTab(PhoneTab.BOOK.ordinal) },
+            onLog = { commands.openTab(PhoneTab.TRIPS.ordinal) }, onExport = commands.openReport)
+        PhoneWidgets(data, now) { commands.openReport(YearMonth.now()) }
         if (open != null) HomeAppear("open", index++, shown) { PhoneOpenTripCard(open, link) }
         if (paired) {
             if (taskCount > 0) {

@@ -50,4 +50,14 @@ class PhoneFleetTest {
         val bare = decodeAccount(encodeAccount(account.copy(photoUrl = null, driverId = null)))
         assertNull(bare.photoUrl); assertNull(bare.driverId)
     }
+
+    @Test fun signingInAgainKeepsTheFirstRunAnswers() {
+        val before = PhoneAccount("kim@company.com", "kim@company.com", "김서연", provider = AccountProvider.GOOGLE, signedInAt = 1, onboarded = true, driverId = "d1", department = "영업1팀")
+        val fresh = PhoneAccount("kim@company.com", "kim@company.com", "Kim Seoyeon", provider = AccountProvider.GOOGLE, signedInAt = 99)
+        val resumed = resumeAccount(fresh, before)
+        assertTrue(resumed.onboarded); assertEquals("d1", resumed.driverId); assertEquals("김서연", resumed.name); assertEquals(99L, resumed.signedInAt)
+        val other = fresh.copy(id = "lee@company.com", email = "lee@company.com")
+        assertEquals("다른 계정은 처음부터", other, resumeAccount(other, before))
+        assertEquals("온보딩을 마치지 않았으면 처음부터", fresh, resumeAccount(fresh, before.copy(onboarded = false)))
+    }
 }

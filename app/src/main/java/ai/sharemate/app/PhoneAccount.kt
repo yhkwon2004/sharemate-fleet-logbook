@@ -51,6 +51,11 @@ internal fun decodeAccount(text: String): PhoneAccount = JSONObject(text).let { 
         j.optBoolean("onboarded"), if (j.isNull("driverId")) null else j.optString("driverId").takeIf { it.isNotBlank() }, j.optString("department"))
 }
 
+/** A fresh sign-in, carrying over what [previous] answered in the first run when it is the same account. */
+internal fun resumeAccount(fresh: PhoneAccount, previous: PhoneAccount?): PhoneAccount =
+    if (previous == null || previous.id != fresh.id || !previous.onboarded) fresh
+    else fresh.copy(name = previous.name, department = previous.department, driverId = previous.driverId, onboarded = true)
+
 /** The signed-in account, persisted in no-backup storage so it never leaves the phone through a cloud backup. */
 class AccountStore private constructor(context: Context) {
     private val file = AtomicFile(File(context.applicationContext.noBackupFilesDir, "phone-account.json"))
@@ -65,7 +70,19 @@ class AccountStore private constructor(context: Context) {
 
     suspend fun update(transform: (PhoneAccount) -> PhoneAccount) { account.value?.let { save(transform(it)) } }
 
-    suspend fun clear() = withContext(Dispatchers.IO) { file.delete(); mutable.value = null }
+    // The first-run answers of the account that signed out last, so signing in again with it skips the onboarding.
+    private val last = File(context.applicationContext.noBackupFilesDir, "phone-account-last.json")
+
+    /** Stores a fresh sign-in; the same account signing in again keeps its name, department, employee and finished onboarding. */
+    suspend fun signIn(account: PhoneAccount) {
+        val previous = withContext(Dispatchers.IO) { runCatching { if (last.exists()) decodeAccount(last.readText(Charsets.UTF_8)) else null }.getOrNull() }
+        save(resumeAccount(account, previous))
+    }
+
+    suspend fun clear() = withContext(Dispatchers.IO) {
+        mutable.value?.let { runCatching { last.writeText(encodeAccount(it), Charsets.UTF_8) } }
+        file.delete(); mutable.value = null
+    }
 
     companion object {
         @Volatile private var instance: AccountStore? = null

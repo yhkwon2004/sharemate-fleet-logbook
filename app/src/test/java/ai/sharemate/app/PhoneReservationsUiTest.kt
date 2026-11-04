@@ -121,4 +121,10 @@ class PhoneReservationsUiTest {
         assertNotNull(precheckReservation(data, booking("d", lee, at(3, 9), at(3, 10)), now, zone))   // already over
         assertNotNull(precheckReservation(data, booking("e", Driver(id("x"), "", "유령"), at(5, 14), at(5, 15)), now, zone))
     }
+
+    @Test fun theFormMovesPastWhatWasJustSent() {
+        assertEquals(17 * 60 to 19 * 60, slotAfterSent(17 * 60))
+        assertEquals("자정까지 남은 만큼만", 23 * 60 to 24 * 60, slotAfterSent(23 * 60))
+        assertNull("하루가 끝나면 다음 날로", slotAfterSent(24 * 60))
+    }
 }

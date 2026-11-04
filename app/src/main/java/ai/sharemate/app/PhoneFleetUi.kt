@@ -131,7 +131,7 @@ internal fun fleetRemoveText(vehicle: FleetVehicle): String = if (vehicle.paired
 else "휴대폰에 등록한 차량 정보만 지워요."
 
 /** The form's own check before anything is sent: the first problem as one sentence, or null when it can be submitted. */
-internal fun manualVehicleError(plate: String, model: String, company: String): String? =
+internal fun vehicleFormError(plate: String, model: String, company: String): String? =
     runCatching { validateFleetVehicle(plate, model, company) }.exceptionOrNull()?.let { it.message ?: "입력 내용을 확인해 주세요." }
 
 /** Messages about the plate (format, already registered) go under the plate field; the rest under the button. */
@@ -334,7 +334,7 @@ private enum class AddMode(val label: String) { PAIR("차량과 연결"), MANUAL
     var attempted by rememberSaveable { mutableStateOf(false) }
     var working by remember { mutableStateOf(false) }
     var submitError by remember { mutableStateOf<String?>(null) }
-    val checkError = if (attempted) manualVehicleError(plate, model, company) else null
+    val checkError = if (attempted) vehicleFormError(plate, model, company) else null
     val shown = submitError ?: checkError
     val plateError = shown?.takeIf { fleetErrorIsPlate(it) }
     val otherError = shown?.takeIf { !fleetErrorIsPlate(it) }
@@ -346,7 +346,7 @@ private enum class AddMode(val label: String) { PAIR("차량과 연결"), MANUAL
         PhoneLoadingButton("차량 등록", loading = working, loadingLabel = "등록하는 중…", enabled = !busy && plate.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
             attempted = true
             submitError = null
-            if (manualVehicleError(plate, model, company) != null) return@PhoneLoadingButton
+            if (vehicleFormError(plate, model, company) != null) return@PhoneLoadingButton
             scope.launch {
                 working = true
                 try {

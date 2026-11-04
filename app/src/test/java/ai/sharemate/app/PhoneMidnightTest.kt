@@ -25,7 +25,7 @@ class PhoneMidnightTest {
             trips = listOf(trip("a", 11, 3, 100.0), trip("b", 11, 5, 110.0, TripPurpose.UNCLASSIFIED)))
         val lines = phoneCardLines(data, today, zone)
         assertEquals("배터리 82%", lines.vehicle)
-        assertEquals("확인 1건 남음", lines.log); assertEquals(1, lines.logPending)
+        assertEquals("미분류 1건", lines.log); assertEquals(1, lines.logPending)
         assertEquals("기한이 다가오면 기한이 먼저", "정기검사 D-10",
             phoneCardLines(data.copy(care = VehicleCare(inspectionDue = "2026-11-30")), today, zone).vehicle)
         assertEquals("2건 · 모두 확인", phoneCardLines(data.copy(trips = data.trips.map { it.copy(purpose = TripPurpose.BUSINESS) }), today, zone).log)
@@ -37,6 +37,18 @@ class PhoneMidnightTest {
         val data = TripLogData(drivers = listOf(driver), trips = listOf(trip("a", 10, 3, 100.0), trip("b", 11, 2, 110.0)))
         assertEquals("10월 마감 전 Excel", phoneCardLines(data, LocalDate.of(2026, 11, 3), zone).export)
         assertEquals("11월 Excel", phoneCardLines(closeMonth(data, YearMonth.of(2026, 10), at(11, 1, 9), zone), LocalDate.of(2026, 11, 3), zone).export)
+    }
+
+    @Test fun bookingCardSaysWhetherTheCarIsFree() {
+        val today = LocalDate.of(2026, 11, 20)
+        val noon = at(11, 20, 12)
+        val data = TripLogData(drivers = listOf(driver))
+        assertEquals("지금 예약 가능", phoneCardLines(data, today, zone, noon).booking)
+        val booked = data.copy(reservations = listOf(Reservation(id("r"), driver.id, at(11, 20, 15), at(11, 20, 17))))
+        assertEquals("다음 오늘 15:00", phoneCardLines(booked, today, zone, noon).booking)
+        assertEquals("예약 사용 중", phoneCardLines(booked, today, zone, at(11, 20, 16)).booking)
+        assertEquals("지금 운행 중", phoneCardLines(data.copy(open = Trip(id("o"), at(11, 20, 11), null, 1.0, 2.0)), today, zone, noon).booking)
+        assertEquals("휴대폰이 받은 실시간 배터리가 먼저", "배터리 64%", phoneCardLines(data, today, zone, noon, socPercent = 64).vehicle)
     }
 
     @Test fun subtitleTellsTheTruthAboutTheLink() {
@@ -51,7 +63,7 @@ class PhoneMidnightTest {
         val data = TripLogData(trips = listOf(trip("a", 11, 20, 100.0, km = 12.0).copy(expenses = listOf(TripExpense(ExpenseType.PARKING, 3_000, at(11, 20, 10), EditSource.DRIVER))),
             trip("y", 11, 19, 80.0)), open = Trip(id("o"), at(11, 20, 15), null, 112.0, 115.5))
         val day = phoneToday(data, today, zone)
-        assertEquals(15.5, day.km, 1e-9); assertEquals(1, day.trips); assertEquals(3_000L, day.expenseWon)
+        assertEquals(15.5, day.km, 1e-9); assertEquals("열린 운행도 건수에 포함", 2, day.trips); assertEquals(3_000L, day.expenseWon)
         assertEquals("어제 시작한 열린 운행은 오늘 거리에 넣지 않음", 12.0,
             phoneToday(data.copy(open = data.open!!.copy(startAt = at(11, 19, 23))), today, zone).km, 1e-9)
     }

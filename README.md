@@ -1,32 +1,38 @@
-# 현재 개발 버전: SHAREMATE 2.8.0 법인차 자동 운행일지
+# 현재 개발 버전: SHAREMATE 2.9.0 법인차 자동 운행일지
 
 ## 화면 둘러보기
 
-Pleos 차량 에뮬레이터(2560×1440)와 휴대폰 에뮬레이터에서 찍은 2.8.0 화면입니다. 차량 화면은 왼쪽 Pleos 운전자 패널과 상·하단 시스템 막대를 뺀 SHAREMATE 창만 잘랐습니다.
+Pleos 차량 에뮬레이터(2560×1440)와 휴대폰 에뮬레이터에서 찍은 화면입니다. 2.9.0에서 새로 찍은 화면은 차량 홈·차량, 휴대폰 로그인·처음 설정·홈·예약·회사 차량·설정입니다. 차량 화면은 왼쪽 Pleos 운전자 패널과 상·하단 시스템 막대를 뺀 SHAREMATE 창만 잘랐습니다.
 
 ### 차량 (Pleos Connect)
 
-| 홈 · 지금 할 일과 세 버튼 | 운행기록 · 운행 상세 |
+| 홈 · 세 버튼과 다음 예약 | 운행기록 · 운행 상세 |
 |---|---|
-| <img src="docs/screenshots/car-home.jpg" alt="차량 홈: 야경 배경, 인사말, 운행 비서 검색창, 차량 정보·운행일지 확인·정보 내보내기 버튼, 오늘 운행·이달 운행일지 위젯" width="560"> | <img src="docs/screenshots/car-log.jpg" alt="운행기록: 10월 운행 목록과 오른쪽 운행 상세(계기판 거리, 목적, 사용자)" width="560"> |
-| **월간·Excel · 월 마감과 5시트 미리보기** | **차량 · 차량 신호, 관리 기한, 특이사항** |
-| <img src="docs/screenshots/car-report.jpg" alt="월간·Excel: 월 마감 4단계와 Excel 미리보기" width="560"> | <img src="docs/screenshots/car-vehicle.jpg" alt="차량: 차량 카드, 차량 정보, 차량 관리 기한, 정비 기록, 사고·특이사항 기록" width="560"> |
+| <img src="docs/screenshots/car-home.jpg" alt="차량 홈: 야경 배경, 인사말, 운행 비서 검색창, 차량 정보·운행일지 확인·정보 내보내기 버튼, 휴대폰에서 들어온 다음 예약 한 줄, 오늘 운행·이달 운행일지 위젯" width="560"> | <img src="docs/screenshots/car-log.jpg" alt="운행기록: 10월 운행 목록과 오른쪽 운행 상세(계기판 거리, 목적, 사용자)" width="560"> |
+| **월간·Excel · 월 마감과 5시트 미리보기** | **차량 · 차량 신호, 관리 기한, 차량 예약, 특이사항** |
+| <img src="docs/screenshots/car-report.jpg" alt="월간·Excel: 월 마감 4단계와 Excel 미리보기" width="560"> | <img src="docs/screenshots/car-vehicle.jpg" alt="차량: 차량 카드, 차량 정보, 차량 관리 기한, 다가오는 예약 2건과 취소 버튼, 사고·특이사항 기록" width="560"> |
 | **설정 · 법인·차량, 사용자, 정산·세무, 기록** | **운행 비서 · 제안 질문과 한 줄 입력** |
 | <img src="docs/screenshots/car-settings.jpg" alt="설정 화면" width="560"> | <img src="docs/screenshots/car-assistant.jpg" alt="운행 비서 시트: 제안 질문 칩과 입력창" width="560"> |
 
 - **화면 사이:** 어느 화면에서나 같은 머리줄(유리 탭 · 기록 상태 · 이용 직원 · 운행 비서)이 그대로 있고, 화면 내용만 옆으로 부드럽게 바뀝니다. 야경 배경도 한 장으로 이어져 홈에서는 선명하게, 다른 화면에서는 은은하게 깔립니다.
+- **예약:** 휴대폰에서 신청한 예약은 차량이 겹침을 판단해 확정합니다. 예약 시간 15분 전부터는 이용 직원이 예약한 직원으로 바뀌고, 그 시간의 운행은 예약 목적으로 기록됩니다.
 - **주행 중:** 거리와 기록 상태만 남기고 버튼·시트·입력은 모두 사라집니다(Pleos 주행 제한).
 
 ### 휴대폰
 
-| 홈 | 운행 | 운행 상세 | 차량 정보 |
+| 로그인 | 처음 설정 · 법인차량 등록 | 홈 | 예약 |
 |---|---|---|---|
-| <img src="docs/screenshots/phone-home.jpg" alt="휴대폰 홈: 야경 배경, 인사말, 세 버튼, 오늘·이달 위젯" width="200"> | <img src="docs/screenshots/phone-trips.jpg" alt="휴대폰 운행 목록: 월 머리줄과 일별 운행" width="200"> | <img src="docs/screenshots/phone-trip-detail.jpg" alt="휴대폰 운행 상세: 계기판 거리, 목적 선택, 비용" width="200"> | <img src="docs/screenshots/phone-vehicle.jpg" alt="휴대폰 차량 정보: 차량 카드, 관리 기한, 정비, 특이사항" width="200"> |
-| **경비** | **현황** | **설정** | |
-| <img src="docs/screenshots/phone-expenses.jpg" alt="휴대폰 경비: 이달 경비와 카드 명세서 가져오기" width="200"> | <img src="docs/screenshots/phone-report.jpg" alt="휴대폰 현황: 이달 운행일지, 차량 관리, Excel 미리보기" width="200"> | <img src="docs/screenshots/phone-settings.jpg" alt="휴대폰 설정: 차량 연결, 카드 자동 연동, 운행파일" width="200"> | |
+| <img src="docs/screenshots/phone-signin.jpg" alt="휴대폰 로그인: 야경 위 브랜드, 세 가지 가치, Google 계정으로 계속, 시연 계정 버튼" width="200"> | <img src="docs/screenshots/phone-onboarding.jpg" alt="처음 설정 2/3단계: 등록한 차량 목록, 차량과 연결 또는 직접 등록 선택" width="200"> | <img src="docs/screenshots/phone-home.jpg" alt="휴대폰 홈: 차량 선택 칩, 인사말, 차량 정보·차량 예약·운행일지 확인·정보 내보내기 네 카드, 오늘·이달 위젯" width="200"> | <img src="docs/screenshots/phone-booking.jpg" alt="휴대폰 예약 탭: 차량 상태, 14일 날짜 띠, 오늘 시간표와 확정된 예약" width="200"> |
+| **예약 신청서** | **회사 차량 선택** | **설정 · 계정** | **운행** |
+| <img src="docs/screenshots/phone-booking-form.jpg" alt="예약 신청서: 시작·끝 시각, 목적, 목적지, 메모" width="200"> | <img src="docs/screenshots/phone-fleet.jpg" alt="회사 차량 시트: 등록 차량, 상태, 삭제, 차량 추가" width="200"> | <img src="docs/screenshots/phone-settings.jpg" alt="휴대폰 설정: 계정 카드와 로그아웃, 차량 연결, 카드 자동 연동" width="200"> | <img src="docs/screenshots/phone-trips.jpg" alt="휴대폰 운행 목록: 월 머리줄과 일별 운행" width="200"> |
+| **운행 상세** | **차량 정보** | **경비** | **현황** |
+| <img src="docs/screenshots/phone-trip-detail.jpg" alt="휴대폰 운행 상세: 계기판 거리, 목적 선택, 비용" width="200"> | <img src="docs/screenshots/phone-vehicle.jpg" alt="휴대폰 차량 정보: 차량 카드, 관리 기한, 정비, 특이사항" width="200"> | <img src="docs/screenshots/phone-expenses.jpg" alt="휴대폰 경비: 이달 경비와 카드 명세서 가져오기" width="200"> | <img src="docs/screenshots/phone-report.jpg" alt="휴대폰 현황: 이달 운행일지, 차량 관리, Excel 미리보기" width="200"> |
 
-- 휴대폰도 차량과 같은 남색 야경 테마입니다. 아래 유리 탭바(홈·운행·경비·현황)는 떠 있고, 머리줄과 배경은 화면을 옮겨도 그대로입니다.
-- 차량이 원본이고, 휴대폰에서 정한 목적·경비·특이사항은 암호화 연결로 차량에 ‘휴대폰’ 출처로 기록됩니다.
+- 휴대폰은 차량의 거울이 아니라 **원격 창구**입니다. 회사에 등록된 차량을 골라 상태를 보고, 빈 시간을 눌러 예약을 신청하고, 운행·경비를 확인합니다. 아래 유리 탭바는 홈·예약·운행·경비·현황 다섯 개입니다.
+- **Google 계정 로그인**으로 시작하고, 첫 로그인 때 ① 내 정보 ② 법인차량 등록(차량과 연결 또는 직접 등록) ③ 차량 직원 목록에서 나 고르기를 안내합니다. 로그아웃해도 등록한 차량과 기록 사본은 남고, 같은 계정으로 다시 들어오면 처음 설정을 건너뜁니다.
+- 차량이 원본이고, 휴대폰에서 정한 목적·경비·특이사항·예약은 암호화 연결로 차량에 ‘휴대폰’ 출처로 기록됩니다.
+
+versionCode 19. 2.9.0은 휴대폰을 **회사 차량 원격 관리 앱**으로 바꿨습니다. Google 계정 로그인·로그아웃과 첫 로그인 안내, 여러 회사 차량 등록과 전환, 차량 예약 신청·취소(차량이 겹침을 확정), 예약 시간의 자동 직원 전환과 목적 기록을 더했습니다. Google 로그인을 켜려면 Google Cloud에서 OAuth 클라이언트를 만들고(Android 클라이언트: 패키지 `ai.sharemate.app` + 서명 SHA-1, 그리고 웹 클라이언트) 웹 클라이언트 ID를 `local.properties`의 `sharemate.googleWebClientId`에 넣고 빌드합니다. ID가 없는 빌드에서는 Google 버튼이 꺼진 이유를 화면에 알리고, 디버그 빌드만 시연 계정을 제공합니다. 자세한 내용은 [CORPORATE_LOGBOOK.md](CORPORATE_LOGBOOK.md)의 2.9 절을 참고하세요.
 
 versionCode 18. 2.8.0은 차량 홈을 **야간 도시 대시보드**로 다시 만들었습니다. 도시 야경 히어로에 시계·기록 상태·인사말·운행 비서 검색창을 두고, **차량 정보 · 운행일지 확인 · 정보 내보내기** 세 버튼과 오늘 운행·이달 운행일지 위젯으로 구성합니다. 앱의 왼쪽 메뉴 막대는 없애고, 홈을 허브로, 다른 화면은 유리 탭 머리줄 하나로 오갑니다. 차량 앱은 남색 야간 팔레트로 고정했고, 앱이 앞에 있는 동안 상단 상태 표시줄을 숨겨 달라고 요청합니다. Pleos 에뮬레이터는 차량 시스템 UI가 상태 표시줄을 고정 관리해 이 요청을 받아들이지 않습니다. 자세한 내용은 [CORPORATE_LOGBOOK.md](CORPORATE_LOGBOOK.md)의 2.8 절을 참고하세요.
 

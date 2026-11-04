@@ -141,7 +141,8 @@ internal val PhoneUiStateSaver: Saver<PhoneUiState, Any> = listSaver(
     })
 
 internal enum class PhoneTab(val label: String, val icon: Int, val badgeLabel: String) {
-    HOME("홈", R.drawable.ic_dashboard, "할 일"), TRIPS("운행", R.drawable.ic_journal, "미분류"), EXPENSES("경비", R.drawable.ic_receipt, "확인 필요"), REPORT("현황", R.drawable.ic_report, "확인사항")
+    HOME("홈", R.drawable.ic_dashboard, "할 일"), BOOK("예약", R.drawable.ic_calendar, "예약"), TRIPS("운행", R.drawable.ic_journal, "미분류"),
+    EXPENSES("경비", R.drawable.ic_receipt, "확인 필요"), REPORT("현황", R.drawable.ic_report, "확인사항")
 }
 
 /** The trips the phone shows: the copy filtered to the car's current mode (real or demo). */
@@ -157,13 +158,13 @@ internal fun phoneHomeTasks(data: TripLogData): Int {
         (if (data.pendingCharge?.let { it.demo == demo } == true) 1 else 0) + phoneTrips(data).count { it.purpose == TripPurpose.UNCLASSIFIED && !it.open }
 }
 
-/** Tab badges, real counts only: home = tasks, trips = unclassified, expenses = card reviews, report = audit issues in the viewed month. */
+/** Tab badges in [PhoneTab] order, real counts only: home = tasks, booking = none (a booking needs no action), trips = unclassified, expenses = card reviews, report = audit issues in the viewed month. */
 internal fun phoneBadges(data: TripLogData, month: YearMonth, zone: ZoneId): List<Int> {
     val demo = data.profile.demoMode
     val trips = phoneTrips(data)
     val monthTrips = tripsIn(trips, month.atDay(1), month.atEndOfMonth(), zone)
     val ids = monthTrips.map { it.id }.toSet()
-    return listOf(phoneHomeTasks(data), trips.count { it.purpose == TripPurpose.UNCLASSIFIED && !it.open },
+    return listOf(phoneHomeTasks(data), 0, trips.count { it.purpose == TripPurpose.UNCLASSIFIED && !it.open },
         data.charges.count { it.state == ChargeState.REVIEW && it.demo == demo }, auditTrips(trips).count { it.tripId in ids })
 }
 
@@ -212,6 +213,9 @@ internal class PhoneExpensesArgs(val data: TripLogData, val month: YearMonth, va
 internal class PhoneReportArgs(val data: TripLogData, val month: YearMonth, val onMonth: (YearMonth) -> Unit, val employeeFilter: String?, val paired: Boolean,
     val busy: Boolean, val send: (SyncCommand) -> Unit, val onOpenTrip: (String) -> Unit, val onOpenEmployee: (String) -> Unit, val exportXlsx: suspend (List<Trip>, String) -> Unit)
 
+/** Arguments the shell hands to the 예약 tab (built by PhoneReservationsTab). */
+internal class PhoneBookingArgs(val data: TripLogData, val paired: Boolean, val connected: Boolean, val busy: Boolean, val now: Long, val send: (SyncCommand) -> Unit)
+
 /** What the activity owns and the shell borrows: the sync client, the launchers, and the two tabs built elsewhere. */
 internal class PhoneHost(
     val repository: TripLogRepository,
@@ -228,6 +232,12 @@ internal class PhoneHost(
     val reportTab: @Composable (PhoneReportArgs) -> Unit,
     /** The local assistant sheet, when wired: receives close and open-trip callbacks. Null hides the 도우미 button. */
     val assistant: (@Composable (onClose: () -> Unit, onOpenTrip: (String) -> Unit) -> Unit)? = null,
+    /** The 예약 tab body. */
+    val bookingTab: @Composable (PhoneBookingArgs) -> Unit = { PhoneEmpty("예약", detail = "차량과 연결하면 예약할 수 있어요") },
+    /** The company-vehicle picker shown at the head of every tab; null keeps the plain brand line. */
+    val vehicleSwitcher: (@Composable () -> Unit)? = null,
+    /** The signed-in account card at the top of 설정. */
+    val accountCard: (@Composable () -> Unit)? = null,
 )
 
 /** Actions the shell exposes to its tabs; each sends a command, remembers it as pending where a row can show it, and offers undo. */
@@ -239,6 +249,8 @@ internal class PhoneCommands(
     val openTrip: (String) -> Unit,
     val openSettings: () -> Unit,
     val openTab: (Int) -> Unit,
+    /** Opens 현황 on [YearMonth], so a card or widget that names a month lands on that month. */
+    val openReport: (YearMonth) -> Unit = {},
 )
 
 private data class RouteFrame(val route: PhoneRoute, val depth: Int)
@@ -304,7 +316,8 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
     }
     var driverFor by remember { mutableStateOf<List<String>?>(null) }
     val commands = PhoneCommands(send, classify, classifyMany, pickDriver = { driverFor = it }, openTrip = { ui = ui.push(PhoneRoute.TripDetail(it)) },
-            openSettings = { ui = ui.push(PhoneRoute.Settings) }, openTab = { ui = ui.copy(tab = it.coerceIn(0, 3), routes = emptyList()) })
+            openSettings = { ui = ui.push(PhoneRoute.Settings) }, openTab = { ui = ui.copy(tab = it.coerceIn(0, PhoneTab.entries.lastIndex), routes = emptyList()) },
+            openReport = { ui = ui.copy(tab = PhoneTab.REPORT.ordinal, month = it.toString(), routes = emptyList()) })
 
     // The mirror settles what the phone sent: drop what matches, say so when the car chose differently, forget what went stale.
     LaunchedEffect(state.dataRevision, ui.pendingEdits.size) {
@@ -372,28 +385,30 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
                     }) { frame ->
                         when (val route = frame.route) {
                             PhoneRoute.Settings -> PhoneSettingsPage(data, link, paired, busy, host.pair, host.unpair, cardAlerts, queued, host.openAlertSettings,
-                                host.importStatement, host.pickFile, onBack = { ui = ui.pop() })
+                                host.importStatement, host.pickFile, onBack = { ui = ui.pop() }, accountSlot = { host.accountCard?.invoke() })
                             is PhoneRoute.TripDetail -> PhoneTripDetailScreen(route.id, data, paired, busy, send, onBack = { ui = ui.pop() },
                                 onPickDriver = { driverFor = listOf(route.id) }, pendingEdit = ui.pendingEdits[route.id], classify = classify)
                             is PhoneRoute.Employee -> PhoneEmployeeScreen(route.id, data, paired, busy, now, ui.pendingEdits, commands, onBack = { ui = ui.pop() })
-                            PhoneRoute.Vehicle -> PhoneVehicleScreen(data, now, onBack = { ui = ui.pop() })
+                            PhoneRoute.Vehicle -> PhoneVehicleScreen(data, link, now, onBack = { ui = ui.pop() })
                             PhoneRoute.Tab -> Column(Modifier.fillMaxSize()) {
-                                PhoneHeader(data, link, paired, hasAssistant = host.assistant != null, onAssistant = { assistantOpen = true }, onSettings = { ui = ui.push(PhoneRoute.Settings) })
+                                PhoneHeader(data, link, paired, hasAssistant = host.assistant != null, onAssistant = { assistantOpen = true }, onSettings = { ui = ui.push(PhoneRoute.Settings) },
+                                    vehicleSwitcher = host.vehicleSwitcher)
                                 PhoneBanner(offline && !ui.dismissedBanners.contains("offline"),
                                     "차량과 연결되지 않아요" + (lastSeen?.let { " · 마지막 수신 $it" } ?: "") + " · 보던 사본을 보여 주고 있어요",
                                     Modifier.padding(horizontal = 20.dp, vertical = 4.dp), onDismiss = { ui = ui.copy(dismissedBanners = ui.dismissedBanners + "offline") })
                                 if (!hasLog) PhoneConnectScreen(state, link, paired, busy, host.pair, host.pickFile, Modifier.weight(1f))
                                 else {
-                                    if (ui.tab == 1 || ui.tab == 2) PhoneEmployeeChips(data, ui.employeeFilter) { ui = ui.copy(employeeFilter = it) }
+                                    if (ui.tab == PhoneTab.TRIPS.ordinal || ui.tab == PhoneTab.EXPENSES.ordinal) PhoneEmployeeChips(data, ui.employeeFilter) { ui = ui.copy(employeeFilter = it) }
                                     AnimatedContent(targetState = ui.tab, modifier = Modifier.weight(1f).fillMaxWidth(), transitionSpec = { if (targetState > initialState) swapForward else swapBack }, label = "phone-tab") { tab ->
                                         pageStates.SaveableStateProvider(tab) {
-                                            val pullable = tab != 3
+                                            val pullable = tab != PhoneTab.REPORT.ordinal && tab != PhoneTab.BOOK.ordinal
                                             val body: @Composable () -> Unit = {
                                                 when (tab) {
                                                     0 -> PhoneHomeTab(data, link, paired, busy, now, host.repository.photos, photoVersion, host.capture, host.fetchPhoto, commands, ui.pendingEdits,
                                                         onVehicle = { ui = ui.push(PhoneRoute.Vehicle) })
-                                                    1 -> PhoneTripList(data, ui.employeeFilter, paired, busy, now, ui.pendingEdits, commands, Modifier.fillMaxSize())
-                                                    2 -> host.expensesTab(PhoneExpensesArgs(data, month, ui.employeeFilter, paired, busy, send, cardAlerts, queued, host.openAlertSettings, zone))
+                                                    PhoneTab.BOOK.ordinal -> host.bookingTab(PhoneBookingArgs(data, paired, link.connected, busy, now, send))
+                                                    PhoneTab.TRIPS.ordinal -> PhoneTripList(data, ui.employeeFilter, paired, busy, now, ui.pendingEdits, commands, Modifier.fillMaxSize())
+                                                    PhoneTab.EXPENSES.ordinal -> host.expensesTab(PhoneExpensesArgs(data, month, ui.employeeFilter, paired, busy, send, cardAlerts, queued, host.openAlertSettings, zone))
                                                     else -> host.reportTab(PhoneReportArgs(data, month, { ui = ui.copy(month = it.toString()) }, ui.employeeFilter, paired, busy, send,
                                                         commands.openTrip, { ui = ui.push(PhoneRoute.Employee(it)) }, host.exportXlsx))
                                                 }
@@ -422,25 +437,26 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
     if (assistantOpen) host.assistant?.invoke({ assistantOpen = false }, { id -> assistantOpen = false; ui = ui.push(PhoneRoute.TripDetail(id)) })
 }
 
-/** Brand on the left, the link badge and the two header actions on the right. Replaces the permanent status line. */
-@Composable private fun PhoneHeader(data: TripLogData, link: PhoneLink, paired: Boolean, hasAssistant: Boolean, onAssistant: () -> Unit, onSettings: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = null, tint = Midnight.brand, modifier = Modifier.size(34.dp))
-        Column(Modifier.weight(1f).semantics(mergeDescendants = true) { heading() }) {
-            Text("SHAREMATE", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, maxLines = 1, softWrap = false)
-            Text(if (data.trips.isEmpty() && data.open == null) "법인차 운행 · 경비" else listOf(data.profile.plateNumber.ifBlank { "차량번호 미입력" }, data.profile.companyName)
-                .filter { it.isNotBlank() }.joinToString(" · ") + if (data.profile.demoMode) " · 시연" else "",
-                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        if (paired) PhoneLinkBadge(link)
-        else Surface(shape = RoundedCornerShape(50), color = Midnight.glass, border = Midnight.edge) {
-            Text("파일 사본", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
-        }
-        if (hasAssistant) Surface(onClick = onAssistant, shape = RoundedCornerShape(50), color = Midnight.glass, border = Midnight.edge,
-            modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "운행 비서 열기" }) {
-            Row(Modifier.heightIn(min = 48.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Icon(painterResource(R.drawable.ic_search), null, Modifier.size(18.dp)); Text("비서", style = MaterialTheme.typography.labelLarge)
+/**
+ * The phone header on every tab: the brand mark, then the company-vehicle switcher (plate and live status, opens the fleet
+ * sheet) where the brand text used to be cut off, then icon buttons for the assistant and settings.
+ */
+@Composable private fun PhoneHeader(data: TripLogData, link: PhoneLink, paired: Boolean, hasAssistant: Boolean, onAssistant: () -> Unit, onSettings: () -> Unit,
+    vehicleSwitcher: (@Composable () -> Unit)? = null) {
+    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 6.dp, top = 10.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = "SHAREMATE", tint = Midnight.brand, modifier = Modifier.size(30.dp))
+        if (vehicleSwitcher != null) Box(Modifier.weight(1f)) { vehicleSwitcher() }
+        else {
+            Column(Modifier.weight(1f).semantics(mergeDescendants = true) { heading() }) {
+                Text("SHAREMATE", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, maxLines = 1, softWrap = false)
+                Text(listOf(data.profile.plateNumber.ifBlank { "차량번호 미입력" }, data.profile.companyName).filter { it.isNotBlank() }.joinToString(" · ") +
+                    if (data.profile.demoMode) " · 시연" else "", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+            if (paired) PhoneLinkBadge(link)
+        }
+        if (hasAssistant) IconButton(onClick = onAssistant, modifier = Modifier.size(48.dp)) {
+            Icon(painterResource(R.drawable.ic_search), contentDescription = "운행 비서 열기", modifier = Modifier.size(24.dp))
         }
         IconButton(onClick = onSettings, modifier = Modifier.size(48.dp)) { Icon(painterResource(R.drawable.ic_tune), contentDescription = "설정", modifier = Modifier.size(24.dp)) }
     }
