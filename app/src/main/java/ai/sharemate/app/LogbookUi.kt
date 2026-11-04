@@ -28,6 +28,7 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -152,8 +153,17 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     var pickingDriver by remember { mutableStateOf(false) }
     var tutorial by rememberSaveable { mutableStateOf(false) }
     var expenseTripId by rememberSaveable { mutableStateOf<String?>(null) }
-    // 0 = 전체, 1 = 점검 필요; set by "정리하러 가기" so the log opens on what needs attention.
+    // 0 = 전체, 1 = 점검 필요, 2 = 자동 반영; with logMonth, set by every button that opens the log on something specific.
     var logFilter by rememberSaveable { mutableIntStateOf(0) }
+    var logMonth by rememberSaveable { mutableStateOf<String?>(null) }
+    // The day keys on which the driver already answered "오늘도 … 님이 운전하나요?"; one set for the hero and the top bar.
+    var driverConfirmed by rememberSaveable { mutableStateOf("") }
+    // The log page keeps its own filter, month and selection while the driver browses; a button that opens it on something
+    // specific drops that saved state first, so the list shows what the button promised.
+    val goLog: (Int, YearMonth?, String?) -> Unit = { filter, month, tripId ->
+        pageStates.removeState(1)
+        logFilter = filter; logMonth = month?.toString(); expenseTripId = tripId; tab = 1
+    }
     // The local assistant: rules over the real log, standing in for Gleo until the voice integration is approved.
     var assistant by rememberSaveable { mutableStateOf(false) }
     var assistantText by rememberSaveable { mutableStateOf<String?>(null) }
@@ -253,33 +263,39 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
             }
         }
     }
-    SharemateTheme {
+    // 2.8: the car always uses the Midnight (navy) palette, as the home hero is a night scene; every pane was already
+    // checked for contrast in the dark scheme, and the day/night switch of the vehicle no longer flips the app.
+    SharemateTheme(dark = true) {
       CompositionLocalProvider(LocalFollowUp provides followUp) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
                 val wide = maxWidth >= 1100.dp
                 val gutter = if (wide) 32.dp else 20.dp
-                Column(Modifier.fillMaxSize()) {
-                    if (!blocked && state.loaded) {
+                // The home hero carries its own clock, status, employee and tutorial chips; other panes keep the top bar.
+                val driverRow: @Composable (Modifier) -> Unit = { modifier ->
+                    DriverConfirmRow(state, now, openDriver, driverConfirmed, { driverConfirmed = it }, modifier)
+                }
+                val bar: @Composable () -> Unit = {
+                    if (tab != 0) {
                         TopBar(state, now, wide, gutter, { openDriver(null) }, { tutorial = true }) { assistant = true }
-                        DriverConfirmRow(state, now, openDriver, Modifier.padding(horizontal = gutter))
+                        driverRow(Modifier.padding(horizontal = gutter))
                     }
+                }
+                val openLog: (Int, YearMonth?) -> Unit = { filter, month -> goLog(filter, month, null) }
+                Column(Modifier.fillMaxSize()) {
                     when {
                         blocked -> DrivingOverview(state, now, driving.available, Modifier.weight(1f))
                         !state.loaded -> SharemateSplash(Modifier.weight(1f))
                         else -> {
                             val body: @Composable (Modifier) -> Unit = { modifier ->
-                                Crossfade(targetState = tab, modifier = modifier.padding(start = gutter, end = gutter, top = 8.dp, bottom = 20.dp),
+                                Crossfade(targetState = tab, modifier = modifier.padding(start = gutter, end = gutter, top = if (tab == 0) 20.dp else 8.dp, bottom = 20.dp),
                                     animationSpec = pageFade(), label = "parked-page") { page ->
                                   pageStates.SaveableStateProvider(page) {
                                     when (page) {
-                                        0 -> DrivePane(state, now, wide, act, repository, openDriver, requestPermissions, { tab = 4 }, { tab = it }, { assistant = true },
-                                            snoozes, bannerCharges, { bannerCharges = it }, { logFilter = 2; expenseTripId = null; tab = 1 }) {
-                                            expenseTripId = state.data.trips.maxByOrNull { it.startAt }?.id
-                                            tab = 1
-                                        }
-                                        1 -> LogPane(state, now, wide, act, repository, openDriver, expenseTripId, logFilter)
-                                        2 -> ReportPane(state, now, wide, pendingExportName != null, export, act, repository, { tab = 4 }, { tab = 0 }) { logFilter = 1; expenseTripId = null; tab = 1 }
+                                        0 -> DrivePane(state, now, wide, act, repository, openDriver, requestPermissions, { tab = 4 }, { tab = it }, openLog,
+                                            { assistant = true }, { tutorial = true }, snoozes, driverRow, bannerCharges, { bannerCharges = it })
+                                        1 -> LogPane(state, now, wide, act, repository, openDriver, expenseTripId, logFilter, logMonth)
+                                        2 -> ReportPane(state, now, wide, pendingExportName != null, export, act, repository, { tab = 4 }, { tab = 0 }) { month -> openLog(1, month) }
                                         3 -> VehiclePane(state, now, act, repository, goSettings = { tab = 4 })
                                         // Saved-settings confirmations ride the bar; a modal is kept for text the driver must read, such as a file path.
                                         else -> SettingsPane(state, wide, act, repository, { tutorial = true }, { phrase -> assistantText = phrase; assistant = true }) { text -> if (text.contains('\n')) info = text else followUp(FollowUp(text)) }
@@ -290,10 +306,15 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                             val labels = listOf("홈", "운행기록", "월간·Excel", "차량", "설정")
                             val closeIssues = (monthCloseTarget(state.data, localDate(now), zone) ?: monthStatus(state.data, YearMonth.from(localDate(now)), zone)).issues
                             val homeTasks = parkedTasks(state.data, state.sync, now, zone, snoozes.value)
-                            val badges = listOf(parkedTaskBadge(homeTasks), state.data.trips.count { it.purpose == TripPurpose.UNCLASSIFIED }, closeIssues, openIncidents(state.data).size, 0)
-                            if (wide) Row(Modifier.weight(1f)) { NavRail(labels, badges, tab) { tab = it }; body(Modifier.weight(1f).fillMaxHeight()) }
-                            else Column(Modifier.weight(1f)) {
-                                Segmented(listOf("홈", "기록", "Excel", "차량", "설정"), tab, Modifier.padding(horizontal = gutter).padding(bottom = 8.dp)) { tab = it }
+                            // The 운행기록 badge is the 점검 필요 count of this month, the same number the home card and the list show.
+                            val reviewCount = remember(state.data.trips, YearMonth.from(localDate(now))) { logReview(state.data, YearMonth.from(localDate(now)), zone).issues }
+                            val badges = listOf(parkedTaskBadge(homeTasks), reviewCount, closeIssues, openIncidents(state.data).size, 0)
+                            if (wide) Row(Modifier.weight(1f)) {
+                                NavRail(labels, badges, tab) { tab = it }
+                                Column(Modifier.weight(1f).fillMaxHeight()) { bar(); body(Modifier.weight(1f).fillMaxWidth()) }
+                            } else Column(Modifier.weight(1f)) {
+                                bar()
+                                Segmented(listOf("홈", "기록", "Excel", "차량", "설정"), tab, Modifier.padding(horizontal = gutter).padding(top = 12.dp, bottom = 8.dp)) { tab = it }
                                 body(Modifier.weight(1f).fillMaxWidth())
                             }
                         }
@@ -307,7 +328,11 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
       }
         if (pickingDriver && !blocked) DriverPicker(state.data, driverFor, act, repository, { pickingDriver = false }) { pickingDriver = false; tab = 4 }
         AssistantSheet(open = assistant && !blocked && state.loaded, onDismiss = { assistant = false; assistantText = null }, data = state.data, now = now,
-            writer = assistantWriter, act = act, followUp = followUp, onOpenTrip = { tripId -> assistant = false; expenseTripId = tripId; tab = 1 },
+            writer = assistantWriter, act = act, followUp = followUp, onOpenTrip = { tripId ->
+                assistant = false
+                val trip = state.data.trips.firstOrNull { it.id == tripId }
+                goLog(0, trip?.let { YearMonth.from(Instant.ofEpochMilli(it.startAt).atZone(zone)) }, tripId)
+            },
             compact = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.width.toDp() } < 1100.dp, initialText = assistantText)
         if (tutorial && !blocked) DemoTutorial(pendingExportName != null, export) { tutorial = false }
         val message = error ?: state.error
@@ -396,22 +421,37 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     }
 }
 
+/** The left dock: brand mark, then five tabs; the active one glows cyan so it reads at a glance from the driver's seat. */
 @Composable private fun NavRail(labels: List<String>, badges: List<Int>, selected: Int, onSelect: (Int) -> Unit) {
-    val colors = MaterialTheme.colorScheme
     val icons = listOf(R.drawable.ic_dashboard, R.drawable.ic_journal, R.drawable.ic_report, R.drawable.ic_vehicle, R.drawable.ic_tune)
-    Column(Modifier.width(128.dp).fillMaxHeight().padding(start = 20.dp, top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.width(132.dp).fillMaxHeight().background(Midnight.rail).drawBehind {
+            drawLine(Color.White.copy(alpha = .06f), Offset(size.width, 0f), Offset(size.width, size.height), strokeWidth = 1.5f)
+        }.padding(horizontal = 14.dp, vertical = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = "SHAREMATE", tint = Color(0xFFE4BFA6),
+            modifier = Modifier.size(60.dp).padding(bottom = 4.dp))
+        Spacer(Modifier.height(8.dp))
         labels.forEachIndexed { index, label ->
             val active = index == selected
-            Box(Modifier.fillMaxWidth().heightIn(min = 104.dp).clip(RoundedCornerShape(22.dp))
-                .background(if (active) colors.primary else Color.Transparent)
-                .semantics { this.selected = active; role = Role.Tab }.clickable { onSelect(index) }, contentAlignment = Alignment.Center) {
+            val tint = if (active) Midnight.glow else Midnight.textMuted
+            Box(Modifier.fillMaxWidth().heightIn(min = 100.dp).clip(RoundedCornerShape(22.dp))
+                .background(if (active) Midnight.glow.copy(alpha = .10f) else Color.Transparent)
+                .then(if (active) Modifier.drawBehind {
+                    drawCircle(Brush.radialGradient(listOf(Midnight.glow.copy(alpha = .30f), Color.Transparent), center = Offset(size.width / 2, size.height * .38f),
+                        radius = size.width * .46f), radius = size.width * .46f, center = Offset(size.width / 2, size.height * .38f))
+                } else Modifier)
+                .clickable { onSelect(index) }
+                .clearAndSetSemantics {
+                    this.selected = active; role = Role.Tab
+                    contentDescription = if (badges[index] > 0) "$label, 확인 필요 ${badges[index]}건" else label
+                }, contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(painterResource(icons[index]), contentDescription = null, modifier = Modifier.size(28.dp), tint = if (active) colors.onPrimary else colors.onSurfaceVariant)
-                    Text(label, style = MaterialTheme.typography.labelLarge, color = if (active) colors.onPrimary else colors.onSurfaceVariant)
+                    Icon(painterResource(icons[index]), contentDescription = null, modifier = Modifier.size(32.dp), tint = tint)
+                    Text(label, style = MaterialTheme.typography.labelLarge, color = tint, maxLines = 1)
                 }
-                if (badges[index] > 0) Box(Modifier.align(Alignment.TopEnd).padding(8.dp).size(24.dp).clip(CircleShape).background(colors.errorContainer)
-                    .semantics { contentDescription = "확인 필요 ${badges[index]}건" }, contentAlignment = Alignment.Center) {
-                    Text("${badges[index].coerceAtMost(99)}", style = MaterialTheme.typography.labelSmall, color = colors.onErrorContainer)
+                if (badges[index] > 0) Box(Modifier.align(Alignment.TopEnd).padding(8.dp).heightIn(min = 24.dp).widthIn(min = 24.dp).clip(CircleShape)
+                    .background(Midnight.badge).padding(horizontal = 6.dp), contentAlignment = Alignment.Center) {
+                    Text("${badges[index].coerceAtMost(99)}", style = MaterialTheme.typography.labelSmall, color = Color.White, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -502,19 +542,25 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 
 // ───────────────────────── 운행 ─────────────────────────
 
+/**
+ * The car home (2.8): a night-city hero with the greeting, the assistant entry and three destinations
+ * (차량 정보 · 운행일지 확인 · 정보 내보내기); under it whatever the car is waiting on, one card at a time in the order the
+ * moment demands (safety, then money the car measured, then paperwork, then the manager's deadlines); then today and
+ * this month as two widgets, and the one-tap incident row.
+ */
 @Composable private fun DrivePane(state: TripLogState, now: Long, wide: Boolean, act: Act, repository: TripLogRepository,
-    openDriver: (String?) -> Unit, requestPermissions: () -> Unit, goSettings: () -> Unit, navigate: (Int) -> Unit, assistant: () -> Unit = {},
-    snoozes: MutableState<Set<String>>, banner: List<CardCharge> = emptyList(), onBanner: (List<CardCharge>) -> Unit = {}, showMatched: () -> Unit = {}, expense: () -> Unit) {
+    openDriver: (String?) -> Unit, requestPermissions: () -> Unit, goSettings: () -> Unit, navigate: (Int) -> Unit, openLog: (Int, YearMonth?) -> Unit,
+    assistant: () -> Unit, tutorial: () -> Unit, snoozes: MutableState<Set<String>>, driverRow: @Composable (Modifier) -> Unit,
+    banner: List<CardCharge> = emptyList(), onBanner: (List<CardCharge>) -> Unit = {}) {
     val data = state.data
-    // One card at a time, in the order the moment demands: safety, then money the car already measured, then paperwork,
-    // then the manager's deadlines (month close, care). The stack owns the order; the card-feed wait is shared with the strip.
+    val today = localDate(now)
     val prompt = rememberChargePrompt(data)
-    val taskStack: @Composable (Boolean) -> Unit = { showAllDone ->
+    val taskStack: @Composable () -> Unit = {
         ParkedTaskStack(state, now, wide, blocked = false, act, repository, openDriver, goSettings,
-            chargePrompt = prompt.value, onWaitForCard = { prompt.value = ChargePrompt.WAIT }, snoozedCare = snoozes.value, showAllDone = showAllDone) { task ->
+            chargePrompt = prompt.value, onWaitForCard = { prompt.value = ChargePrompt.WAIT }, snoozedCare = snoozes.value, showAllDone = false) { task ->
             when (task.kind) {
-                TaskKind.MONTH_CLOSE -> monthCloseTarget(data, localDate(now), zone)?.let {
-                    MonthCloseCard(it, onIssues = { navigate(1) }, onReviews = { navigate(0) }, onExport = { navigate(2) }, exporting = false, act = act, repository = repository)
+                TaskKind.MONTH_CLOSE -> monthCloseTarget(data, today, zone)?.let {
+                    MonthCloseCard(it, onIssues = { openLog(1, it.month) }, onReviews = { navigate(0) }, onExport = { navigate(2) }, exporting = false, act = act, repository = repository)
                 }
                 TaskKind.CARE -> CareDueTask(state, now, act, repository, snoozed = snoozes.value, onSnoozed = { snoozes.value = it })
                 else -> {}
@@ -523,131 +569,51 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     }
     // The month-close banner is a reminder for when the card is not on screen; while the stack shows the card itself, one is enough.
     val closeCardShown = parkedTasks(data, state.sync, now, zone, snoozes.value, prompt.value).firstOrNull()?.kind == TaskKind.MONTH_CLOSE
-    val hero: @Composable (Boolean) -> Unit = { compact ->
-        StatusHero(state, now, compact, requestPermissions) { act { repository.ingestCardEvents(listOf(demoCardApproval(repository.state.value.data, System.currentTimeMillis()))) } }
-        MatchedBanner(banner, onShow = { onBanner(emptyList()); showMatched() }, onDismiss = { onBanner(emptyList()) })
-        if (!closeCardShown) MonthCloseBannerHost(data, now, onOpen = { navigate(2) })
+    val live = state.live?.takeIf { it.demo == data.profile.demoMode }
+    val (odometer, odometerLive) = careOdometer(state, now)
+    val soc = live?.socPercent ?: data.vehicle.socPercent
+    // The clock recomposes this pane every second; the card lines only change with the data, the readings and the day.
+    val lines = remember(data, soc, odometer, odometerLive, today, snoozes.value) { homeCardLines(data, soc, odometer, odometerLive, today, zone, snoozes.value) }
+    val cards = listOf(
+        HomeCardSpec("차량 정보", lines.vehicle, R.drawable.ic_vehicle, 0) { navigate(3) },
+        HomeCardSpec("운행일지 확인", lines.log, R.drawable.ic_journal, lines.logPending) { openLog(if (lines.logPending > 0) 1 else 0, YearMonth.from(today)) },
+        HomeCardSpec("정보 내보내기", lines.export, R.drawable.ic_export, 0) { navigate(2) },
+    )
+    // The tutorial is for a car that has not recorded anything yet; once real trips exist it stays reachable from settings.
+    val showTutorial = data.trips.none { !it.demo }
+    val demoControls: @Composable () -> Unit = {
+        if (data.profile.demoMode) DemoControls { act { repository.ingestCardEvents(listOf(demoCardApproval(repository.state.value.data, System.currentTimeMillis()))) } }
     }
-    if (wide) Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-            Column(Modifier.weight(1.12f), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                hero(false)
-                IncidentQuickRow(data, act, repository)
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val heroHeight = (maxHeight * .72f).coerceIn(460.dp, 660.dp)
+        val compactHero = maxWidth < 760.dp
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            HomeHero(state, now, compactHero, heroHeight, showTutorial, { openDriver(null) }, tutorial, assistant, requestPermissions, demoControls, cards) {
+                driverRow(Modifier)
             }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                taskStack(true)
-                HomeActions(data, navigate, assistant, expense)
+            MatchedBanner(banner, onShow = { onBanner(emptyList()); openLog(2, YearMonth.from(today)) }, onDismiss = { onBanner(emptyList()) })
+            if (!closeCardShown) MonthCloseBannerHost(data, now, onOpen = { navigate(2) })
+            taskStack()
+            HomeWidgets(state, now) { navigate(2) }
+            // A charge whose card approval is still on its way: the strip says so and offers to type it now.
+            hiddenPendingCharge(data, now, prompt.value)?.let { waiting ->
+                AutopilotStrip(data, now, waiting = waiting, waitingPrompt = prompt.value, onEnterNow = { prompt.value = ChargePrompt.NOW })
             }
-        }
-        MonthCard(data, now)
-    } else Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        hero(true)
-        taskStack(false)
-        AutopilotStrip(data, now, waiting = hiddenPendingCharge(data, now, prompt.value), waitingPrompt = prompt.value, onEnterNow = { prompt.value = ChargePrompt.NOW })
-        IncidentQuickRow(data, act, repository)
-        Panel(padding = 22.dp) {
-            val today = localDate(now)
-            val totals = logbookTotals(tripsIn(data.trips, today.withDayOfMonth(1), today, zone))
-            Eyebrow("${today.monthValue}월 요약 · ${totals.trips}건")
-            Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                Stat("업무 거리", kmText(totals.businessKm), Modifier.weight(1f))
-                Stat("등록 경비", formatWon(totals.expenseWon), Modifier.weight(1f))
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                QuietAction("경비 등록", Modifier.weight(1f), enabled = data.trips.isNotEmpty(), onClick = expense)
-                PrimaryAction("Excel 보기", Modifier.weight(1f)) { navigate(2) }
-            }
+            IncidentQuickRow(data, act, repository)
         }
     }
 }
 
-@Composable private fun HomeActions(data: TripLogData, navigate: (Int) -> Unit, assistant: () -> Unit, expense: () -> Unit) {
-    Panel {
-        Eyebrow("빠른 관리")
-        HomeActionRow("운행기록", "직원별 이동 내역", R.drawable.ic_journal) { navigate(1) }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        HomeActionRow("경비 등록", "최근 운행에 연결", R.drawable.ic_receipt, data.trips.isNotEmpty(), expense)
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        HomeActionRow("운행 비서", "말하듯 적어 목적 기록 · 비용 추가 · 요약", R.drawable.ic_journal, onClick = assistant)
-        PrimaryAction("월간 현황 · Excel 내보내기", Modifier.fillMaxWidth()) { navigate(2) }
-    }
-}
-
-@Composable internal fun HomeActionRow(title: String, subtitle: String, icon: Int, enabled: Boolean = true, onClick: () -> Unit) {
-    val colors = MaterialTheme.colorScheme
-    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-        .heightIn(min = 72.dp).padding(horizontal = 4.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-        Icon(painterResource(icon), null, Modifier.size(28.dp), tint = colors.onSurfaceVariant)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, color = if (enabled) colors.onSurface else colors.onSurfaceVariant)
-            Text(if (enabled) subtitle else "첫 운행을 마친 뒤 등록", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
-        }
-        Text("›", style = MaterialTheme.typography.headlineSmall, color = colors.onSurfaceVariant, modifier = Modifier.clearAndSetSemantics {})
-    }
-}
-
-@Composable private fun StatusHero(state: TripLogState, now: Long, compact: Boolean, requestPermissions: () -> Unit, demoCard: () -> Unit) {
-    val demo = state.data.profile.demoMode
-    val open = state.data.open?.takeIf { it.demo == demo }
-    val today = localDate(now)
-    val overview = drivingOverviewInfo(state, now, true, zone)
+/** Presenter controls while demo mode is on: drive/park at 15x, a charge, and a card approval. */
+@Composable private fun DemoControls(demoCard: () -> Unit) {
     val moving by DemoDrive.moving.collectAsState()
     val charging by DemoDrive.charging.collectAsState()
-    SharemateTheme(dark = true) {
-    val pleos = LocalPleosColors.current
-    Surface(shape = RoundedCornerShape(24.dp), color = Color(0xFF1D1E21), border = BorderStroke(1.dp, Color.White.copy(alpha = .08f))) {
-    Column(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(Color(0xFF29282A), Color(0xFF17181B))))
-        .padding(if (compact) 24.dp else 32.dp), verticalArrangement = Arrangement.spacedBy(if (compact) 16.dp else 22.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Eyebrow("FLEET JOURNAL", Color(0xFFE4BFA6))
-            Spacer(Modifier.weight(1f))
-            Text(if (demo) "시연 데이터" else "차량 데이터", style = MaterialTheme.typography.labelMedium, color = Color(0xFFC7C9CE))
-        }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Box(Modifier.size(14.dp).clip(CircleShape).background(if (overview.fresh) pleos.active.copy(alpha = if (open != null) 1f else .5f) else pleos.negative))
-            Text(overview.status, style = MaterialTheme.typography.titleLarge)
-        }
-        VehicleChips(state, Modifier.horizontalScroll(rememberScrollState()))
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Column(Modifier.weight(1.1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Eyebrow(if (open != null) "이번 운행" else "오늘 주행거리")
-                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text((overview.currentKm ?: overview.todayKm)?.let { String.format(Locale.KOREA, "%,.1f", it) } ?: "—",
-                        style = (if (compact) scaledDisplay(MaterialTheme.typography.displayMedium, MaterialTheme.typography.displaySmall)
-                            else scaledDisplay(MaterialTheme.typography.displayLarge, MaterialTheme.typography.displayMedium)).copy(fontFeatureSettings = "tnum"), maxLines = 1)
-                    Text("km", style = MaterialTheme.typography.titleMedium, color = Color(0xFFC7C9CE), modifier = Modifier.padding(bottom = 10.dp))
-                }
-                Muted(if (open != null) "${hm(open.startAt)} 출발 · ${durationText(now - open.startAt)}" else dayLabel(today))
-            }
-            if (!compact) VehicleDrawing(Modifier.weight(1.1f).height(234.dp))
-        }
-        HorizontalDivider(color = pleos.surfaceHigh)
-        Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-            Stat("계기판 누적", state.live?.odometerKm?.takeIf { overview.fresh }?.let(::kmText) ?: "확인 필요", Modifier.weight(1.4f))
-            Stat("오늘 완료 운행", "${tripsIn(state.data.trips, today, today, zone).size}건", Modifier.weight(1f))
-        }
-        // The demo line stays while driving so the buttons below it never move under the presenter's finger.
-        if (open == null || demo) {
-            Muted(when {
-                demo -> "시연 주행은 15배속으로 기록되고 ‘시연 데이터’로 구분돼요."
-                state.signal == SignalStatus.READY -> "출발하면 자동 기록, 주차하면 저장돼요."
-                state.signal == SignalStatus.DENIED -> "계기판 누적거리를 읽으려면 차량 정보 권한이 필요해요."
-                state.signal == SignalStatus.STARTING -> "차량과 연결하고 있어요."
-                else -> "차량 데이터를 받을 수 없어요. 연결 상태를 확인해 주세요."
-            })
-        }
-        if (state.signal == SignalStatus.DENIED) PrimaryAction("차량 정보 권한 허용", onClick = requestPermissions)
-        if (demo) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            PrimaryAction(if (moving) "시연 주차 (P)" else "시연 출발 (D)", Modifier.weight(1.3f)) { DemoDrive.setMoving(!moving) }
-            QuietAction(if (charging) "충전 종료" else "충전 시작", Modifier.weight(1f), enabled = !moving) { DemoDrive.setCharging(!charging) }
-            QuietAction("카드 승인", Modifier.weight(1f), onClick = demoCard)
-        }
-    }
-    }
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        PrimaryAction(if (moving) "시연 주차 (P)" else "시연 출발 (D)", Modifier.weight(1.3f)) { DemoDrive.setMoving(!moving) }
+        QuietAction(if (charging) "충전 종료" else "충전 시작", Modifier.weight(1f), enabled = !moving) { DemoDrive.setCharging(!charging) }
+        QuietAction("카드 승인", Modifier.weight(1f), onClick = demoCard)
     }
 }
-
 
 @Composable internal fun PurposeTile(purpose: TripPurpose, modifier: Modifier, selected: Boolean = false, onClick: () -> Unit) {
     val color = purposeColor(purpose)
@@ -704,44 +670,13 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     }
 }
 
-@Composable internal fun MonthCard(data: TripLogData, now: Long) {
-    val today = localDate(now)
-    val trips = tripsIn(data.trips, today.withDayOfMonth(1), today, zone)
-    val totals = logbookTotals(trips)
-    Panel {
-        AutopilotStrip(data, now)
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Eyebrow("${today.monthValue}월 한눈에 보기")
-            Spacer(Modifier.weight(1f))
-            Text("${totals.trips}건 · 직원 ${trips.mapNotNull { it.driverId }.distinct().size}명", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        BoxWithConstraints(Modifier.fillMaxWidth()) {
-            val diameter = if (maxWidth < 450.dp) 112.dp else 140.dp
-            if (maxWidth >= 900.dp) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(40.dp)) {
-                RatioRing(totals.ratio, 140.dp, "업무사용비율")
-                Stat("총주행 거리", kmText(totals.totalKm), Modifier.weight(1f), large = true)
-                Stat("업무용 거리", kmText(totals.businessKm), Modifier.weight(1f), valueColor = MaterialTheme.colorScheme.onTertiaryContainer, large = true)
-                Stat("등록 경비", formatWon(totals.expenseWon), Modifier.weight(1f), large = true)
-            } else Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                    RatioRing(totals.ratio, diameter, "업무사용비율")
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        Stat("총주행 거리", kmText(totals.totalKm))
-                        Stat("업무용 거리", kmText(totals.businessKm), valueColor = MaterialTheme.colorScheme.onTertiaryContainer)
-                    }
-                }
-                Stat("등록 경비", formatWon(totals.expenseWon))
-            }
-        }
-        Text(when { trips.isEmpty() -> "이번 달 운행이 아직 없어요."; trips.any { it.purpose == TripPurpose.UNCLASSIFIED } -> "미분류 운행은 업무 합계에서 제외돼요. 목적을 확인해 주세요."; else -> "모든 운행의 목적을 확인했어요. 월간 현황에서 Excel로 저장하세요." }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
 
 
 // ───────────────────────── 일지 ─────────────────────────
 
-@Composable private fun LogPane(state: TripLogState, now: Long, wide: Boolean, act: Act, repository: TripLogRepository, openDriver: (String?) -> Unit, initialTripId: String?, initialFilter: Int = 0) {
-    var month by rememberSaveable { mutableStateOf(YearMonth.from(localDate(now)).toString()) }
+@Composable private fun LogPane(state: TripLogState, now: Long, wide: Boolean, act: Act, repository: TripLogRepository, openDriver: (String?) -> Unit,
+    initialTripId: String?, initialFilter: Int = 0, initialMonth: String? = null) {
+    var month by rememberSaveable { mutableStateOf(initialMonth?.takeIf { runCatching { YearMonth.parse(it) }.isSuccess } ?: YearMonth.from(localDate(now)).toString()) }
     var filter by rememberSaveable(initialFilter) { mutableIntStateOf(initialFilter) }
     var selectedId by rememberSaveable(initialTripId) { mutableStateOf(initialTripId) }
     var employeeFilter by rememberSaveable { mutableStateOf<String?>(null) }
@@ -996,7 +931,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 // ───────────────────────── 리포트 ─────────────────────────
 
 @Composable private fun ReportPane(state: TripLogState, now: Long, wide: Boolean, exporting: Boolean, saveFile: (String, String, ByteArray) -> Unit,
-    act: Act, repository: TripLogRepository, goSettings: () -> Unit, goHome: () -> Unit, goReview: () -> Unit) {
+    act: Act, repository: TripLogRepository, goSettings: () -> Unit, goHome: () -> Unit, goReview: (YearMonth) -> Unit) {
     val data = state.data
     var period by rememberSaveable { mutableIntStateOf(0) }
     var view by rememberSaveable { mutableIntStateOf(2) }
@@ -1006,13 +941,18 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     val trips = tripsIn(data.trips, from, today, zone)
     val totals = logbookTotals(trips)
     val yearTotals = logbookTotals(tripsIn(data.trips, today.withDayOfYear(1), today, zone))
-    val export: () -> Unit = {
+    val exportRange: (LocalDate, LocalDate) -> Unit = { start, end ->
         val plate = data.profile.plateNumber.ifBlank { "차량" }.replace(Regex("[^\\p{L}\\p{N}-]"), "_")
-        val name = "${if (data.profile.demoMode) "시연_" else ""}운행기록부_${plate}_${from}_${today}.xlsx"
-        val bytes = logbookXlsx(data.copy(profile = data.profile.copy(carModel = data.profile.carModel.ifBlank { state.vehicleModel.orEmpty() })), from, today, trips, zone = zone)
+        val name = "${if (data.profile.demoMode) "시연_" else ""}운행기록부_${plate}_${start}_${end}.xlsx"
+        val bytes = logbookXlsx(data.copy(profile = data.profile.copy(carModel = data.profile.carModel.ifBlank { state.vehicleModel.orEmpty() })), start, end,
+            tripsIn(data.trips, start, end, zone), zone = zone)
         saveFile(name, XLSX_MIME, bytes)
     }
-    val closeStatus = monthStatus(data, YearMonth.from(today), zone)
+    val export: () -> Unit = { exportRange(from, today) }
+    // The close panel follows the month the home card and the badge point at: last month while it is still open, else this one.
+    val closeStatus = monthCloseTarget(data, today, zone) ?: monthStatus(data, YearMonth.from(today), zone)
+    val closeEnd = closeStatus.month.atEndOfMonth().let { if (it.isAfter(today)) today else it }
+    val exportClose: () -> Unit = { exportRange(closeStatus.month.atDay(1), closeEnd) }
     val ratio: @Composable (Modifier) -> Unit = { modifier -> RatioCard(totals, modifier, compact = !wide) }
     val tax: @Composable (Modifier) -> Unit = { modifier -> TaxCard(data.profile, yearTotals, modifier, goSettings) }
     val settle: @Composable (Modifier) -> Unit = { modifier -> SettlementCard(trips, data, modifier, goSettings) }
@@ -1023,7 +963,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                 if (totals.unclassifiedKm > 0 || trips.any { it.driverId == null }) confirmExport = true else export()
             }
         }
-        if (period == 0) MonthClosePanel(closeStatus, onIssues = goReview, onReviews = goHome, onExport = export, exporting = exporting, act = act, repository = repository,
+        if (period == 0) MonthClosePanel(closeStatus, onIssues = { goReview(closeStatus.month) }, onReviews = goHome, onExport = exportClose, exporting = exporting, act = act, repository = repository,
             compact = !wide, editedAfterClose = editedAfterCloseCount(data, closeStatus.month, zone))
         Segmented(listOf("운행 현황", "경비·정산", "Excel", "검토"), view) { view = it }
         Text("${if (data.profile.demoMode) "시연 데이터 · " else ""}${from} ~ ${today} · ${totals.trips}건", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1058,7 +998,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     if (confirmExport) AlertDialog(onDismissRequest = { confirmExport = false }, title = { Text("정리되지 않은 운행이 있어요") },
         text = { Text("미분류 ${kmText(totals.unclassifiedKm)}는 업무용 사용거리에서 제외되고, 사용자 미지정 운행은 ④란이 비어 있게 저장돼요. 그래도 저장할까요?") },
         confirmButton = { TextButton(onClick = { confirmExport = false; export() }) { Text("저장") } },
-        dismissButton = { TextButton(onClick = { confirmExport = false; goReview() }) { Text("정리하러 가기") } })
+        dismissButton = { TextButton(onClick = { confirmExport = false; goReview(YearMonth.from(today)) }) { Text("정리하러 가기") } })
 }
 
 @Composable private fun EmployeeUsageCard(trips: List<Trip>, data: TripLogData, modifier: Modifier) {

@@ -80,8 +80,8 @@ data class PleosColors(
 // Grayscale basic_00..basic_900 and informative tokens from the Pleos Connect design guide (Foundations > Colors).
 private val DarkPleos = PleosColors(
     active = Color(0xFF00E074), positive = Color(0xFF0082FF), negative = Color(0xFFFF4C28),
-    gleoBubble = Color(0xFF545F93), gleoBubbleSecondary = Color(0xFF3E4976), gleoSpeaker = Color(0xFFB6C1F3), gleoSurface = Color(0xFF44464E),
-    surfaceHigh = Color(0xFF313236), surfaceAccent = Color(0xFF44464E), textTertiary = Color(0xFFA4A8AE),
+    gleoBubble = Color(0xFF545F93), gleoBubbleSecondary = Color(0xFF3E4976), gleoSpeaker = Color(0xFFB6C1F3), gleoSurface = Color(0xFF2A3549),
+    surfaceHigh = Color(0xFF1D2738), surfaceAccent = Color(0xFF2A3549), textTertiary = Color(0xFF97A3B6),
     chartActive = Color(0xFF00E074),
 )
 private val LightPleos = PleosColors(
@@ -151,24 +151,25 @@ fun barExit(): ExitTransition {
 @Composable
 fun scaledDisplay(large: TextStyle, smaller: TextStyle): TextStyle = if (LocalDensity.current.fontScale > 1.25f) smaller else large
 
-// Neutral, high-contrast primary like Pleos filled buttons; color is kept for status only.
+// Neutral, high-contrast primary like Pleos filled buttons; color is kept for status only. 2.8: the night palette is a deep
+// navy (Midnight) instead of neutral gray, so the car home hero, the rail and every pane read as one surface.
 private val DarkColors: ColorScheme = darkColorScheme(
-    primary = Color(0xFFFFFFFF), onPrimary = Color(0xFF131417),
-    primaryContainer = Color(0xFF313236), onPrimaryContainer = Color(0xFFFFFFFF),
+    primary = Color(0xFFFFFFFF), onPrimary = Color(0xFF0B111C),
+    primaryContainer = Color(0xFF1D2738), onPrimaryContainer = Color(0xFFFFFFFF),
     secondary = Color(0xFF0082FF), onSecondary = Color(0xFFFFFFFF),
     secondaryContainer = Color(0xFF12304F), onSecondaryContainer = Color(0xFFD6E8FF),
     tertiary = Color(0xFF00E074), onTertiary = Color(0xFF00391C),
     tertiaryContainer = Color(0xFF0F3A24), onTertiaryContainer = Color(0xFFB4F5D0),
-    background = Color(0xFF131417), onBackground = Color(0xFFFFFFFF),
-    surface = Color(0xFF1D1E21), onSurface = Color(0xFFFFFFFF),
-    surfaceVariant = Color(0xFF313236), onSurfaceVariant = Color(0xFFC7C9CE),
-    surfaceTint = Color.Transparent, inverseSurface = Color(0xFFF7F8FA), inverseOnSurface = Color(0xFF131417),
-    outline = Color(0xFF686A72), outlineVariant = Color(0xFF313236),
+    background = Color(0xFF0B111C), onBackground = Color(0xFFFFFFFF),
+    surface = Color(0xFF131B2A), onSurface = Color(0xFFFFFFFF),
+    surfaceVariant = Color(0xFF1D2738), onSurfaceVariant = Color(0xFFC3CCDA),
+    surfaceTint = Color.Transparent, inverseSurface = Color(0xFFF7F8FA), inverseOnSurface = Color(0xFF0B111C),
+    outline = Color(0xFF5E6A7E), outlineVariant = Color(0xFF243045),
     error = Color(0xFFFF4C28), onError = Color(0xFFFFFFFF),
     errorContainer = Color(0xFF4A1A10), onErrorContainer = Color(0xFFFFDAD1),
-    scrim = Color.Black, surfaceBright = Color(0xFF313236), surfaceDim = Color(0xFF131417),
-    surfaceContainerLowest = Color(0xFF131417), surfaceContainerLow = Color(0xFF1D1E21),
-    surfaceContainer = Color(0xFF1D1E21), surfaceContainerHigh = Color(0xFF313236), surfaceContainerHighest = Color(0xFF44464E),
+    scrim = Color.Black, surfaceBright = Color(0xFF2A3549), surfaceDim = Color(0xFF0B111C),
+    surfaceContainerLowest = Color(0xFF0B111C), surfaceContainerLow = Color(0xFF131B2A),
+    surfaceContainer = Color(0xFF131B2A), surfaceContainerHigh = Color(0xFF1D2738), surfaceContainerHighest = Color(0xFF2A3549),
 )
 private val LightColors: ColorScheme = lightColorScheme(
     primary = Color(0xFF131417), onPrimary = Color(0xFFFFFFFF),

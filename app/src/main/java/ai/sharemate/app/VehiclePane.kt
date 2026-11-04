@@ -76,8 +76,8 @@ private fun VehicleHero(state: TripLogState, fresh: Boolean, modifier: Modifier)
         else -> "확인 필요"
     }
     SharemateTheme(dark = true) {
-        Surface(modifier, shape = RoundedCornerShape(24.dp), color = Color(0xFF17181B), contentColor = Color.White) {
-            Column(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF302B2A), Color(0xFF17181B))))
+        Surface(modifier, shape = RoundedCornerShape(24.dp), color = Color(0xFF0E1522), contentColor = Color.White) {
+            Column(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF1E2C47), Color(0xFF0E1522))))
                 .padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Eyebrow("MY FLEET", Color(0xFFE4BFA6))

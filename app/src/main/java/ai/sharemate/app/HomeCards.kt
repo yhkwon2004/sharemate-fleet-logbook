@@ -347,12 +347,13 @@ private fun String.toIdSet() = split(',').filter { it.isNotBlank() }.toSet()
  * One question a day under the employee chip: "오늘도 영업1팀 김서연 님이 운전하나요?" with the current driver as the default.
  * "네" writes nothing and remembers today; "다른 직원" opens the picker. Both count as an answer, so the row does not
  * come back for the newly chosen driver. See [driverConfirmDue] for when the question is worth asking at all.
+ * [confirmed] holds the day keys already answered; the shell owns it so the home hero and the other tabs ask once a day between them.
  */
-@Composable internal fun DriverConfirmRow(state: TripLogState, now: Long, openDriver: (String?) -> Unit, modifier: Modifier = Modifier) {
-    var confirmed by rememberSaveable { mutableStateOf("") }
+@Composable internal fun DriverConfirmRow(state: TripLogState, now: Long, openDriver: (String?) -> Unit, confirmed: String, onConfirmed: (String) -> Unit,
+    modifier: Modifier = Modifier) {
     val dates = confirmed.toIdSet()
     val driver = driverConfirmDue(state.data, now, zone, dates) ?: return
-    val answer = { confirmed = (dates + dateKey(now, zone)).joined() }
+    val answer = { onConfirmed((dates + dateKey(now, zone)).joined()) }
     Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))) {
         BoxWithConstraints(Modifier.padding(start = 18.dp, end = 10.dp, top = 8.dp, bottom = 8.dp)) {

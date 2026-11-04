@@ -6,6 +6,9 @@ import android.car.drivingstate.CarUxRestrictionsManager
 import android.content.pm.PackageManager
 import android.content.pm.PermissionInfo
 import android.os.Bundle
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -38,7 +41,26 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         driving = DrivingUiState(packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE))
         TripLogService.start(this)
+        hideStatusBar()
         setContent { LogbookApp(driving, ::requestDataPermissions) }
+    }
+
+    /**
+     * The home hero already shows the clock and the recording state, so the car's top status strip is hidden while
+     * SHAREMATE is in front (immersive). A swipe down from the top edge shows it for a moment; the HVAC bar and the
+     * driver panel are left to the vehicle. Re-applied on focus because the system restores the bar after dialogs.
+     */
+    private fun hideStatusBar() {
+        if (!driving.automotive) return
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            hide(WindowInsetsCompat.Type.statusBars())
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) hideStatusBar()
     }
 
     private fun requestDataPermissions() {

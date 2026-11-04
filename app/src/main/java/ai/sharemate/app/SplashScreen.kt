@@ -23,7 +23,7 @@ import androidx.compose.ui.unit.sp
 @Composable
 internal fun SharemateSplash(modifier: Modifier = Modifier) {
     SharemateTheme(dark = true) {
-        BoxWithConstraints(modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF252527), Color(0xFF17181B))))
+        BoxWithConstraints(modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF16213A), Color(0xFF0B111C))))
             .safeDrawingPadding().padding(28.dp), contentAlignment = Alignment.Center) {
             val narrow = maxWidth < 480.dp
             Column(Modifier.widthIn(max = 480.dp), horizontalAlignment = Alignment.CenterHorizontally,
