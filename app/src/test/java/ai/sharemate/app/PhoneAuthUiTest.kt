@@ -1,0 +1,110 @@
+package ai.sharemate.app
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class PhoneAuthUiTest {
+    private val kim = Driver("d1", "영업팀", "김서연")
+    private val lee = Driver("d2", "관리팀", "이도윤")
+    private val kim2 = Driver("d3", "개발팀", "김서연")
+
+    @Test fun profileNeedsANameAndKeepsBothFieldsWithinThirtyCharacters() {
+        assertTrue(profileErrors("김서연", "").valid)
+        assertTrue("부서는 선택", profileErrors("김서연", "영업팀").valid)
+        assertEquals("이름을 적어 주세요.", profileErrors("   ", "영업팀").name)
+        assertTrue(profileErrors("가".repeat(30), "나".repeat(30)).valid)
+        assertEquals("이름은 30자까지예요.", profileErrors("가".repeat(31), "").name)
+        assertEquals("부서는 30자까지예요.", profileErrors("김서연", "나".repeat(31)).department)
+        assertTrue("앞뒤 공백·연속 공백은 세지 않음", profileErrors("  " + "가".repeat(15) + "     " + "나".repeat(14) + "  ", "").valid)
+    }
+
+    @Test fun validateProfileThrowsTheFormSentence() {
+        val e = assertThrows(IllegalArgumentException::class.java) { validateProfile("", "") }
+        assertEquals("이름을 적어 주세요.", e.message)
+        val d = assertThrows(IllegalArgumentException::class.java) { validateProfile("김서연", "가".repeat(31)) }
+        assertEquals("부서는 30자까지예요.", d.message)
+        validateProfile("김서연", "영업팀")
+    }
+
+    @Test fun cleanProfileTextTrimsAndFoldsSpaces() {
+        assertEquals("김 서연", cleanProfileText("  김   서연 "))
+        assertEquals("", cleanProfileText(" \t "))
+    }
+
+    @Test fun eachStepContinuesOnlyWhenItsConditionHolds() {
+        assertFalse(onboardingCanContinue(0, profileValid = false, vehicleCount = 3))
+        assertTrue(onboardingCanContinue(0, profileValid = true, vehicleCount = 0))
+        assertFalse("차량이 없으면 다음 불가(나중에 등록은 따로)", onboardingCanContinue(1, profileValid = true, vehicleCount = 0))
+        assertTrue(onboardingCanContinue(1, profileValid = true, vehicleCount = 1))
+        assertTrue("직원 선택은 선택 사항", onboardingCanContinue(2, profileValid = false, vehicleCount = 0))
+    }
+
+    @Test fun stepTextCountsFromOneAndStaysInRange() {
+        assertEquals("1/3", onboardingStepText(0))
+        assertEquals("3/3", onboardingStepText(2))
+        assertEquals("3/3", onboardingStepText(7))
+        assertEquals("1/3", onboardingStepText(-1))
+        assertEquals(ONBOARDING_STEPS, onboardingStepTitles.size)
+    }
+
+    @Test fun initialIsTheFirstCharacterOfTheNameElseTheEmail() {
+        assertEquals("김", accountInitial("김서연", "kim@example.com"))
+        assertEquals("J", accountInitial("  jane doe", ""))
+        assertEquals("K", accountInitial("", "kim@example.com"))
+        assertEquals("?", accountInitial(" ", " "))
+        assertEquals("이모지(서로게이트 쌍)는 한 글자로", "🚗", accountInitial("🚗 car", ""))
+    }
+
+    @Test fun driverPreselectionPrefersTheLinkedDriverThenAUniqueNameMatch() {
+        val list = listOf(kim, lee)
+        assertEquals("d2", preselectDriver(list, "김서연", current = "d2"))
+        assertEquals("d1", preselectDriver(list, "김서연"))
+        assertEquals("공백·대소문자 무시", "d1", preselectDriver(list, " 김 서연 "))
+        assertEquals("d1", preselectDriver(listOf(Driver("d1", "", "Jane Doe")), "jane doe"))
+        assertNull(preselectDriver(list, "박지민"))
+        assertNull(preselectDriver(list, ""))
+        assertEquals("목록에 없는 연결 정보는 무시", "d1", preselectDriver(list, "김서연", current = "gone"))
+        assertNull(preselectDriver(emptyList(), "김서연"))
+    }
+
+    @Test fun sameNameIsSettledByDepartmentOrLeftUnselected() {
+        val list = listOf(kim, lee, kim2)
+        assertNull(preselectDriver(list, "김서연"))
+        assertEquals("d3", preselectDriver(list, "김서연", "개발팀"))
+        assertNull(preselectDriver(list, "김서연", "총무팀"))
+    }
+
+    @Test fun manualVehicleErrorUsesTheFleetRulesAndWaitsForInput() {
+        assertNull("입력 전에는 오류 없음", manualVehicleError("", "", ""))
+        assertNull(manualVehicleError("12가 3456", "아이오닉 5", "쉐어메이트"))
+        assertEquals("차량번호를 확인해 주세요. 예: 12가 3456", manualVehicleError("12-3456!", "", ""))
+        assertNotNull(manualVehicleError("12가 3456", "가".repeat(41), ""))
+    }
+
+    @Test fun vehicleRowsSayWhetherTheCarIsConnected() {
+        val paired = FleetVehicle("fp", "12가 3456", "아이오닉 5", "쉐어메이트", link = "https://10.0.0.5:9247|t|fp")
+        val typed = FleetVehicle("m", "34나 5678")
+        assertEquals("연결됨", fleetVehicleStatus(paired))
+        assertEquals("연결 전", fleetVehicleStatus(typed))
+        assertEquals("아이오닉 5 · 쉐어메이트", fleetVehicleDetail(paired))
+        assertEquals("차종·회사 미등록", fleetVehicleDetail(typed))
+        assertEquals("쉐어메이트", fleetVehicleDetail(typed.copy(company = "쉐어메이트")))
+    }
+
+    @Test fun accountDriverLineNamesTheEmployeeOrSaysNone() {
+        assertEquals("운행기록부 사용자: 영업팀 · 김서연", accountDriverLine(kim.label))
+        assertEquals("직원 미지정", accountDriverLine(null))
+        assertEquals("직원 미지정", accountDriverLine(" "))
+    }
+
+    @Test fun driverListNoteExplainsWhyTheListIsEmpty() {
+        assertTrue(driverListNote(paired = false, connected = false).startsWith("직원 목록은 차량과 연결하면"))
+        assertTrue(driverListNote(paired = true, connected = false).startsWith("차량과 다시 연결되면"))
+        assertTrue(driverListNote(paired = true, connected = true).contains("직원을 추가하면"))
+    }
+}
