@@ -42,6 +42,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
@@ -356,6 +357,13 @@ private fun skylineScene(): SkyScene {
     }
 }
 
+/** The backdrop at [level] (1 on home, dimmed elsewhere, 0 hidden), fading on the page clock inside its own recomposition scope. */
+@Composable internal fun SkyLayer(level: Float, modifier: Modifier = Modifier) {
+    val alpha by androidx.compose.animation.core.animateFloatAsState(level,
+        if (LocalReduceMotion.current) androidx.compose.animation.core.snap() else androidx.compose.animation.core.tween(MOTION_PAGE_MS), label = "sky")
+    if (level > 0f || alpha > 0f) HomeBackdrop(modifier.graphicsLayer { this.alpha = alpha })
+}
+
 // ───────────────────────── hero ─────────────────────────
 
 @Immutable
@@ -377,7 +385,7 @@ internal class HomeCardSpec(val title: String, val subtitle: String, val icon: I
     Box(Modifier.fillMaxWidth()) {
         Column(Modifier.fillMaxWidth().heightIn(min = minHeight).padding(horizontal = if (compact) 4.dp else 8.dp, vertical = if (compact) 4.dp else 6.dp),
             verticalArrangement = Arrangement.SpaceBetween) {
-            Row(Modifier.clearAndSetSemantics {}, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(Modifier.clearAndSetSemantics { contentDescription = "${hm(now)}, ${dayLabel(localDate(now))}" }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text(hm(now), style = MaterialTheme.typography.headlineMedium.copy(fontFeatureSettings = "tnum"), color = Midnight.text, fontWeight = FontWeight.Bold)
                 Box(Modifier.width(1.dp).height(24.dp).background(Color.White.copy(alpha = .35f)))
                 Text(dayLabel(localDate(now)), style = MaterialTheme.typography.titleMedium, color = Midnight.textSecondary)

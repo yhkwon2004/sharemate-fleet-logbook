@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -13,11 +15,16 @@ android {
         applicationId = "ai.sharemate.app"
         minSdk = 28
         targetSdk = 34
-        versionCode = 18
-        versionName = "2.8.0"
+        versionCode = 19
+        versionName = "2.9.0"
+        // Google sign-in (phone): the OAuth Web client ID of the company's Google Cloud project, from local.properties
+        // (sharemate.googleWebClientId=...apps.googleusercontent.com) or -Psharemate.googleWebClientId. Empty = sign-in disabled.
+        val localProps = Properties().apply { rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) } }
+        val googleClientId = (project.findProperty("sharemate.googleWebClientId") as String?) ?: localProps.getProperty("sharemate.googleWebClientId", "")
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleClientId\"")
     }
 
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -38,6 +45,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("ai.pleos.playground:Vehicle:2.3.2")
     implementation("ai.pleos.playground:NaviHelper:3.0.5")
+    // Sign in with Google on the phone through Credential Manager.
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
     // Android's org.json is a stub in local unit tests; the Gleo parameter parser needs the real implementation.

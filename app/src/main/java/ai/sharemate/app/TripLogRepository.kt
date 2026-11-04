@@ -33,6 +33,8 @@ data class TripLogData(
     val care: VehicleCare = VehicleCare(),
     val maintenance: List<MaintenanceRecord> = emptyList(),
     val closedMonths: List<MonthClose> = emptyList(),
+    // Vehicle bookings made from phones or the car; see Reservation.kt.
+    val reservations: List<Reservation> = emptyList(),
 )
 
 /** Live-sync status published by the car's sync server for the vehicle screens. */
@@ -122,7 +124,11 @@ class TripLogRepository private constructor(context: Context) {
         val stored = if (data.profile.storeAddresses) sample else sample.copy(address = null, destination = null)
         var next = data
         var finishedId: String? = null
-        advanceTrip(data.open, stored, data.currentDriverId) { UUID.randomUUID().toString() }.forEach { change ->
+        // A booking whose window has opened makes its booker the current employee while the car is parked, so the trip that
+        // follows is recorded under the right name without anyone touching the screen.
+        val booked = if (data.open == null) activeReservation(data, sample.at)?.driverId?.takeIf { id -> data.drivers.any { it.id == id } } else null
+        if (booked != null && booked != data.currentDriverId) next = next.copy(currentDriverId = booked)
+        advanceTrip(data.open, stored, next.currentDriverId) { UUID.randomUUID().toString() }.forEach { change ->
             next = when (change) {
                 is TripChange.Started -> next.copy(open = change.trip)
                 is TripChange.Progress -> next.copy(open = change.trip)
@@ -130,9 +136,12 @@ class TripLogRepository private constructor(context: Context) {
                     require(next.trips.size < MAX_TRIPS) { "운행기록이 20,000건에 도달했어요. 기록을 내보낸 뒤 저장 공간을 정리해 주세요." }
                     val closed = withHistory(change.trip, if (change.trip.recovered) "앱 중단 후 마지막 수신 시각으로 종료" else "기어 P 전환으로 운행 종료", sample.at)
                     // A place the driver has labelled the same way every time needs no question.
-                    val purpose = if (next.profile.autopilot) autoPurpose(closed, next.trips) else null
+                    // A trip driven inside a booking takes the purpose the booker gave; otherwise a place labelled the same way every time.
+                    val booking = if (next.profile.autopilot) reservationForTrip(next, closed)?.takeIf { it.purpose != null } else null
+                    val purpose = booking?.purpose ?: if (next.profile.autopilot) autoPurpose(closed, next.trips) else null
+                    val reason = if (booking != null) "예약 목적 기준" else "같은 도착지 기록 기준"
                     val history = if (purpose == null) closed else withHistory(closed.copy(purpose = purpose, purposeSource = EditSource.AUTO),
-                        "목적 ${purpose.label} (같은 도착지 기록 기준 ${EditSource.AUTO.label})", sample.at)
+                        "목적 ${purpose.label} ($reason ${EditSource.AUTO.label})", sample.at)
                     finishedId = history.id
                     next.copy(open = null, trips = next.trips + history)
                 }
@@ -246,6 +255,13 @@ class TripLogRepository private constructor(context: Context) {
     }
 
     suspend fun removeMaintenance(id: String) = mutate { data -> data.copy(maintenance = data.maintenance.filterNot { it.id == id }) }
+
+    /** Books the car for [request]; the car is the only judge of conflicts, so two phones cannot both win a slot. */
+    suspend fun reserve(request: Reservation) = mutate { data -> reserveIn(data, request, System.currentTimeMillis(), zone) }
+
+    suspend fun cancelReservation(id: String) = mutate { data -> cancelReservationIn(data, id, System.currentTimeMillis()) }
+
+    suspend fun restoreReservation(id: String) = mutate { data -> restoreReservationIn(data, id, System.currentTimeMillis()) }
     suspend fun closeMonth(month: String) = mutate { data -> closeMonth(data, parseMonth(month), System.currentTimeMillis(), zone) }
     suspend fun reopenMonth(month: String) = mutate { data -> reopenMonth(data, parseMonth(month)) }
 
@@ -316,6 +332,9 @@ class TripLogRepository private constructor(context: Context) {
             is SyncCommand.RemoveMaintenance -> removeMaintenance(command.id)
             is SyncCommand.CloseMonth -> closeMonth(command.month)
             is SyncCommand.ReopenMonth -> reopenMonth(command.month)
+            is SyncCommand.Reserve -> reserve(command.reservation.copy(source = EditSource.PHONE))
+            is SyncCommand.CancelReservation -> cancelReservation(command.id)
+            is SyncCommand.RestoreReservation -> restoreReservation(command.id)
         }
     }
 
@@ -542,8 +561,13 @@ internal object TripLogCodec {
         val closedMonths = json.optJSONArray("closedMonths")?.objects()?.map { m ->
             MonthClose(m.getString("month"), m.getLong("closedAt"), m.getInt("trips"), m.getDouble("totalKm"), m.getDouble("businessKm"), m.getLong("expenseWon"), m.optBoolean("demo"))
         }.orEmpty()
+        val reservations = json.optJSONArray("reservations")?.objects()?.map { r ->
+            Reservation(r.getString("id"), r.getString("driverId"), r.getLong("startAt"), r.getLong("endAt"), r.text("purpose")?.let(TripPurpose::valueOf),
+                r.optString("destination"), r.optString("note"), ReservationStatus.valueOf(r.getString("status")), r.getLong("createdAt"),
+                EditSource.valueOf(r.getString("source")), if (r.isNull("cancelledAt")) null else r.getLong("cancelledAt"), r.optBoolean("demo"))
+        }.orEmpty()
         val data = TripLogData(profile, drivers, json.optString("currentDriverId").takeIf { it.isNotEmpty() && drivers.any { d -> d.id == it } },
-            trips, if (json.isNull("open")) null else readTrip(json.getJSONObject("open")), vehicle, incidents, charge, stops, charges, care, maintenance, closedMonths)
+            trips, if (json.isNull("open")) null else readTrip(json.getJSONObject("open")), vehicle, incidents, charge, stops, charges, care, maintenance, closedMonths, reservations)
         validate(data)
         return data
     }
@@ -581,6 +605,9 @@ internal object TripLogCodec {
                 .put("source", m.source.name).put("cardChargeId", m.cardChargeId ?: JSONObject.NULL).put("demo", m.demo) }))
             .put("closedMonths", JSONArray(data.closedMonths.map { m -> JSONObject().put("month", m.month).put("closedAt", m.closedAt).put("trips", m.trips)
                 .put("totalKm", m.totalKm).put("businessKm", m.businessKm).put("expenseWon", m.expenseWon).put("demo", m.demo) }))
+            .put("reservations", JSONArray(data.reservations.map { r -> JSONObject().put("id", r.id).put("driverId", r.driverId).put("startAt", r.startAt).put("endAt", r.endAt)
+                .put("purpose", r.purpose?.name ?: JSONObject.NULL).put("destination", r.destination).put("note", r.note).put("status", r.status.name)
+                .put("createdAt", r.createdAt).put("source", r.source.name).put("cancelledAt", r.cancelledAt ?: JSONObject.NULL).put("demo", r.demo) }))
         return json.toString().toByteArray(Charsets.UTF_8)
     }
 
@@ -633,6 +660,8 @@ internal object TripLogCodec {
         require(data.maintenance.all { validUuid(it.id) && it.at > 0 && it.amountWon in 0..10_000_000 && it.note.length <= 300 && it.merchant.orEmpty().length <= 60 })
         require(data.closedMonths.size <= 240 && data.closedMonths.all { it.month.matches(Regex("\\d{4}-\\d{2}")) && it.closedAt > 0 } &&
             data.closedMonths.map { it.month to it.demo }.distinct().size == data.closedMonths.size)
+        require(data.reservations.size <= MAX_RESERVATIONS && data.reservations.map { it.id }.distinct().size == data.reservations.size)
+        require(data.reservations.all { validUuid(it.id) && validUuid(it.driverId) && it.endAt > it.startAt && it.destination.length <= 60 && it.note.length <= 200 })
         require(data.drivers.size <= 50 && data.drivers.map { it.id }.distinct().size == data.drivers.size)
         data.drivers.forEach { require(validUuid(it.id) && it.name.isNotBlank() && it.name.length <= 30 && it.department.length <= 30) }
         require(data.trips.size <= TripLogRepository.MAX_TRIPS && data.trips.none { it.open } && (data.open == null || data.open.open))

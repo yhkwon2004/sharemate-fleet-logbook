@@ -36,6 +36,9 @@ import javax.net.ssl.X509TrustManager
 class PhoneSyncClient private constructor(context: Context) {
     private val repository = TripLogRepository.get(context)
     private val store = DeviceLink(context, "fleet-phone")
+    // The company vehicles on this phone; the selected one is the car this client talks to (see PhoneFleet.kt).
+    private val fleet = FleetStore.get(context)
+    internal val fleetState: StateFlow<FleetState> get() = fleet.state
     // Approvals arrive whether or not the car is reachable, so they wait on disk until it is.
     private val queueFile = AtomicFile(File(context.applicationContext.noBackupFilesDir, "card-queue.json"))
     private val queueLock = Mutex()
@@ -50,7 +53,45 @@ class PhoneSyncClient private constructor(context: Context) {
     @Volatile private var config: LinkConfig? = runCatching { store.load() }.getOrNull()
     val paired get() = config != null
 
-    init { scope.launch(Dispatchers.IO) { mutableQueued.value = readQueue().size } }
+    init {
+        scope.launch(Dispatchers.IO) { mutableQueued.value = readQueue().size }
+        // A phone paired before 2.9 has one link and no fleet list: register that car so it shows up and stays selected.
+        scope.launch { config?.let { c -> if (fleet.state.value.vehicles.none { it.id == c.fingerprint }) runCatching { fleet.mutate { upsertPaired(it, c.fingerprint, linkText(c), null, System.currentTimeMillis()) } } } }
+    }
+
+    private fun linkText(c: LinkConfig) = "${c.endpoint}|${c.token}|${c.fingerprint}"
+
+    /**
+     * Makes [id] the vehicle this phone shows and talks to: the current copy is kept for the vehicle it belongs to, the target's
+     * last copy comes back at once (or an empty one with its registered plate), and the link restarts against that car.
+     */
+    suspend fun switchTo(id: String) {
+        val current = fleet.state.value
+        if (current.selectedId == id) return
+        val target = current.vehicles.firstOrNull { it.id == id } ?: throw IllegalArgumentException("차량을 찾지 못했어요.")
+        stop()
+        current.selectedId?.let { fleet.saveCopy(it, repository.state.value.data) }
+        fleet.mutate { it.copy(selectedId = id) }
+        val copy = fleet.loadCopy(id) ?: TripLogData(profile = FleetProfile(companyName = target.company, plateNumber = target.plate, carModel = target.model))
+        repository.importPhoneCopy(copy, live = true)
+        config = target.link?.let { runCatching { parseLink(it) }.getOrNull() }
+        withContext(Dispatchers.IO) { val link = target.link; if (link != null) store.save(link) else store.clear() }
+        mutableLink.value = PhoneLink(message = if (config != null) "차량 연결 중" else "아직 연결하지 않은 차량")
+        start()
+    }
+
+    /** Removes a vehicle from this phone; a paired car is told first. Selecting another vehicle (or none) follows. */
+    suspend fun removeVehicle(id: String) {
+        val state = fleet.state.value
+        val vehicle = state.vehicles.firstOrNull { it.id == id } ?: return
+        if (state.selectedId == id && config != null) unpair()
+        else vehicle.link?.let { link -> runCatching { store.request(parseLink(link), "/v2/unpair", JSONObject()) } }
+        fleet.deleteCopy(id)
+        val next = fleet.mutate { s -> s.copy(vehicles = s.vehicles.filterNot { it.id == id }, selectedId = if (s.selectedId == id) null else s.selectedId) }
+        if (next.selectedId == null) {
+            next.vehicles.firstOrNull()?.let { switchTo(it.id) } ?: repository.importPhoneCopy(TripLogData())
+        }
+    }
 
     /** Pairs with the car at [endpoint] using the six-digit code on the vehicle screen; the certificate seen then is pinned. */
     suspend fun pair(endpoint: String, code: String) {
@@ -101,6 +142,13 @@ class PhoneSyncClient private constructor(context: Context) {
         val text = "$base|${response.getString("token")}|$fingerprint"
         withContext(Dispatchers.IO) { store.save(text) }
         config = parseLink(text)
+        // The new car joins the fleet and becomes the selected one; the previous car keeps its copy for when it is picked again.
+        stop()
+        val previous = fleet.state.value.selectedId
+        if (previous != null && previous != fingerprint) fleet.saveCopy(previous, repository.state.value.data)
+        val cached = fleet.loadCopy(fingerprint)
+        if (previous != fingerprint) repository.importPhoneCopy(cached ?: TripLogData(), live = true)
+        fleet.mutate { upsertPaired(it, fingerprint, text, cached, System.currentTimeMillis()) }
         mutableLink.value = PhoneLink(message = "차량 연결됨 · 동기화 중")
         start()
     }
@@ -109,6 +157,8 @@ class PhoneSyncClient private constructor(context: Context) {
         val current = config
         if (current != null) runCatching { store.request(current, "/v2/unpair", JSONObject()) }
         withContext(Dispatchers.IO) { store.clear() }
+        // The vehicle stays on the list as registered but not connected; removing it is a separate choice.
+        if (current != null) fleet.mutate { s -> s.copy(vehicles = s.vehicles.map { if (it.id == current.fingerprint) it.copy(link = null) else it }) }
         config = null
         stop()
         mutableLink.value = PhoneLink(message = "차량 연결 해제됨")
@@ -131,6 +181,12 @@ class PhoneSyncClient private constructor(context: Context) {
                         val before = repository.state.value.data.incidents.flatMap { it.photos }.map { it.id }.toSet()
                         repository.importPhoneCopy(data, live = true)
                         dataSince = remote.getLong("dataRevision")
+                        // Keep the fleet list's names current, but write the list only when something it shows changed or once a minute.
+                        val now = System.currentTimeMillis()
+                        fleet.state.value.vehicles.firstOrNull { it.id == current.fingerprint }?.let { v ->
+                            val plate = data.profile.plateNumber.ifBlank { v.plate }; val company = data.profile.companyName.ifBlank { v.company }
+                            if (plate != v.plate || company != v.company || now - v.lastSeenAt > 60_000) runCatching { fleet.mutate { refreshFromCopy(it, current.fingerprint, data, now) } }
+                        }
                         // A photo the car no longer lists has no business staying on the phone.
                         val kept = data.incidents.flatMap { it.photos }.map { it.id }.toSet()
                         withContext(Dispatchers.IO) { (before - kept).forEach { repository.photos.delete(it) } }

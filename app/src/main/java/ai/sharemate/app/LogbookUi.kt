@@ -164,10 +164,13 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     var logMonth by rememberSaveable { mutableStateOf<String?>(null) }
     // The day keys on which the driver already answered "오늘도 … 님이 운전하나요?"; one set for the hero and the top bar.
     var driverConfirmed by rememberSaveable { mutableStateOf("") }
+    // Bumped by every goLog so the log page starts fresh even when its old instance is still fading out.
+    var logGen by rememberSaveable { mutableIntStateOf(0) }
     // The log page keeps its own filter, month and selection while the driver browses; a button that opens it on something
     // specific drops that saved state first, so the list shows what the button promised.
     val goLog: (Int, YearMonth?, String?) -> Unit = { filter, month, tripId ->
         pageStates.removeState(1)
+        logGen++
         logFilter = filter; logMonth = month?.toString(); expenseTripId = tripId; tab = 1
     }
     // The local assistant: rules over the real log, standing in for Gleo until the voice integration is approved.
@@ -287,8 +290,8 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                 // One background layer for every page: the night city at full strength on home, dimmed behind the other
                 // pages, moving on the same clock as the page change so the layers never jump.
                 val skyLevel = when { blocked || !state.loaded -> 0f; tab == 0 -> 1f; else -> .34f }
-                val skyAlpha by animateFloatAsState(skyLevel, if (LocalReduceMotion.current) snap() else tween(MOTION_PAGE_MS), label = "home-sky")
-                if (skyAlpha > 0f) HomeBackdrop(Modifier.matchParentSize().graphicsLayer { alpha = skyAlpha })
+                // The fade lives in its own scope (SkyLayer), so the 220 ms animation recomposes only the backdrop, not the shell.
+                SkyLayer(skyLevel, Modifier.matchParentSize())
                 Column(Modifier.fillMaxSize()) {
                     when {
                         blocked -> DrivingOverview(state, now, driving.available, Modifier.weight(1f))
@@ -303,7 +306,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                                     when (page) {
                                         0 -> DrivePane(state, now, wide, act, repository, openDriver, requestPermissions, { tab = 4 }, { tab = it }, openLog,
                                             { assistant = true }, snoozes, bannerCharges, { bannerCharges = it })
-                                        1 -> LogPane(state, now, wide, act, repository, openDriver, expenseTripId, logFilter, logMonth)
+                                        1 -> key(logGen) { LogPane(state, now, wide, act, repository, openDriver, expenseTripId, logFilter, logMonth) }
                                         2 -> ReportPane(state, now, wide, pendingExportName != null, export, act, repository, { tab = 4 }, { tab = 0 }) { month -> openLog(1, month) }
                                         3 -> VehiclePane(state, now, act, repository, goSettings = { tab = 4 })
                                         // Saved-settings confirmations ride the bar; a modal is kept for text the driver must read, such as a file path.
@@ -390,7 +393,8 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
         }
     }
     val tools: @Composable () -> Unit = {
-        OutlinedButton(onClick = onAssistant, modifier = Modifier.heightIn(min = 56.dp), border = BorderStroke(1.dp, Midnight.glassBorder)) {
+        // On home the hero's search bar is the assistant entry; one entry per screen keeps focus order and TalkBack simple.
+        if (selected != 0) OutlinedButton(onClick = onAssistant, modifier = Modifier.heightIn(min = 56.dp), border = BorderStroke(1.dp, Midnight.glassBorder)) {
             Icon(painterResource(R.drawable.ic_search), null, Modifier.size(22.dp)); Spacer(Modifier.width(8.dp)); Text("운행 비서")
         }
         if (showTutorial) OutlinedButton(onClick = onTutorial, modifier = Modifier.heightIn(min = 56.dp), border = BorderStroke(1.dp, colors.outlineVariant)) { Text("시연 체험") }
@@ -419,10 +423,13 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 @Composable private fun StatusPill(state: TripLogState) {
     val pleos = LocalPleosColors.current
     val recording = state.data.open != null
+    // Freshness comes from the same rule as the driving screen, so a stale signal never reads as "ready".
+    val overview = drivingOverviewInfo(state, System.currentTimeMillis(), true, zone)
     val (label, color) = when {
         state.loadFailed || state.error != null -> "기록 저장 확인 필요" to pleos.negative
         state.signal in setOf(SignalStatus.DENIED, SignalStatus.UNSUPPORTED, SignalStatus.ERROR) -> state.signal.label to pleos.negative
         state.signal == SignalStatus.STARTING -> state.signal.label to pleos.textTertiary
+        !overview.fresh && !recording -> overview.status to pleos.negative
         recording -> "기록 중 · ${kmText(state.data.open!!.distanceKm)}" to pleos.chartActive
         state.signal == SignalStatus.READY -> "자동 기록 대기" to pleos.textTertiary
         state.signal == SignalStatus.DEMO -> "시연 데이터" to pleos.gleoSpeaker

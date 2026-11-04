@@ -48,6 +48,10 @@ sealed interface SyncCommand {
     data class ReopenMonth(val month: String) : SyncCommand
     data class ClassifyMany(val tripIds: List<String>, val purpose: TripPurpose) : SyncCommand
     data class DeleteIncident(val id: String) : SyncCommand
+    /** A booking request from a phone; the car validates the slot and either confirms it or answers with the conflict. */
+    data class Reserve(val reservation: Reservation) : SyncCommand
+    data class CancelReservation(val id: String) : SyncCommand
+    data class RestoreReservation(val id: String) : SyncCommand
 }
 
 internal const val SYNC_MAX_CLASSIFY_IDS = 200
@@ -113,6 +117,13 @@ internal fun parseSyncCommand(json: JSONObject): SyncCommand = when (val type = 
     "classifyMany" -> SyncCommand.ClassifyMany(json.getJSONArray("tripIds").let { a -> (0 until a.length()).map { a.getString(it).also { id -> require(validUuid(id)) } } }
         .also { require(it.size in 1..SYNC_MAX_CLASSIFY_IDS) }, TripPurpose.valueOf(json.getString("purpose")))
     "deleteIncident" -> SyncCommand.DeleteIncident(json.id("id"))
+    "reserve" -> SyncCommand.Reserve(Reservation(json.id("id"), json.id("driverId"), json.getLong("startAt"), json.getLong("endAt"),
+        if (json.isNull("purpose")) null else TripPurpose.valueOf(json.getString("purpose")).also { require(it != TripPurpose.UNCLASSIFIED) },
+        json.optString("destination").also { require(it.length <= 60) }, json.optString("note").also { require(it.length <= 200) }).also {
+            require(it.endAt > it.startAt && it.startAt > 0)
+        })
+    "cancelReservation" -> SyncCommand.CancelReservation(json.id("id"))
+    "restoreReservation" -> SyncCommand.RestoreReservation(json.id("id"))
     else -> throw IllegalArgumentException("Unknown command: $type")
 }
 
@@ -138,6 +149,12 @@ internal fun encodeSyncCommand(command: SyncCommand): JSONObject = when (command
     is SyncCommand.ReopenMonth -> JSONObject().put("type", "reopenMonth").put("month", command.month)
     is SyncCommand.ClassifyMany -> JSONObject().put("type", "classifyMany").put("tripIds", org.json.JSONArray(command.tripIds)).put("purpose", command.purpose.name)
     is SyncCommand.DeleteIncident -> JSONObject().put("type", "deleteIncident").put("id", command.id)
+    is SyncCommand.Reserve -> command.reservation.let { r ->
+        JSONObject().put("type", "reserve").put("id", r.id).put("driverId", r.driverId).put("startAt", r.startAt).put("endAt", r.endAt)
+            .put("purpose", r.purpose?.name ?: JSONObject.NULL).put("destination", r.destination).put("note", r.note)
+    }
+    is SyncCommand.CancelReservation -> JSONObject().put("type", "cancelReservation").put("id", command.id)
+    is SyncCommand.RestoreReservation -> JSONObject().put("type", "restoreReservation").put("id", command.id)
 }
 
 /** What the phone sees of the car: the whole log only when the saved log moved, live signals every time. */
