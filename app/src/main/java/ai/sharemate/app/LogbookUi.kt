@@ -521,10 +521,12 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
             }
         }
     }
+    // The month-close banner is a reminder for when the card is not on screen; while the stack shows the card itself, one is enough.
+    val closeCardShown = parkedTasks(data, state.sync, now, zone, snoozes.value, prompt.value).firstOrNull()?.kind == TaskKind.MONTH_CLOSE
     val hero: @Composable (Boolean) -> Unit = { compact ->
         StatusHero(state, now, compact, requestPermissions) { act { repository.ingestCardEvents(listOf(demoCardApproval(repository.state.value.data, System.currentTimeMillis()))) } }
         MatchedBanner(banner, onShow = { onBanner(emptyList()); showMatched() }, onDismiss = { onBanner(emptyList()) })
-        MonthCloseBannerHost(data, now, onOpen = { navigate(2) })
+        if (!closeCardShown) MonthCloseBannerHost(data, now, onOpen = { navigate(2) })
     }
     if (wide) Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(24.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
