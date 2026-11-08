@@ -28,6 +28,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -232,20 +234,21 @@ private val DayColors: ColorScheme = lightColorScheme(
     primaryContainer = Color(0xFFDCE6F5), onPrimaryContainer = Color(0xFF121A2B), inversePrimary = Color(0xFF8FCBFF),
     secondary = Color(0xFF0064FF), onSecondary = Color(0xFFFFFFFF),
     secondaryContainer = Color(0xFFE3EEFF), onSecondaryContainer = Color(0xFF00296B),
-    tertiary = Color(0xFF008A4B), onTertiary = Color(0xFFFFFFFF),
+    tertiary = Color(0xFF00703C), onTertiary = Color(0xFFFFFFFF),
     tertiaryContainer = Color(0xFFDDF7E9), onTertiaryContainer = Color(0xFF004222),
     background = Color(0xFFEEF3FA), onBackground = Color(0xFF121A2B),
     surface = Color(0xFFFFFFFF), onSurface = Color(0xFF121A2B),
     surfaceVariant = Color(0xFFE3EAF4), onSurfaceVariant = Color(0xFF44506A),
     surfaceTint = Color.Transparent, inverseSurface = Color(0xFF121A2B), inverseOnSurface = Color(0xFFFFFFFF),
-    outline = Color(0xFF9AA6B8), outlineVariant = Color(0xFFD5DDE8),
-    error = Color(0xFFD63A14), onError = Color(0xFFFFFFFF),
+    outline = Color(0xFF6B7786), outlineVariant = Color(0xFFD5DDE8),
+    error = Color(0xFFC62B0C), onError = Color(0xFFFFFFFF),
     errorContainer = Color(0xFFFFE6E0), onErrorContainer = Color(0xFF5C1305),
     scrim = Color.Black, surfaceBright = Color(0xFFFFFFFF), surfaceDim = Color(0xFFE3EAF4),
     surfaceContainerLowest = Color(0xFFFFFFFF), surfaceContainerLow = Color(0xFFF6F8FC),
     surfaceContainer = Color(0xFFFFFFFF), surfaceContainerHigh = Color(0xFFE9EFF7), surfaceContainerHighest = Color(0xFFDCE4EF),
 )
-private val DayPleos = LightPleos.copy(surfaceHigh = Color(0xFFE3EAF4), surfaceAccent = Color(0xFFD5DDE8), textTertiary = Color(0xFF5F6B7A), negative = Color(0xFFD63A14))
+private val DayPleos = LightPleos.copy(active = Color(0xFF00703C), chartActive = Color(0xFF00703C), negative = Color(0xFFC62B0C),
+    surfaceHigh = Color(0xFFE3EAF4), surfaceAccent = Color(0xFFD5DDE8), textTertiary = Color(0xFF5A6678))
 
 private fun lerpScheme(a: ColorScheme, b: ColorScheme, t: Float): ColorScheme = when {
     t <= 0f -> a
@@ -307,7 +310,7 @@ fun SharemateTheme(compact: Boolean = false, dark: Boolean = isSystemInDarkTheme
  * 2.8 Midnight palette; day is its bright twin. Provides [LocalScene], [LocalScenePhase], [LocalPleosColors] and Material.
  */
 @Composable
-fun SceneTheme(compact: Boolean = false, content: @Composable () -> Unit) {
+fun SceneTheme(compact: Boolean = false, hold: Boolean = false, content: @Composable () -> Unit) {
     val mode = rememberSceneMode()
     // Re-evaluated when the phase can next change (sunrise, dusk), and at least every hour; no per-second clock here.
     val phase by produceState(scenePhaseAt(LocalDateTime.now(), mode), mode) {
@@ -316,13 +319,16 @@ fun SceneTheme(compact: Boolean = false, content: @Composable () -> Unit) {
             delay(nextSceneChangeIn(LocalDateTime.now(), mode).coerceIn(15_000L, 3_600_000L))
         }
     }
+    // While [hold] is true (the car is driving) the scene stays as it is; the change lands at the next stop.
+    var shown by remember { mutableStateOf(phase) }
+    if (!hold) shown = phase
     val reduce = rememberReduceMotion()
-    val dayness by animateFloatAsState(if (phase == ScenePhase.DAY) 1f else 0f,
+    val dayness by animateFloatAsState(if (shown == ScenePhase.DAY) 1f else 0f,
         if (reduce) snap() else tween(MOTION_SCENE_MS, easing = FastOutSlowInEasing), label = "dayness")
     val colors = remember(dayness) { lerpScene(NightSceneColors, DaySceneColors, dayness) }
     val scheme = remember(dayness) { lerpScheme(DarkColors, DayColors, dayness) }
     val pleos = remember(dayness) { lerpPleos(DarkPleos, DayPleos, dayness) }
-    CompositionLocalProvider(LocalScene provides colors, LocalScenePhase provides phase, LocalPleosColors provides pleos, LocalReduceMotion provides reduce) {
+    CompositionLocalProvider(LocalScene provides colors, LocalScenePhase provides shown, LocalPleosColors provides pleos, LocalReduceMotion provides reduce) {
         MaterialTheme(colorScheme = scheme, typography = typographyFor(compact), shapes = SharemateShapes, content = content)
     }
 }

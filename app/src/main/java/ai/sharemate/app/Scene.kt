@@ -61,6 +61,11 @@ data class SceneColors(
     /** The sweep that starts the completion ring and the tile halo. */
     val accent: Color,
     val isDay: Boolean,
+    /** 2.10 spec: status colours, selection and scrim tokens that differ by scene (night defaults). */
+    val positive: Color = Color(0xFF00E074), val negative: Color = Color(0xFFFF4C28), val outline: Color = Color(0xFF5E6A7E),
+    val selectionFill: Color = Color(0x244CE3F0), val selectionRing: Color = Color(0x734CE3F0),
+    /** The scrim colour laid over the sky behind text (bg by night, white by day), the sun or moon, and the drop shadow under tappable cards. */
+    val haze: Color = Color(0xFF0B111C), val sun: Color = Color(0xFFF6EBD3), val shadow: Color = Color.Transparent,
 ) {
     val edge: BorderStroke get() = BorderStroke(1.dp, Brush.verticalGradient(listOf(edgeTop, edgeMid, edgeBottom)))
 }
@@ -83,18 +88,21 @@ internal val NightSceneColors = SceneColors(
 /**
  * Day: a clear morning. White glass on a pale sky, ink-navy text, a deep teal for what is active. Every text token clears
  * WCAG AA on the day background and on white glass: text 15.9:1, textSecondary 8.1:1, textMuted 5.4:1, glow 6.1:1,
- * warn 5.8:1, brand 5.3:1 against #FFFFFF, and all of them at least 4.8:1 against #EEF3FA (checked in SceneTest).
+ * warn 6.1:1, brand 6.2:1 against #FFFFFF, and all of them at least 4.9:1 against #EEF3FA (checked in SceneTest).
  */
 internal val DaySceneColors = SceneColors(
     bg = Color(0xFFEEF3FA), rail = Color(0xFFE3EAF4), glass = Color(0xFFFFFFFF), glassBorder = Color(0x241B2B4D),
-    text = Color(0xFF121A2B), textSecondary = Color(0xFF44506A), textMuted = Color(0xFF5F6B7A),
-    glow = Color(0xFF0B6B7E), warn = Color(0xFFA64B06), badge = Color(0xFFC8321A), brand = Color(0xFF9A5B3C),
+    text = Color(0xFF121A2B), textSecondary = Color(0xFF44506A), textMuted = Color(0xFF5A6678),
+    glow = Color(0xFF0B6B7E), warn = Color(0xFF8A4B00), badge = Color(0xFFC8321A), brand = Color(0xFF7E4F33),
     edgeTop = Color(0x2E1B2B4D), edgeMid = Color(0x141B2B4D), edgeBottom = Color(0x0A1B2B4D),
-    tileStart = Color(0xFF2F6BFF), tileEnd = Color(0xFF19B5D6), onTile = Color(0xFFFFFFFF),
-    divider = Color(0x1F1B2B4D), ringTrack = Color(0x141B2B4D),
-    fill = Color(0x0C1B2B4D),
+    tileStart = Color(0xFF2456D6), tileEnd = Color(0xFF0B6B7E), onTile = Color(0xFFFFFFFF),
+    divider = Color(0x29121A2B), ringTrack = Color(0x24121A2B),
+    fill = Color(0x0F121A2B),
     glowCool = Color(0x40A8C8FF), glowWarm = Color(0x33FFC9A0), accent = Color(0xFF2F6BFF),
     isDay = true,
+    positive = Color(0xFF00703C), negative = Color(0xFFC62B0C), outline = Color(0xFF6B7786),
+    selectionFill = Color(0x1F0B6B7E), selectionRing = Color(0xFF0B6B7E),
+    haze = Color(0xFFFFFFFF), sun = Color(0xFFFFD27A), shadow = Color(0x1F121A2B),
 )
 
 /** The palette between night ([t] = 0) and day ([t] = 1), for the cross-fade. */
@@ -109,6 +117,9 @@ internal fun lerpScene(a: SceneColors, b: SceneColors, t: Float): SceneColors = 
         tileStart = lerp(a.tileStart, b.tileStart, t), tileEnd = lerp(a.tileEnd, b.tileEnd, t), onTile = lerp(a.onTile, b.onTile, t),
         divider = lerp(a.divider, b.divider, t), ringTrack = lerp(a.ringTrack, b.ringTrack, t),
         fill = lerp(a.fill, b.fill, t),
+        positive = lerp(a.positive, b.positive, t), negative = lerp(a.negative, b.negative, t), outline = lerp(a.outline, b.outline, t),
+        selectionFill = lerp(a.selectionFill, b.selectionFill, t), selectionRing = lerp(a.selectionRing, b.selectionRing, t),
+        haze = lerp(a.haze, b.haze, t), sun = lerp(a.sun, b.sun, t), shadow = lerp(a.shadow, b.shadow, t),
         glowCool = lerp(a.glowCool, b.glowCool, t), glowWarm = lerp(a.glowWarm, b.glowWarm, t), accent = lerp(a.accent, b.accent, t),
         isDay = t >= .5f,
     )
@@ -137,6 +148,14 @@ internal object Scene {
     val divider: Color @Composable @ReadOnlyComposable get() = LocalScene.current.divider
     val ringTrack: Color @Composable @ReadOnlyComposable get() = LocalScene.current.ringTrack
     val fill: Color @Composable @ReadOnlyComposable get() = LocalScene.current.fill
+    val positive: Color @Composable @ReadOnlyComposable get() = LocalScene.current.positive
+    val negative: Color @Composable @ReadOnlyComposable get() = LocalScene.current.negative
+    val outline: Color @Composable @ReadOnlyComposable get() = LocalScene.current.outline
+    val selectionFill: Color @Composable @ReadOnlyComposable get() = LocalScene.current.selectionFill
+    val selectionRing: Color @Composable @ReadOnlyComposable get() = LocalScene.current.selectionRing
+    val haze: Color @Composable @ReadOnlyComposable get() = LocalScene.current.haze
+    val sun: Color @Composable @ReadOnlyComposable get() = LocalScene.current.sun
+    val shadow: Color @Composable @ReadOnlyComposable get() = LocalScene.current.shadow
     val accent: Color @Composable @ReadOnlyComposable get() = LocalScene.current.accent
     val onTile: Color @Composable @ReadOnlyComposable get() = LocalScene.current.onTile
     val edge: BorderStroke @Composable @ReadOnlyComposable get() = LocalScene.current.edge

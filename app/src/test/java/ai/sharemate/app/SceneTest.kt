@@ -54,6 +54,10 @@ class SceneTest {
             assertTrue("$color on the day background", contrast(color, day.bg) >= 4.5)
         }
         assertTrue("badge digits", contrast(Color.White, day.badge) >= 4.5)
+        listOf(day.positive, day.negative).forEach { color -> assertTrue("$color status text on white", contrast(color, day.glass) >= 4.5) }
+        assertTrue("outline on white", contrast(day.outline, day.glass) >= 3.0)
+        assertTrue("white icon on the tile", contrast(Color.White, day.tileEnd) >= 4.5 && contrast(Color.White, day.tileStart) >= 4.5)
+        assertTrue("selection ring on the selection fill", contrast(day.selectionRing, day.glass) >= 3.0)
         val night = NightSceneColors
         listOf(night.text, night.textSecondary, night.textMuted, night.glow, night.warn, night.brand).forEach { color ->
             assertTrue("$color on night glass", contrast(color, night.glass) >= 4.5)
@@ -62,10 +66,13 @@ class SceneTest {
 
     @Test fun layoutTokensGrowWithTheWindow() {
         assertEquals(WidthClass.COMPACT, carLayout(700.dp).widthClass)
-        assertEquals(WidthClass.MEDIUM, carLayout(1100.dp).widthClass)
-        assertEquals(WidthClass.EXPANDED, carLayout(1680.dp).widthClass)
+        assertEquals(WidthClass.MEDIUM, carLayout(1000.dp).widthClass)
+        assertEquals(WidthClass.EXPANDED, carLayout(1200.dp).widthClass)
+        assertEquals(WidthClass.FULL, carLayout(1680.dp).widthClass)
         assertTrue(carLayout(1680.dp).gutter > carLayout(1100.dp).gutter)
-        assertTrue("가장 넓은 창에서도 내용은 1320dp까지", carLayout(1680.dp).contentMax == 1320.dp)
+        assertTrue("가장 넓은 창에서도 내용은 1200dp까지", carLayout(1680.dp).contentMax == 1200.dp)
+        assertEquals("낮은 창", HeightClass.SHORT, carLayout(1680.dp, 500.dp).heightClass)
+        assertTrue(carLayout(1680.dp).startAnchored && !phoneLayout(411.dp).startAnchored)
         assertEquals(WidthClass.COMPACT, phoneLayout(411.dp).widthClass)
         assertEquals(WidthClass.MEDIUM, phoneLayout(800.dp).widthClass)
         assertEquals(WidthClass.EXPANDED, phoneLayout(1024.dp).widthClass)

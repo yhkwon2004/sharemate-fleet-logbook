@@ -1,9 +1,11 @@
 package ai.sharemate.app
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -17,6 +19,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -45,7 +49,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
@@ -127,7 +134,9 @@ internal const val MOTION_STAGGER_MS = 40
 @Composable fun Modifier.pressable(interactionSource: InteractionSource, pressedScale: Float = .97f): Modifier {
     if (LocalReduceMotion.current) return this
     val pressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) pressedScale else 1f, spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium), label = "press")
+    // 90 ms in, 160 ms out: quick to acknowledge the touch, soft to let go (no bounce on a car screen).
+    val scale by animateFloatAsState(if (pressed) pressedScale else 1f,
+        if (pressed) tween(90, easing = LinearOutSlowInEasing) else tween(160, easing = FastOutSlowInEasing), label = "press")
     return graphicsLayer { scaleX = scale; scaleY = scale }
 }
 
@@ -141,6 +150,21 @@ internal const val MOTION_STAGGER_MS = 40
     LaunchedEffect(Unit) { started = true }
     val value by animateFloatAsState(if (started) target else 0f, if (reduce) snap() else tween(durationMs, easing = FastOutSlowInEasing), label = "value")
     return if (reduce) target else value
+}
+
+/**
+ * A value that changes in place (a widget number, a greeting, a count): the old text fades out as the new one fades in
+ * with a 6 dp lift, 160 ms; an instant swap under reduced motion. Never used for the clock or live telemetry, which simply update.
+ */
+@Composable fun DigitChange(text: String, modifier: Modifier = Modifier, style: TextStyle = MaterialTheme.typography.bodyLarge, color: Color = Color.Unspecified,
+    fontWeight: FontWeight? = null, maxLines: Int = 1, lift: Dp = 6.dp) {
+    val reduce = LocalReduceMotion.current
+    val liftPx = with(LocalDensity.current) { lift.roundToPx() }
+    AnimatedContent(targetState = text, modifier = modifier, label = "digit", transitionSpec = {
+        if (reduce) fadeIn(snap()) togetherWith fadeOut(snap())
+        else (fadeIn(tween(160, easing = FastOutSlowInEasing)) + slideInVertically(tween(160, easing = FastOutSlowInEasing)) { liftPx }) togetherWith
+            (fadeOut(tween(120, easing = FastOutSlowInEasing)) + slideOutVertically(tween(160, easing = FastOutSlowInEasing)) { -liftPx })
+    }) { value -> Text(value, style = style, color = color, fontWeight = fontWeight, maxLines = maxLines, overflow = TextOverflow.Ellipsis) }
 }
 
 /** Three dots breathing in turn: the thinking indicator, used only while real work is pending. */
