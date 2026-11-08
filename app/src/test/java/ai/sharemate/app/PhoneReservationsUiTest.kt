@@ -1,5 +1,6 @@
 package ai.sharemate.app
 
+import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -126,5 +127,19 @@ class PhoneReservationsUiTest {
         assertEquals(17 * 60 to 19 * 60, slotAfterSent(17 * 60))
         assertEquals("자정까지 남은 만큼만", 23 * 60 to 24 * 60, slotAfterSent(23 * 60))
         assertNull("하루가 끝나면 다음 날로", slotAfterSent(24 * 60))
+    }
+
+    @Test fun theDaySitsBesideTheFormFromALandscapePhoneUp() {
+        assertFalse("세로 휴대폰은 한 줄로", bookingTwoPane(phoneLayout(411.dp, 900.dp)))
+        assertTrue("가로 휴대폰", bookingTwoPane(phoneLayout(800.dp, 411.dp)))
+        assertTrue("태블릿", bookingTwoPane(phoneLayout(1000.dp, 800.dp)))
+        assertFalse("1.3배 글자에서는 가로 휴대폰도 한 줄로", bookingTwoPane(fallbackPhoneTokens(760.dp, 411.dp, 1.3f)))
+    }
+
+    @Test fun theNowLineRestsInsideItsHourRow() {
+        assertEquals(0f, nowLineTarget(null), 0f)
+        assertEquals(0.5f, nowLineTarget(0.5f), 0f)
+        assertEquals("never below the row", 1f, nowLineTarget(1.4f), 0f)
+        assertEquals("never above it", 0f, nowLineTarget(-0.2f), 0f)
     }
 }

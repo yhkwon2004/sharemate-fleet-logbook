@@ -61,7 +61,6 @@ import java.util.Locale
  * Confirmations go through LocalFollowUp (the shell shows them as a snackbar); errors stay inline next to the field.
  */
 
-private val connectedGreen = Color(0xFF2E9E6B)
 internal fun phoneTime(at: Long, pattern: String = "HH:mm") = Instant.ofEpochMilli(at).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern(pattern))
 
 /** Small per-phone memories (a deferred prompt, checked steps). Nothing here is part of the log. */
@@ -97,13 +96,15 @@ internal fun pairingErrorIsAddress(message: String) = message.contains("주소")
 /** The matcher writes its reasons as one line joined by " · "; the phone shows them as a numbered list. */
 internal fun reasonSteps(reason: String): List<String> = reason.split(" · ").map { it.trim() }.filter { it.isNotEmpty() }
 
+/** 차량 연결 · 연결 대기: the connected state in the scene's positive green (AA on day glass), the dot never pulses. */
 @Composable internal fun PhoneLinkBadge(link: PhoneLink) {
     val label = if (link.connected) "차량 연결" else "연결 대기"
-    Surface(shape = RoundedCornerShape(50), color = if (link.connected) connectedGreen.copy(alpha = .14f) else MaterialTheme.colorScheme.surfaceVariant,
+    val positive = Scene.positive
+    Surface(shape = RoundedCornerShape(50), color = if (link.connected) positive.copy(alpha = .14f) else MaterialTheme.colorScheme.surfaceVariant,
         modifier = Modifier.semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite; stateDescription = label }) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(Modifier.size(8.dp).background(if (link.connected) connectedGreen else MaterialTheme.colorScheme.onSurfaceVariant, RoundedCornerShape(50)))
-            Text(label, style = MaterialTheme.typography.labelMedium)
+            Box(Modifier.size(8.dp).background(if (link.connected) positive else MaterialTheme.colorScheme.onSurfaceVariant, RoundedCornerShape(50)))
+            Text(label, style = MaterialTheme.typography.labelMedium, color = if (link.connected) positive else MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -189,6 +190,9 @@ private class PendingIncidentReport(val kind: IncidentKind, val tappedAt: Long, 
         delay((tappedAt + INCIDENT_UNDO_WINDOW_MILLIS - System.currentTimeMillis()).coerceAtLeast(0))
         if (pending?.tappedAt == tappedAt) pending = null
     }
+    // One panel, four 48-dp chips; 사고 reads in the scene's negative, the others carry the outline token (AA on glass by day).
+    val negative = Scene.negative
+    val outline = Scene.outline
     Panel(padding = 20.dp) {
         Eyebrow("사고·특이사항 · 차량 시각·계기판·위치로 기록")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -197,9 +201,9 @@ private class PendingIncidentReport(val kind: IncidentKind, val tappedAt: Long, 
                 OutlinedButton(onClick = { if (urgent) confirmAccident = true else report(kind) }, enabled = !busy && paired,
                     modifier = Modifier.weight(1f).heightIn(min = 52.dp).semantics { contentDescription = "${kind.label} 기록" },
                     shape = RoundedCornerShape(14.dp), contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
-                    border = BorderStroke(1.dp, if (urgent) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outlineVariant)) {
+                    border = BorderStroke(1.dp, if (urgent) negative else outline)) {
                     Text(kind.label, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        color = if (urgent) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                        color = if (urgent) negative else MaterialTheme.colorScheme.onSurface)
                 }
             }
         }

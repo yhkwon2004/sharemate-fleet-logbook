@@ -1,5 +1,6 @@
 package ai.sharemate.app
 
+import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -106,5 +107,17 @@ class PhoneAuthUiTest {
         assertTrue(driverListNote(paired = false, connected = false).startsWith("직원 목록은 차량과 연결하면"))
         assertTrue(driverListNote(paired = true, connected = false).startsWith("차량과 다시 연결되면"))
         assertTrue(driverListNote(paired = true, connected = true).contains("직원을 추가하면"))
+    }
+
+    @Test fun signInAndOnboardingColumnsAre400OnAPhoneAnd480OnATablet() {
+        assertEquals(400.dp, authColumnMax(expanded = false))
+        assertEquals(480.dp, authColumnMax(expanded = true))
+    }
+
+    @Test fun signInPutsTheArtOnTheLeftOnlyWhenWiderThanTall() {
+        assertTrue(signInSplit(915.dp, 412.dp))
+        assertFalse(signInSplit(412.dp, 915.dp))
+        assertFalse("정사각형은 세로 배치", signInSplit(600.dp, 600.dp))
+        assertTrue("낮 안개는 위쪽 55 %", SIGN_IN_HAZE_FRACTION == .55f)
     }
 }

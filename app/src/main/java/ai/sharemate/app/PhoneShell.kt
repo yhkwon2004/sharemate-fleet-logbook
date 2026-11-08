@@ -13,36 +13,47 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -59,7 +70,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
@@ -77,11 +90,13 @@ import java.time.YearMonth
 import java.time.ZoneId
 
 /*
- * The phone shell: four tabs (홈 · 운행 · 경비 · 현황), a small stack of full-screen routes on top (설정, 운행 상세,
- * 직원 드릴다운), one snackbar channel for every confirmation, and the pull-to-refresh and offline banner that tell
+ * The phone shell: five tabs (홈 · 예약 · 운행 · 경비 · 현황), a small stack of full-screen routes on top (설정, 운행 상세,
+ * 직원 드릴다운, 차량 정보), one snackbar channel for every confirmation, and the pull-to-refresh and offline banner that tell
  * the truth about the link. Routing is a sealed class and a saved list, not a navigation library; the back button
  * pops the list. Every edit still goes to the car as a SyncCommand and comes back through the mirrored copy; the
  * shell only remembers which purposes it just sent so the row can show them before the mirror catches up.
+ * 2.10: the root provides LocalLayout; every frame keeps to the class's content width, centred, and in a short landscape
+ * window the tab pill becomes a left rail.
  */
 
 /** Where the phone is, on top of the tab row. [Tab] is the bottom of the stack and is never stored in it. */
@@ -365,65 +380,81 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
 
     var assistantOpen by rememberSaveable { mutableStateOf(false) }
     val badges = remember(data, month) { phoneBadges(data, month, zone) }
+    val navTabs = remember(badges) { PhoneTab.entries.mapIndexed { index, tab -> NavTab(tab.label, tab.icon, badges[index]) } }
     val reduce = LocalReduceMotion.current
     val swapForward = pageSwap(forward = true)
     val swapBack = pageSwap(forward = false)
+    // Where the greeting ends (root px), so the day haze stops just under it.
+    var greetingBottom by remember { mutableFloatStateOf(0f) }
 
     CompositionLocalProvider(LocalFollowUp provides followUp) {
-        // 2.8: the phone shares the car's Midnight backdrop; the scaffold is transparent so the glow and the city show through.
-        Box(Modifier.fillMaxSize().sceneBackdrop()) {
-            // One background layer for every screen: the night city at full strength behind home, dimmed behind the other
+        // 2.8: the phone shares the car's backdrop; the scaffold is transparent so the glow and the city show through.
+        // 2.10: the root measures the window once and provides the layout tokens every frame reads.
+        ProvideLayout(compactApp = true, Modifier.fillMaxSize().sceneBackdrop()) { tokens ->
+            val showTabs = hasLog && ui.routes.isEmpty()
+            val rail = showTabs && phoneUsesRail(maxWidth, maxHeight)
+            // One background layer for every screen: the city at full strength behind home, dimmed behind the other
             // tabs and full-screen routes, moving on the page clock so header, nav and backdrop never jump between screens.
             val skyLevel = if (!hasLog) .34f else if (ui.route == PhoneRoute.Tab && ui.tab == 0) 1f else .30f
             val skyAlpha by animateFloatAsState(skyLevel, if (reduce) snap() else tween(MOTION_PAGE_MS), label = "phone-sky")
-            PhoneHomeBackdrop(Modifier.matchParentSize().graphicsLayer { alpha = skyAlpha })
+            PhoneHomeBackdrop(Modifier.matchParentSize().graphicsLayer { alpha = skyAlpha }, hazeTo = greetingBottom)
             Scaffold(containerColor = Color.Transparent,
-                snackbarHost = { PhoneSnackbarHost(snackbar, Modifier.padding(horizontal = 12.dp)) },
-                bottomBar = {
-                    if (hasLog && ui.routes.isEmpty()) PhoneGlassNav(PhoneTab.entries.mapIndexed { index, tab -> NavTab(tab.label, tab.icon, badges[index]) }, ui.tab) {
-                        ui = ui.copy(tab = it)
-                    }
-                }) { padding ->
-                Box(Modifier.fillMaxSize().padding(padding)) {
-                    AnimatedContent(targetState = RouteFrame(ui.route, ui.routes.size), label = "phone-route", transitionSpec = {
-                        if (reduce) fadeIn(snap()) togetherWith fadeOut(snap())
-                        else if (targetState.depth > initialState.depth) slideInHorizontally(tween(160, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(160)) togetherWith
-                            slideOutHorizontally(tween(160, easing = FastOutSlowInEasing)) { -it / 4 } + fadeOut(tween(120))
-                        else slideInHorizontally(tween(160, easing = FastOutSlowInEasing)) { -it / 4 } + fadeIn(tween(160)) togetherWith
-                            slideOutHorizontally(tween(160, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(120))
-                    }) { frame ->
-                        when (val route = frame.route) {
-                            PhoneRoute.Settings -> PhoneSettingsPage(data, link, paired, busy, host.pair, host.unpair, cardAlerts, queued, host.openAlertSettings,
-                                host.importStatement, host.pickFile, onBack = { ui = ui.pop() }, accountSlot = { host.accountCard?.invoke() })
-                            is PhoneRoute.TripDetail -> PhoneTripDetailScreen(route.id, data, paired, busy, send, onBack = { ui = ui.pop() },
-                                onPickDriver = { driverFor = listOf(route.id) }, pendingEdit = ui.pendingEdits[route.id], classify = classify)
-                            is PhoneRoute.Employee -> PhoneEmployeeScreen(route.id, data, paired, busy, now, ui.pendingEdits, commands, onBack = { ui = ui.pop() })
-                            PhoneRoute.Vehicle -> PhoneVehicleScreen(data, link, now, onBack = { ui = ui.pop() })
-                            PhoneRoute.Tab -> Column(Modifier.fillMaxSize()) {
-                                PhoneHeader(data, link, paired, hasAssistant = host.assistant != null, onAssistant = { assistantOpen = true }, onSettings = { ui = ui.push(PhoneRoute.Settings) },
-                                    vehicleSwitcher = host.vehicleSwitcher)
-                                PhoneBanner(offline && !ui.dismissedBanners.contains("offline"),
-                                    "차량과 연결되지 않아요" + (lastSeen?.let { " · 마지막 수신 $it" } ?: "") + " · 보던 사본을 보여 주고 있어요",
-                                    Modifier.padding(horizontal = 20.dp, vertical = 4.dp), onDismiss = { ui = ui.copy(dismissedBanners = ui.dismissedBanners + "offline") })
-                                if (!hasLog) PhoneConnectScreen(state, link, paired, busy, host.pair, host.pickFile, Modifier.weight(1f))
-                                else {
-                                    if (ui.tab == PhoneTab.TRIPS.ordinal || ui.tab == PhoneTab.EXPENSES.ordinal) PhoneEmployeeChips(data, ui.employeeFilter) { ui = ui.copy(employeeFilter = it) }
-                                    AnimatedContent(targetState = ui.tab, modifier = Modifier.weight(1f).fillMaxWidth(), transitionSpec = { if (targetState > initialState) swapForward else swapBack }, label = "phone-tab") { tab ->
-                                        pageStates.SaveableStateProvider(tab) {
-                                            val pullable = tab != PhoneTab.REPORT.ordinal && tab != PhoneTab.BOOK.ordinal
-                                            val body: @Composable () -> Unit = {
-                                                when (tab) {
-                                                    0 -> PhoneHomeTab(data, link, paired, busy, now, host.repository.photos, photoVersion, host.capture, host.fetchPhoto, commands, ui.pendingEdits,
-                                                        onVehicle = { ui = ui.push(PhoneRoute.Vehicle) })
-                                                    PhoneTab.BOOK.ordinal -> host.bookingTab(PhoneBookingArgs(data, paired, link.connected, busy, now, sendConfirmed))
-                                                    PhoneTab.TRIPS.ordinal -> PhoneTripList(data, ui.employeeFilter, paired, busy, now, ui.pendingEdits, commands, Modifier.fillMaxSize())
-                                                    PhoneTab.EXPENSES.ordinal -> host.expensesTab(PhoneExpensesArgs(data, month, ui.employeeFilter, paired, busy, send, cardAlerts, queued, host.openAlertSettings, zone))
-                                                    else -> host.reportTab(PhoneReportArgs(data, month, { ui = ui.copy(month = it.toString()) }, ui.employeeFilter, paired, busy, send,
-                                                        commands.openTrip, { ui = ui.push(PhoneRoute.Employee(it)) }, host.exportXlsx))
+                snackbarHost = { PhoneSnackbarHost(snackbar, Modifier.widthIn(max = 600.dp).padding(horizontal = 12.dp)) },
+                bottomBar = { if (showTabs && !rail) PhoneGlassNav(navTabs, ui.tab) { ui = ui.copy(tab = it) } }) { padding ->
+                Row(Modifier.fillMaxSize().padding(padding)) {
+                    if (rail) PhoneGlassRail(navTabs, ui.tab) { ui = ui.copy(tab = it) }
+                    Box(Modifier.weight(1f).fillMaxHeight()) {
+                        AnimatedContent(targetState = RouteFrame(ui.route, ui.routes.size), label = "phone-route", transitionSpec = {
+                            if (reduce) fadeIn(snap()) togetherWith fadeOut(snap())
+                            else if (targetState.depth > initialState.depth) slideInHorizontally(tween(160, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(160)) togetherWith
+                                slideOutHorizontally(tween(160, easing = FastOutSlowInEasing)) { -it / 4 } + fadeOut(tween(120))
+                            else slideInHorizontally(tween(160, easing = FastOutSlowInEasing)) { -it / 4 } + fadeIn(tween(160)) togetherWith
+                                slideOutHorizontally(tween(160, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(120))
+                        }) { frame ->
+                            // Every frame keeps to the class's content width and sits centred; the backdrop breathes around it.
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                                Box(Modifier.contentWidth().fillMaxHeight()) {
+                                    when (val route = frame.route) {
+                                        PhoneRoute.Settings -> PhoneSettingsPage(data, link, paired, busy, host.pair, host.unpair, cardAlerts, queued, host.openAlertSettings,
+                                            host.importStatement, host.pickFile, onBack = { ui = ui.pop() }, accountSlot = { host.accountCard?.invoke() })
+                                        is PhoneRoute.TripDetail -> PhoneTripDetailScreen(route.id, data, paired, busy, send, onBack = { ui = ui.pop() },
+                                            onPickDriver = { driverFor = listOf(route.id) }, pendingEdit = ui.pendingEdits[route.id], classify = classify)
+                                        is PhoneRoute.Employee -> PhoneEmployeeScreen(route.id, data, paired, busy, now, ui.pendingEdits, commands, onBack = { ui = ui.pop() })
+                                        PhoneRoute.Vehicle -> PhoneVehicleScreen(data, link, now, onBack = { ui = ui.pop() })
+                                        PhoneRoute.Tab -> Column(Modifier.fillMaxSize()) {
+                                            PhoneHeader(data, link, paired, hasAssistant = host.assistant != null, onAssistant = { assistantOpen = true }, onSettings = { ui = ui.push(PhoneRoute.Settings) },
+                                                vehicleSwitcher = host.vehicleSwitcher)
+                                            PhoneBanner(offline && !ui.dismissedBanners.contains("offline"),
+                                                "차량과 연결되지 않아요" + (lastSeen?.let { " · 마지막 수신 $it" } ?: "") + " · 보던 사본을 보여 주고 있어요",
+                                                Modifier.padding(horizontal = tokens.gutter, vertical = 4.dp), onDismiss = { ui = ui.copy(dismissedBanners = ui.dismissedBanners + "offline") })
+                                            if (!hasLog) PhoneConnectScreen(state, link, paired, busy, host.pair, host.pickFile, Modifier.weight(1f))
+                                            else {
+                                                if (ui.tab == PhoneTab.TRIPS.ordinal || ui.tab == PhoneTab.EXPENSES.ordinal) PhoneEmployeeChips(data, ui.employeeFilter) { ui = ui.copy(employeeFilter = it) }
+                                                AnimatedContent(targetState = ui.tab, modifier = Modifier.weight(1f).fillMaxWidth(), transitionSpec = { if (targetState > initialState) swapForward else swapBack }, label = "phone-tab") { tab ->
+                                                    pageStates.SaveableStateProvider(tab) {
+                                                        val pullable = tab != PhoneTab.REPORT.ordinal && tab != PhoneTab.BOOK.ordinal
+                                                        val body: @Composable () -> Unit = {
+                                                            when (tab) {
+                                                                0 -> PhoneHomeTab(data, link, paired, busy, now, host.repository.photos, photoVersion, host.capture, host.fetchPhoto, commands, ui.pendingEdits,
+                                                                    onVehicle = { ui = ui.push(PhoneRoute.Vehicle) }, onGreetingBottom = { greetingBottom = it })
+                                                                PhoneTab.BOOK.ordinal -> host.bookingTab(PhoneBookingArgs(data, paired, link.connected, busy, now, sendConfirmed))
+                                                                PhoneTab.TRIPS.ordinal -> PhoneTripList(data, ui.employeeFilter, paired, busy, now, ui.pendingEdits, commands, Modifier.fillMaxSize())
+                                                                PhoneTab.EXPENSES.ordinal -> host.expensesTab(PhoneExpensesArgs(data, month, ui.employeeFilter, paired, busy, send, cardAlerts, queued, host.openAlertSettings, zone))
+                                                                else -> host.reportTab(PhoneReportArgs(data, month, { ui = ui.copy(month = it.toString()) }, ui.employeeFilter, paired, busy, send,
+                                                                    commands.openTrip, { ui = ui.push(PhoneRoute.Employee(it)) }, host.exportXlsx))
+                                                            }
+                                                        }
+                                                        if (pullable) {
+                                                            // Material's indicator, in the scene's glass with the glow for the spinner; the content never stretches.
+                                                            val pull = rememberPullToRefreshState()
+                                                            PullToRefreshBox(isRefreshing = refreshing, onRefresh = refresh, modifier = Modifier.fillMaxSize(), state = pull, indicator = {
+                                                                PullToRefreshDefaults.Indicator(state = pull, isRefreshing = refreshing, modifier = Modifier.align(Alignment.TopCenter),
+                                                                    containerColor = Scene.glass, color = Scene.glow)
+                                                            }) { body() }
+                                                        } else Box(Modifier.fillMaxSize()) { body() }
+                                                    }
                                                 }
                                             }
-                                            if (pullable) PullToRefreshBox(isRefreshing = refreshing, onRefresh = refresh, modifier = Modifier.fillMaxSize()) { body() }
-                                            else Box(Modifier.fillMaxSize()) { body() }
                                         }
                                     }
                                 }
@@ -432,29 +463,49 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
                     }
                 }
             }
+            driverFor?.let { ids ->
+                val trips = (data.trips + listOfNotNull(data.open)).filter { it.id in ids }
+                PhoneDriverSheet(data, if (trips.size == 1) "이 운행의 사용자" else "${trips.size}건의 사용자", current = trips.singleOrNull()?.driverId,
+                    onPick = { driver ->
+                        driverFor = null
+                        trips.forEach { send(SyncCommand.SetTripDriver(it.id, driver.id)) }
+                        followUp(FollowUp(if (trips.size == 1) "사용자를 ${driver.label}으로 지정했어요" else "${trips.size}건의 사용자를 ${driver.label}으로 지정했어요"))
+                    }, onDismiss = { driverFor = null })
+            }
+            if (assistantOpen) host.assistant?.invoke({ assistantOpen = false }, { id -> assistantOpen = false; ui = ui.push(PhoneRoute.TripDetail(id)) })
         }
     }
-    driverFor?.let { ids ->
-        val trips = (data.trips + listOfNotNull(data.open)).filter { it.id in ids }
-        PhoneDriverSheet(data, if (trips.size == 1) "이 운행의 사용자" else "${trips.size}건의 사용자", current = trips.singleOrNull()?.driverId,
-            onPick = { driver ->
-                driverFor = null
-                trips.forEach { send(SyncCommand.SetTripDriver(it.id, driver.id)) }
-                followUp(FollowUp(if (trips.size == 1) "사용자를 ${driver.label}으로 지정했어요" else "${trips.size}건의 사용자를 ${driver.label}으로 지정했어요"))
-            }, onDismiss = { driverFor = null })
-    }
-    if (assistantOpen) host.assistant?.invoke({ assistantOpen = false }, { id -> assistantOpen = false; ui = ui.push(PhoneRoute.TripDetail(id)) })
 }
 
 /**
- * The phone header on every tab: the brand mark, then the company-vehicle switcher (plate and live status, opens the fleet
- * sheet) where the brand text used to be cut off, then icon buttons for the assistant and settings.
+ * Press feedback for a control that owns its own click (the vehicle chip from PhoneFleetUi): the wrapper watches the
+ * touch without consuming it and settles the chip to 97 % while it is held, through the same [pressable] the cards use.
+ */
+@Composable private fun PressFeedback(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val source = remember { MutableInteractionSource() }
+    Box(modifier.pressable(source).pointerInput(Unit) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            val press = PressInteraction.Press(down.position)
+            source.tryEmit(press)
+            val up = waitForUpOrCancellation()
+            source.tryEmit(if (up != null) PressInteraction.Release(press) else PressInteraction.Cancel(press))
+        }
+    }) { content() }
+}
+
+/**
+ * The phone header on every tab, 56 dp: the brand mark, then the company-vehicle switcher (plate and live status, opens the
+ * fleet sheet), then icon buttons for the assistant and settings in the Material on-surface colour.
  */
 @Composable private fun PhoneHeader(data: TripLogData, link: PhoneLink, paired: Boolean, hasAssistant: Boolean, onAssistant: () -> Unit, onSettings: () -> Unit,
     vehicleSwitcher: (@Composable () -> Unit)? = null) {
-    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 6.dp, top = 10.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    val gutter = LocalLayout.current.gutter
+    val tint = MaterialTheme.colorScheme.onSurface
+    Row(Modifier.fillMaxWidth().padding(start = gutter - 4.dp, end = (gutter - 12.dp).coerceAtLeast(4.dp), top = 4.dp, bottom = 4.dp).heightIn(min = 56.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = "SHAREMATE", tint = Scene.brand, modifier = Modifier.size(30.dp))
-        if (vehicleSwitcher != null) Box(Modifier.weight(1f)) { vehicleSwitcher() }
+        if (vehicleSwitcher != null) Box(Modifier.weight(1f)) { PressFeedback { vehicleSwitcher() } }
         else {
             Column(Modifier.weight(1f).semantics(mergeDescendants = true) { heading() }) {
                 Text("SHAREMATE", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, maxLines = 1, softWrap = false)
@@ -465,20 +516,30 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
             if (paired) PhoneLinkBadge(link)
         }
         if (hasAssistant) IconButton(onClick = onAssistant, modifier = Modifier.size(48.dp)) {
-            Icon(painterResource(R.drawable.ic_search), contentDescription = "운행 비서 열기", modifier = Modifier.size(24.dp))
+            Icon(painterResource(R.drawable.ic_search), contentDescription = "운행 비서 열기", modifier = Modifier.size(24.dp), tint = tint)
         }
-        IconButton(onClick = onSettings, modifier = Modifier.size(48.dp)) { Icon(painterResource(R.drawable.ic_tune), contentDescription = "설정", modifier = Modifier.size(24.dp)) }
+        IconButton(onClick = onSettings, modifier = Modifier.size(48.dp)) { Icon(painterResource(R.drawable.ic_tune), contentDescription = "설정", modifier = Modifier.size(24.dp), tint = tint) }
     }
 }
 
-/** One row of chips: everyone, each registered driver, and trips without a driver. Remembered per phone. */
+/** One row of 48-dp chips: everyone, each registered driver, and trips without a driver. Remembered per phone; wraps at a 1.3× font. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable internal fun PhoneEmployeeChips(data: TripLogData, filter: String?, onChange: (String?) -> Unit) {
     val options = listOf<Pair<String?, String>>(null to "전체 직원") + data.drivers.map { it.id to it.label } + ("" to "직원 미지정")
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        options.forEach { (id, label) ->
-            FilterChip(selected = filter == id, onClick = { onChange(id) }, label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                modifier = Modifier.heightIn(min = 40.dp).semantics { contentDescription = "직원 필터 $label" })
-        }
+    val gutter = LocalLayout.current.gutter
+    val wrap = LocalDensity.current.fontScale > 1.25f
+    val chip: @Composable (String?, String) -> Unit = { id, label ->
+        val selected = filter == id
+        // Selected = fill + ring + glow label, never colour alone.
+        FilterChip(selected = selected, onClick = { onChange(id) }, label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Scene.selectionFill, selectedLabelColor = Scene.glow),
+            border = FilterChipDefaults.filterChipBorder(enabled = true, selected = selected, borderColor = Scene.outline, selectedBorderColor = Scene.selectionRing, selectedBorderWidth = 1.5.dp),
+            modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "직원 필터 $label" })
+    }
+    if (wrap) FlowRow(Modifier.fillMaxWidth().padding(horizontal = gutter, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        options.forEach { (id, label) -> chip(id, label) }
+    } else Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = gutter, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        options.forEach { (id, label) -> chip(id, label) }
     }
 }
 
@@ -492,10 +553,11 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
     }
 }
 
-/** Header for a full-screen route: a 48dp back button that reads "뒤로", then the title as a heading. */
+/** Header for a full-screen route, 56 dp: a 48dp back button that reads "뒤로", then the title as a heading. */
 @Composable internal fun PhoneRouteHeader(title: String, subtitle: String? = null, onBack: () -> Unit, trailing: (@Composable () -> Unit)? = null) {
-    Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로") }
+    val inset = (LocalLayout.current.gutter - 12.dp).coerceAtLeast(4.dp)
+    Row(Modifier.fillMaxWidth().padding(start = inset, end = inset + 8.dp, top = 4.dp, bottom = 4.dp).heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로", tint = MaterialTheme.colorScheme.onSurface) }
         Column(Modifier.weight(1f).padding(start = 4.dp).semantics(mergeDescendants = true) { heading() }) {
             Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)

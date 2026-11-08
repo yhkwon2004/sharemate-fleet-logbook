@@ -1,5 +1,6 @@
 package ai.sharemate.app
 
+import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -91,5 +92,15 @@ class FleetCareUiTest {
             assertTrue(careDoneExplanation(kind).startsWith("완료를 누르면"))
             assertFalse(careGuidance(kind).isBlank())
         }
+    }
+
+    @Test fun settingsFieldsSitInTwoColumnsOnlyOnAWideWindowAtANormalFontScale() {
+        assertEquals(2, careFieldColumns(carLayout(1680.dp), 1f))
+        assertEquals(2, careFieldColumns(carLayout(1200.dp), 1.15f))
+        assertEquals("1.3배 글자에서는 항상 한 열", 1, careFieldColumns(carLayout(1680.dp), 1.3f))
+        assertEquals("MEDIUM 이하는 한 열", 1, careFieldColumns(carLayout(1000.dp), 1f))
+        assertEquals(1, careFieldColumns(carLayout(700.dp), 1f))
+        assertEquals("태블릿 폭의 휴대폰도 두 열", 2, careFieldColumns(phoneLayout(900.dp), 1f))
+        assertEquals(1, careFieldColumns(phoneLayout(400.dp), 1f))
     }
 }

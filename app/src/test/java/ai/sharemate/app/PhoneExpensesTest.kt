@@ -113,4 +113,15 @@ class PhoneExpensesTest {
         assertEquals("incident-steps-abc", incidentStepsKey("abc"))
         assertEquals("phone-ui", PHONE_UI_PREFS)
     }
+
+    @Test fun typeTotalsCoverEveryKindInOrderWithZeroForNothingSpent() {
+        val a = trip("a", 10).copy(expenses = listOf(TripExpense(ExpenseType.PARKING, 4_500, at(10, 12), EditSource.PHONE), TripExpense(ExpenseType.FUEL, 60_000, at(10, 13), EditSource.DRIVER)))
+        val b = trip("b", 11).copy(expenses = listOf(TripExpense(ExpenseType.PARKING, 2_000, at(11, 12), EditSource.CARD, cardChargeId = "c1")))
+        val totals = expenseTypeTotals(listOf(a, b))
+        assertEquals("종류 순서대로, 빠진 종류 없이", ExpenseType.entries, totals.keys.toList())
+        assertEquals(6_500L, totals[ExpenseType.PARKING]); assertEquals(60_000L, totals[ExpenseType.FUEL])
+        assertEquals(0L, totals[ExpenseType.TOLL]); assertEquals(0L, totals[ExpenseType.MAINTENANCE]); assertEquals(0L, totals[ExpenseType.OTHER])
+        assertEquals("합계는 운행 경비 합과 같음", listOf(a, b).sumOf { it.expenseWon }, totals.values.sum())
+        assertTrue(expenseTypeTotals(emptyList()).values.all { it == 0L })
+    }
 }

@@ -21,24 +21,44 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 
 /*
- * Loading on the phone looks like the screen that is about to appear: a hero card and a few rows, in the surface
- * colour, pulsing slowly (still under reduced motion). It is drawn only while the stored copy is being read; there
- * is no timer and nothing pretends to progress.
+ * Loading on the phone looks like the screen that is about to appear: the greeting lines, the 2 × 2 destination cards and
+ * one widget row, in the surface colour, pulsing slowly (still under reduced motion). It is drawn only while the stored
+ * copy is being read; there is no timer and nothing pretends to progress.
  */
 
-/** A home-shaped placeholder shown instead of the brand splash while the copy loads: hero card + three task rows. */
+/**
+ * A home-shaped placeholder shown instead of the brand splash while the copy loads: greeting, four cards, two widgets. It is
+ * drawn before the shell exists, so it measures the window itself (ProvideLayout) to use the phone's gutters and content width.
+ */
 @Composable internal fun PhoneHomeSkeleton(modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface) {
-            Column(Modifier.fillMaxWidth().padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    ProvideLayout(compactApp = true, modifier.fillMaxWidth()) { layout ->
+        Column(Modifier.contentWidth().align(Alignment.TopCenter).padding(horizontal = layout.gutter, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(layout.cardGap)) {
+            Column(Modifier.fillMaxWidth().padding(top = 60.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 SkeletonBlock(height = 12.dp, width = 140.dp)
-                SkeletonBlock(height = 40.dp, width = 180.dp, corner = 12.dp)
-                SkeletonBlock(height = 14.dp, width = 220.dp)
+                SkeletonBlock(height = 28.dp, width = 220.dp, corner = 10.dp)
+                SkeletonBlock(height = 14.dp, width = 180.dp)
             }
+            repeat(2) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(layout.cardGap)) {
+                    repeat(2) { PhoneCardSkeleton(Modifier.weight(1f)) }
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(layout.cardGap)) {
+                repeat(2) { PhoneCardSkeleton(Modifier.weight(1f), height = 120.dp) }
+            }
+            Text("운행일지를 불러오고 있어요", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp, top = 8.dp).semantics { liveRegion = LiveRegionMode.Polite })
         }
-        repeat(3) { PhoneRowSkeleton() }
-        Text("운행일지를 불러오고 있어요", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 4.dp).semantics { liveRegion = LiveRegionMode.Polite })
+    }
+}
+
+/** One destination-card placeholder: a tile and two lines. */
+@Composable private fun PhoneCardSkeleton(modifier: Modifier = Modifier, height: androidx.compose.ui.unit.Dp = 84.dp) {
+    Surface(modifier, shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface) {
+        Row(Modifier.fillMaxWidth().height(height).padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            SkeletonBlock(height = 44.dp, width = 44.dp, corner = 13.dp)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) { SkeletonBlock(height = 14.dp); SkeletonBlock(height = 12.dp, width = 72.dp) }
+        }
     }
 }
 
@@ -57,7 +77,7 @@ import androidx.compose.ui.unit.dp
 
 /** A list-shaped placeholder for the trips tab: a month header line and five rows. */
 @Composable internal fun PhoneListSkeleton(modifier: Modifier = Modifier, rows: Int = 5) {
-    Column(modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(modifier.fillMaxWidth().padding(horizontal = LocalLayout.current.gutter, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SkeletonBlock(height = 18.dp, width = 200.dp, corner = 6.dp)
         repeat(rows) { PhoneRowSkeleton() }
     }

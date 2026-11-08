@@ -2,6 +2,7 @@ package ai.sharemate.app
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +47,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -77,6 +80,9 @@ internal const val ASSISTANT_LABEL = "화면 비서 · Gleo 연동 전 규칙 �
 internal const val ASSISTANT_NOTE = "기기 안에서 규칙으로 처리해요 · 마이크 없음 · 네트워크 없음"
 internal const val ASSISTANT_SETTINGS_NOTE = "Gleo 음성 연동은 승인 후 제공돼요 · 지금은 운행 비서에서 같은 세 동작(목적 기록 · 비용 추가 · 요약)을 화면으로 써요"
 private const val THINKING_DELAY_MS = 300L
+
+/** The sheet's scrim settles at .45 over the page (spec C); the sheet itself keeps Material's slide. */
+private const val SHEET_SCRIM_ALPHA = .45f
 
 /** Phrases the preview card shows; each is one the parser understands today. */
 internal val ASSISTANT_EXAMPLES = listOf("방금 운행 업무로 기록해줘", "통행료 3,600원 추가해줘", "이번 달 운행 요약해줘")
@@ -129,7 +135,8 @@ internal fun AssistantSheet(
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = MaterialTheme.colorScheme.surface,
         contentColor = MaterialTheme.colorScheme.onSurface, sheetMaxWidth = if (compact) BottomSheetDefaults.SheetMaxWidth else 960.dp,
-        dragHandle = { BottomSheetDefaults.DragHandle(color = MaterialTheme.colorScheme.outline) }) {
+        scrimColor = MaterialTheme.colorScheme.scrim.copy(alpha = SHEET_SCRIM_ALPHA),
+        dragHandle = { BottomSheetDefaults.DragHandle(color = Scene.outline) }) {
         AssistantBody(data, now, writer, act, followUp, onOpenTrip, onDismiss, compact,
             Modifier.fillMaxHeight(if (compact) 0.92f else 0.88f), initialText)
     }
@@ -261,7 +268,7 @@ internal fun AssistantBody(
                 placeholder = { Text("예: 주차비 4,500원 추가해줘", color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 supportingText = if (tooLong) { { Text("${ASSISTANT_MAX_INPUT}자까지 알아들을 수 있어요 · 지금 ${input.length}자", color = colors.error) } } else null,
                 colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = colors.surfaceContainerLow, focusedContainerColor = colors.surface,
-                    unfocusedBorderColor = colors.outlineVariant, focusedBorderColor = colors.primary),
+                    unfocusedBorderColor = Scene.outline, focusedBorderColor = colors.primary),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { submit(input) }))
             Button(onClick = { submit(input) }, enabled = input.isNotBlank() && !tooLong && !busy, shape = RoundedCornerShape(18.dp),
                 modifier = Modifier.heightIn(min = tap).semantics { contentDescription = "보내기" }) {
@@ -271,15 +278,26 @@ internal fun AssistantBody(
     }
 }
 
+/**
+ * A tappable surface the car and the phone share (spec C): on the phone it settles to .97 with Material's bounded ripple,
+ * on the car to .98 with no ripple. One interaction source per surface, shared with its clickable.
+ */
+@Composable private fun TapSurface(phone: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, shape: Shape,
+    color: Color, contentColor: Color, border: BorderStroke? = null, content: @Composable () -> Unit) {
+    val source = remember { MutableInteractionSource() }
+    if (phone) Surface(onClick = onClick, modifier = modifier.pressable(source, .97f), enabled = enabled, shape = shape, color = color, contentColor = contentColor,
+        border = border, interactionSource = source, content = content)
+    else Surface(modifier.carTap(source, enabled = enabled, onClick = onClick), shape = shape, color = color, contentColor = contentColor, border = border, content = content)
+}
+
 @Composable private fun AssistantHeader(compact: Boolean, sourceNote: String?, onClose: (() -> Unit)?) {
-    val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(ASSISTANT_TITLE, style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
                     modifier = Modifier.semantics { heading() })
-                Surface(shape = RoundedCornerShape(10.dp), color = LocalPleosColors.current.surfaceHigh) {
-                    Text(ASSISTANT_LABEL, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant,
+                Surface(shape = RoundedCornerShape(10.dp), color = Scene.fill, contentColor = Scene.textSecondary, border = BorderStroke(1.dp, Scene.divider)) {
+                    Text(ASSISTANT_LABEL, style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
@@ -304,10 +322,10 @@ internal fun AssistantBody(
 @Composable private fun UserBubble(text: String, compact: Boolean, enabled: Boolean, onRevise: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-        Surface(onClick = onRevise, enabled = enabled, shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomStart = 22.dp, bottomEnd = 6.dp),
+        TapSurface(phone = compact, onClick = onRevise, enabled = enabled, shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomStart = 22.dp, bottomEnd = 6.dp),
             color = colors.primaryContainer, contentColor = colors.onPrimaryContainer,
-            modifier = Modifier.widthIn(max = if (compact) 320.dp else 560.dp).heightIn(min = 48.dp)
-                .semantics { role = Role.Button; contentDescription = "보낸 말: $text. 눌러서 고쳐 묻기" }) {
+            modifier = Modifier.widthIn(max = if (compact) 320.dp else 560.dp).heightIn(min = if (compact) 48.dp else 56.dp)
+                .semantics { contentDescription = "보낸 말: $text. 눌러서 고쳐 묻기" }) {
             Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp))
         }
     }
@@ -330,7 +348,7 @@ internal fun AssistantBody(
     AssistantSurface(Modifier.heightIn(min = 48.dp).alpha(if (visible) 1f else 0f), compact) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             ThinkingDots()
-            Text("기록을 읽고 있어요", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("기록을 읽고 있어요", style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary)
         }
     }
 }
@@ -373,7 +391,7 @@ internal fun AssistantBody(
                 }
             }
             if (sourceNote != null && !answer.changed && answer.intent !is AssistantIntent.Unknown) Muted(sourceNote)
-            if (undone) Text("되돌렸어요. 기록은 이전 상태예요.", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
+            if (undone) Text("되돌렸어요. 기록은 이전 상태예요.", style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (answer.changed && !undone) TextButton(onClick = undo, enabled = !busy, modifier = Modifier.heightIn(min = tap)) { Text("실행 취소", style = MaterialTheme.typography.labelLarge) }
@@ -387,10 +405,9 @@ internal fun AssistantBody(
 }
 
 @Composable private fun FailedBubble(message: String, compact: Boolean, tap: Dp, busy: Boolean, retry: () -> Unit) {
-    val colors = MaterialTheme.colorScheme
     AssistantSurface(Modifier.semantics { liveRegion = LiveRegionMode.Polite }, compact) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(message, style = MaterialTheme.typography.bodyLarge, color = colors.error)
+            Text(message, style = MaterialTheme.typography.bodyLarge, color = Scene.negative)
             TextButton(onClick = retry, enabled = !busy, modifier = Modifier.heightIn(min = tap)) { Text("다시 시도", style = MaterialTheme.typography.labelLarge) }
         }
     }
@@ -398,18 +415,18 @@ internal fun AssistantBody(
 
 /** The steps the assistant took, arriving one after another like a checklist being ticked; instant with reduced motion. */
 @Composable private fun StepList(steps: List<AssistantStep>, undone: Boolean) {
-    val colors = MaterialTheme.colorScheme
+    val positive = Scene.positive
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         steps.forEachIndexed { index, step ->
             Appear(index = index) {
                 Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) { stateDescription = if (undone) "되돌림" else "완료" },
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Box(Modifier.size(22.dp).background(if (undone) colors.surfaceVariant else LocalPleosColors.current.chartActive.copy(alpha = .18f), RoundedCornerShape(50)), contentAlignment = Alignment.Center) {
-                        Text(if (undone) "–" else "✓", style = MaterialTheme.typography.labelSmall, color = if (undone) colors.onSurfaceVariant else LocalPleosColors.current.chartActive,
+                    Box(Modifier.size(22.dp).background(if (undone) Scene.fill else positive.copy(alpha = .18f), RoundedCornerShape(50)), contentAlignment = Alignment.Center) {
+                        Text(if (undone) "–" else "✓", style = MaterialTheme.typography.labelSmall, color = if (undone) Scene.textSecondary else positive,
                             modifier = Modifier.clearAndSetSemantics {})
                     }
                     Text(step.label, style = MaterialTheme.typography.bodyMedium)
-                    if (step.detail.isNotBlank()) Text(step.detail, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+                    if (step.detail.isNotBlank()) Text(step.detail, style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary,
                         maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 }
             }
@@ -425,12 +442,12 @@ internal fun AssistantBody(
         Eyebrow("출처 · 운행 ${citations.size}건")
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             citations.forEach { citation ->
-                Surface(onClick = { onOpenTrip(citation.tripId) }, shape = RoundedCornerShape(14.dp), color = colors.surface,
-                    border = BorderStroke(1.dp, colors.outlineVariant),
-                    modifier = Modifier.heightIn(min = if (compact) 44.dp else 52.dp).semantics { role = Role.Button; contentDescription = "운행 상세 보기: ${citation.label}" }) {
+                TapSurface(phone = compact, onClick = { onOpenTrip(citation.tripId) }, shape = RoundedCornerShape(14.dp), color = colors.surface, contentColor = Scene.text,
+                    border = BorderStroke(1.dp, Scene.outline),
+                    modifier = Modifier.heightIn(min = if (compact) 48.dp else 56.dp).semantics { contentDescription = "운행 상세 보기: ${citation.label}" }) {
                     Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(citation.label, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = if (compact) 260.dp else 420.dp))
-                        Text("›", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant, modifier = Modifier.clearAndSetSemantics {})
+                        Text("›", style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, modifier = Modifier.clearAndSetSemantics {})
                     }
                 }
             }
@@ -438,13 +455,12 @@ internal fun AssistantBody(
     }
 }
 
-/** One suggested sentence; disabled chips keep their words visible so the person still learns what can be asked. */
+/** One suggested sentence; disabled chips keep their words visible so the person still learns what can be asked. [tap] under 56 dp means the phone. */
 @Composable private fun PromptChip(text: String, tap: Dp, enabled: Boolean, description: String? = null, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    Surface(onClick = onClick, enabled = enabled, shape = RoundedCornerShape(18.dp), color = if (enabled) colors.surfaceContainerHigh else colors.surfaceContainerLow,
-        border = BorderStroke(1.dp, colors.outlineVariant), contentColor = if (enabled) colors.onSurface else colors.onSurfaceVariant,
+    TapSurface(phone = tap < 56.dp, onClick = onClick, enabled = enabled, shape = RoundedCornerShape(18.dp), color = if (enabled) colors.surfaceContainerHigh else colors.surfaceContainerLow,
+        border = BorderStroke(1.dp, Scene.outline), contentColor = if (enabled) Scene.text else Scene.textSecondary,
         modifier = Modifier.heightIn(min = tap.coerceAtLeast(48.dp)).semantics {
-            role = Role.Button
             if (description != null) contentDescription = description
             if (!enabled) stateDescription = "차량 연결 후 사용"
         }) {
@@ -463,12 +479,11 @@ internal fun AssistantBody(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AssistantPreviewCard(compact: Boolean, onOpen: () -> Unit, onOpenWith: ((String) -> Unit)? = null) {
-    val colors = MaterialTheme.colorScheme
     Panel(padding = if (compact) 20.dp else 28.dp) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(ASSISTANT_TITLE, style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
-            Surface(shape = RoundedCornerShape(10.dp), color = LocalPleosColors.current.surfaceHigh) {
-                Text(ASSISTANT_LABEL, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant,
+            Surface(shape = RoundedCornerShape(10.dp), color = Scene.fill, contentColor = Scene.textSecondary, border = BorderStroke(1.dp, Scene.divider)) {
+                Text(ASSISTANT_LABEL, style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
@@ -494,4 +509,3 @@ fun AssistantSettingsNote(modifier: Modifier = Modifier) {
         Muted(ASSISTANT_SETTINGS_NOTE, Modifier.weight(1f))
     }
 }
-

@@ -2,9 +2,14 @@ package ai.sharemate.app
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -13,8 +18,11 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -71,15 +79,18 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /*
- * Who uses the phone (2.9): the Google sign-in screen over the night city, the three-step first run (내 정보 · 법인차량 등록 ·
+ * Who uses the phone (2.9): the Google sign-in screen over the city, the three-step first run (내 정보 · 법인차량 등록 ·
  * 나는 누구인가요) and the account card on the settings page. The account lives on this phone only; registering a company car
  * means pairing with it (live sync, reservations) or typing its details until it can be paired.
+ * 2.10: both screens draw in the current scene (the city by day under a white haze, by night as before), keep one centred
+ * column (400 dp, 480 on a tablet) and measure the window themselves, since they sit outside the shell's layout provider.
  */
 
 // ───────────────────────── pure helpers (unit-tested) ─────────────────────────
@@ -177,6 +188,15 @@ internal fun driverListNote(paired: Boolean, connected: Boolean): String = when 
     else -> "직원 목록은 차량과 연결하면 차량에서 받아와요. 지금은 건너뛰어도 돼요."
 }
 
+/** The sign-in and onboarding column: 400 dp on a phone, 480 dp on a tablet (the EXPANDED width class), always centred. */
+internal fun authColumnMax(expanded: Boolean): Dp = if (expanded) 480.dp else 400.dp
+
+/** Wider than tall: the sign-in puts the city and the headline on the left 45 % and the buttons on the right. */
+internal fun signInSplit(width: Dp, height: Dp): Boolean = width > height
+
+/** By day a white haze (.84 → 0) covers the top 55 % of the sign-in art, so the headline reads on it (the raw sky gives 2.8:1). */
+internal const val SIGN_IN_HAZE_FRACTION = .55f
+
 // ───────────────────────── sign-in ─────────────────────────
 
 private const val PRESSED_NONE = 0
@@ -184,10 +204,10 @@ private const val PRESSED_GOOGLE = 1
 private const val PRESSED_DEMO = 2
 
 /**
- * The phone's first screen when nobody is signed in: the brand over the night sky, what the app does, and the Google button.
- * [googleAvailable] false (no OAuth client ID in this build) disables the button and says why. [onDemo] adds the demo
- * account button. [busy] shows progress on the button that was pressed; [error] sits under the buttons.
- * Draws its own background and safe-drawing insets: place it at the top level, not inside a padded Scaffold.
+ * The phone's first screen when nobody is signed in: the brand over the city (the top 42 % of the screen; the left 45 % in
+ * landscape), what the app does, and the Google button. [googleAvailable] false (no OAuth client ID in this build) disables the
+ * button and says why. [onDemo] adds the demo account button. [busy] shows progress on the button that was pressed; [error] sits
+ * under the buttons. Draws its own background and safe-drawing insets: place it at the top level, not inside a padded Scaffold.
  */
 @Composable
 internal fun PhoneSignInScreen(
@@ -199,77 +219,121 @@ internal fun PhoneSignInScreen(
     onDemo: (() -> Unit)? = null,
 ) {
     var pressed by rememberSaveable { mutableIntStateOf(PRESSED_NONE) }
-    Box(modifier.fillMaxSize().sceneBackdrop()) {
-        HomeBackdrop(Modifier.matchParentSize(), horizonAt = .46f, heightScale = .30f, moonAt = Offset(.82f, .15f), leftScrim = false)
-        BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing), contentAlignment = Alignment.TopCenter) {
-            Column(Modifier.widthIn(max = 480.dp).fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = maxHeight)
-                .padding(horizontal = 24.dp, vertical = 20.dp), verticalArrangement = Arrangement.SpaceBetween) {
-                // On the dark sky, above the skyline.
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.semantics(mergeDescendants = true) { heading() }) {
-                        Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = null, tint = Scene.brand, modifier = Modifier.size(40.dp))
-                        Text("SHAREMATE", style = MaterialTheme.typography.titleMedium, color = Scene.text, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Text("회사 차량을\n휴대폰에서 관리해요", style = MaterialTheme.typography.headlineMedium, color = Scene.text, fontWeight = FontWeight.Bold,
-                        modifier = Modifier.semantics { heading() })
-                    Text("법인차량 운행일지 · 경비 · 예약", style = MaterialTheme.typography.bodyLarge, color = Scene.textSecondary)
+    // The brand block: the mark, one headline and one supporting line (text and textSecondary only on the haze).
+    val brand: @Composable () -> Unit = {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.semantics(mergeDescendants = true) { heading() }) {
+                Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = null, tint = Scene.brand, modifier = Modifier.size(40.dp))
+                Text("SHAREMATE", style = MaterialTheme.typography.titleMedium, color = Scene.text, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            }
+            Spacer(Modifier.height(8.dp))
+            Text("회사 차량을\n휴대폰에서 관리해요", style = MaterialTheme.typography.headlineMedium, color = Scene.text, fontWeight = FontWeight.Bold,
+                modifier = Modifier.semantics { heading() })
+            Text("법인차량 운행일지 · 경비 · 예약", style = MaterialTheme.typography.bodyLarge, color = Scene.textSecondary)
+        }
+    }
+    // The value card and the buttons, on the base colour below the city.
+    val actions: @Composable () -> Unit = {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Surface(shape = RoundedCornerShape(24.dp), color = Scene.glass.copy(alpha = .88f), border = Scene.edge, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    ValueLine("회사 차량 선택·예약")
+                    ValueLine("원격으로 운행·비용 확인")
+                    ValueLine("차량이 운행일지를 스스로 정리")
                 }
-                // On navy below the city.
-                Column(Modifier.padding(top = 32.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Surface(shape = RoundedCornerShape(24.dp), color = Scene.glass.copy(alpha = .86f), border = Scene.edge, modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            ValueLine("회사 차량 선택·예약")
-                            ValueLine("원격으로 운행·비용 확인")
-                            ValueLine("차량이 운행일지를 스스로 정리")
-                        }
-                    }
-                    Spacer(Modifier.height(4.dp))
-                    GoogleButton(enabled = googleAvailable, loading = busy && pressed != PRESSED_DEMO) {
-                        if (!busy) { pressed = PRESSED_GOOGLE; onGoogle() }
-                    }
-                    if (!googleAvailable) Text("이 빌드에는 Google 로그인 설정(OAuth 클라이언트 ID)이 없어서 지금은 쓸 수 없어요.",
-                        style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary, modifier = Modifier.padding(horizontal = 4.dp))
-                    if (onDemo != null) {
-                        val demoLoading = busy && pressed == PRESSED_DEMO
-                        OutlinedButton(onClick = { if (!busy) { pressed = PRESSED_DEMO; onDemo() } }, shape = RoundedCornerShape(50), border = Scene.edge,
-                            colors = ButtonDefaults.outlinedButtonColors(containerColor = Scene.glass.copy(alpha = .86f), contentColor = Scene.text),
-                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).semantics { if (demoLoading) stateDescription = "시연 계정으로 들어가는 중" }) {
-                            ButtonLabel("시연 계정으로 둘러보기", demoLoading, "들어가는 중…")
-                        }
-                        Text("시연 빌드 전용이에요. Google 계정 없이 화면을 둘러볼 수 있어요.", style = MaterialTheme.typography.bodySmall, color = Scene.textMuted,
-                            modifier = Modifier.padding(horizontal = 4.dp))
-                    }
-                    InlineError(error, Modifier.padding(horizontal = 4.dp))
-                    Text("계정 정보는 이 휴대폰에만 저장돼요.", style = MaterialTheme.typography.labelMedium, color = Scene.textMuted, textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+            }
+            Spacer(Modifier.height(4.dp))
+            GoogleButton(enabled = googleAvailable, loading = busy && pressed != PRESSED_DEMO) {
+                if (!busy) { pressed = PRESSED_GOOGLE; onGoogle() }
+            }
+            if (!googleAvailable) Text("이 빌드에는 Google 로그인 설정(OAuth 클라이언트 ID)이 없어서 지금은 쓸 수 없어요.",
+                style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary, modifier = Modifier.padding(horizontal = 4.dp))
+            if (onDemo != null) {
+                val demoLoading = busy && pressed == PRESSED_DEMO
+                val source = remember { MutableInteractionSource() }
+                OutlinedButton(onClick = { if (!busy) { pressed = PRESSED_DEMO; onDemo() } }, shape = RoundedCornerShape(50), border = Scene.edge, interactionSource = source,
+                    colors = ButtonDefaults.outlinedButtonColors(containerColor = Scene.glass.copy(alpha = .88f), contentColor = Scene.text),
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).pressable(source).semantics { if (demoLoading) stateDescription = "시연 계정으로 들어가는 중" }) {
+                    ButtonLabel("시연 계정으로 둘러보기", demoLoading, "들어가는 중…")
+                }
+                Text("시연 빌드 전용이에요. Google 계정 없이 화면을 둘러볼 수 있어요.", style = MaterialTheme.typography.bodySmall, color = Scene.textMuted,
+                    modifier = Modifier.padding(horizontal = 4.dp))
+            }
+            InlineError(error, Modifier.padding(horizontal = 4.dp))
+            Text("계정 정보는 이 휴대폰에만 저장돼요.", style = MaterialTheme.typography.labelMedium, color = Scene.textMuted, textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+        }
+    }
+    ProvideLayout(compactApp = true, modifier.fillMaxSize().sceneBackdrop()) { tokens ->
+        val columnMax = authColumnMax(tokens.expanded)
+        if (signInSplit(maxWidth, maxHeight)) {
+            // Landscape: the city and the headline on the left 45 %, the card and the buttons centred on the right.
+            // Each pane pads only its own edges, so the left one does not also reserve the navigation bar on the right.
+            Row(Modifier.fillMaxSize()) {
+                Box(Modifier.weight(45f).fillMaxHeight()) {
+                    SignInArt(Modifier.matchParentSize(), horizonAt = .60f)
+                    Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Start + WindowInsetsSides.Bottom))
+                        .padding(horizontal = tokens.gutter, vertical = 20.dp)) { brand() }
+                }
+                Box(Modifier.weight(55f).fillMaxHeight().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.End + WindowInsetsSides.Bottom)),
+                    contentAlignment = Alignment.Center) {
+                    Column(Modifier.widthIn(max = columnMax).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = tokens.gutter, vertical = 20.dp)) { actions() }
+                }
+            }
+        } else Box(Modifier.fillMaxSize()) {
+            SignInArt(Modifier.matchParentSize(), horizonAt = .42f)
+            BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing), contentAlignment = Alignment.TopCenter) {
+                Column(Modifier.widthIn(max = columnMax).fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = maxHeight)
+                    .padding(horizontal = tokens.gutter, vertical = 20.dp), verticalArrangement = Arrangement.SpaceBetween) {
+                    brand()
+                    Box(Modifier.padding(top = 32.dp)) { actions() }
                 }
             }
         }
     }
 }
 
+/**
+ * The sign-in's city in the current phase, with the base colour taking over under the horizon. By day a white haze (Scene.haze,
+ * .84 → 0 over the top 55 %) lies over the sky so the headline reads; by night the backdrop's own scrims stay as built.
+ * The haze cross-fades with the scene on the same clock as the sky.
+ */
+@Composable private fun SignInArt(modifier: Modifier = Modifier, horizonAt: Float = .42f) {
+    val haze = Scene.haze
+    val reduce = LocalReduceMotion.current
+    Box(modifier) {
+        HomeBackdrop(Modifier.matchParentSize(), horizonAt = horizonAt, heightScale = .30f, moonAt = Offset(.82f, .15f), leftScrim = false)
+        Crossfade(LocalScenePhase.current == ScenePhase.DAY, Modifier.matchParentSize(), animationSpec = if (reduce) snap() else tween(MOTION_SCENE_MS), label = "sign-in-haze") { day ->
+            if (day) Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to haze.copy(alpha = .84f), SIGN_IN_HAZE_FRACTION to Color.Transparent)))
+        }
+    }
+}
+
 @Composable private fun ValueLine(text: String) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Box(Modifier.size(28.dp).clip(CircleShape).background(Scene.glow.copy(alpha = .14f)), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(28.dp).clip(CircleShape).background(Scene.selectionFill), contentAlignment = Alignment.Center) {
             Icon(Icons.Default.Check, contentDescription = null, tint = Scene.glow, modifier = Modifier.size(16.dp))
         }
         Text(text, style = MaterialTheme.typography.titleSmall, color = Scene.text)
     }
 }
 
-/** A neutral white pill with a plain "G" letter; not Google's logo artwork. */
+/**
+ * A neutral white pill with a plain "G" letter; not Google's logo artwork. The whites stay in both scenes (dark text on white is
+ * the one fixed surface of the app); the letter's ring is a mid grey so it still reads on the white pill.
+ */
 @Composable private fun GoogleButton(enabled: Boolean, loading: Boolean, onClick: () -> Unit) {
-    Button(onClick = onClick, enabled = enabled, shape = RoundedCornerShape(50),
+    val source = remember { MutableInteractionSource() }
+    Button(onClick = onClick, enabled = enabled, shape = RoundedCornerShape(50), interactionSource = source,
         colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFF1F1F1F),
             disabledContainerColor = Scene.glass, disabledContentColor = Scene.textMuted),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).semantics { if (loading) stateDescription = "Google 로그인 중" }) {
+        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).pressable(source).semantics { if (loading) stateDescription = "Google 로그인 중" }) {
         if (!loading) {
             Box(Modifier.size(26.dp).clip(CircleShape).background(if (enabled) Color(0xFFF1F3F4) else Color.Transparent)
-                .border(1.dp, if (enabled) Color(0xFFDADCE0) else Scene.glassBorder, CircleShape).clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
+                .border(1.dp, if (enabled) Color(0xFFBDC1C6) else Scene.outline, CircleShape).clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
                 Text("G", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = LocalContentColor.current)
             }
             Spacer(Modifier.size(12.dp))
@@ -278,10 +342,12 @@ internal fun PhoneSignInScreen(
     }
 }
 
+/** The sign-in buttons' label with its progress ring; at a 1.3× font it wraps to a second line rather than clipping. */
 @Composable private fun ButtonLabel(label: String, loading: Boolean, loadingLabel: String) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = LocalContentColor.current)
-        Text(if (loading) loadingLabel else label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        Text(if (loading) loadingLabel else label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 2,
+            overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
     }
 }
 
@@ -347,13 +413,16 @@ internal fun PhoneOnboarding(
 
     BackHandler(enabled = step > 0 && !working) { step -= 1 }
 
-    Box(modifier.fillMaxSize().sceneBackdrop()) {
+    // Outside the shell, so the screen measures the window itself: one centred column (400 dp, 480 on a tablet) plus the gutters.
+    ProvideLayout(compactApp = true, modifier.fillMaxSize().sceneBackdrop()) { tokens ->
+        val gutter = tokens.gutter
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing), horizontalAlignment = Alignment.CenterHorizontally) {
-            Column(Modifier.widthIn(max = 560.dp).fillMaxWidth().weight(1f)) {
-                OnboardingHeader(step, canGoBack = step > 0 && !working) { step -= 1 }
+            Column(Modifier.widthIn(max = authColumnMax(tokens.expanded) + gutter * 2).fillMaxWidth().weight(1f)) {
+                OnboardingHeader(step, canGoBack = step > 0 && !working, gutter = gutter) { step -= 1 }
+                // Steps change with the tab-page motion: a later step slides in from the right, an earlier one from the left.
                 AnimatedContent(targetState = step, modifier = Modifier.weight(1f).fillMaxWidth(), label = "onboarding-step",
                     transitionSpec = { if (targetState > initialState) forward else back }) { shown ->
-                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(top = 8.dp, bottom = 20.dp),
+                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = gutter).padding(top = 8.dp, bottom = 20.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         when (shown) {
                             0 -> ProfileStep(account, name, department, if (nameTouched || name.isNotEmpty()) errors.name else null, errors.department,
@@ -388,10 +457,10 @@ internal fun PhoneOnboarding(
                         }
                     }
                 }
-                // The step's actions stay at the bottom, above the keyboard.
-                Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // The step's actions stay at the bottom, above the keyboard: a 72-dp bar with a 56-dp 다음.
+                Column(Modifier.fillMaxWidth().padding(horizontal = gutter, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     InlineError(when (step) { 0 -> profileError; 2 -> finishError; else -> null }, Modifier.padding(horizontal = 4.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(Modifier.fillMaxWidth().heightIn(min = 72.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         when (step) {
                             0 -> PhoneLoadingButton("다음", loading = saving, loadingLabel = "저장하는 중…", enabled = onboardingCanContinue(0, errors.valid, fleet.vehicles.size) && !working,
                                 modifier = Modifier.weight(1f).heightIn(min = 56.dp)) {
@@ -428,10 +497,11 @@ internal fun PhoneOnboarding(
     }
 }
 
-/** Back arrow (from step 2), the step's name, its number and three progress segments. */
-@Composable private fun OnboardingHeader(step: Int, canGoBack: Boolean, onBack: () -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(start = 4.dp, end = 20.dp, top = 8.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+/** Back arrow (from step 2), the step's name, its number and three 4-dp progress segments; the row is 56 dp. */
+@Composable private fun OnboardingHeader(step: Int, canGoBack: Boolean, gutter: Dp = 20.dp, onBack: () -> Unit) {
+    val inset = (gutter - 16.dp).coerceAtLeast(4.dp)
+    Column(Modifier.fillMaxWidth().padding(start = inset, end = gutter, top = 4.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
             if (step > 0) IconButton(onClick = onBack, enabled = canGoBack, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "이전 단계", tint = Scene.text)
             } else Spacer(Modifier.size(48.dp))
@@ -512,7 +582,7 @@ internal fun PhoneOnboarding(
     val status = fleetVehicleStatus(vehicle)
     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Box(Modifier.size(32.dp).clip(CircleShape).background(if (vehicle.paired) Scene.glow.copy(alpha = .16f) else Scene.fill),
+        Box(Modifier.size(32.dp).clip(CircleShape).background(if (vehicle.paired) Scene.selectionFill else Scene.fill),
             contentAlignment = Alignment.Center) {
             Icon(Icons.Default.Check, contentDescription = null, tint = if (vehicle.paired) Scene.glow else Scene.textSecondary, modifier = Modifier.size(18.dp))
         }
@@ -524,12 +594,15 @@ internal fun PhoneOnboarding(
     }
 }
 
-/** A large glass choice: lit tile, title and one line; cyan edge when chosen. */
+/** A large glass choice: lit tile, title and one line; chosen = selection fill + 1.5-dp ring + glow title, never colour alone. .97 press scale. */
 @Composable private fun ChoiceCard(title: String, detail: String, icon: Int, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(24.dp)
-    Surface(shape = shape, color = if (selected) Scene.glow.copy(alpha = .14f) else Scene.glass, border = if (selected) BorderStroke(1.5.dp, Scene.glow) else Scene.edge,
-        modifier = modifier.clip(shape).selectable(selected = selected, role = Role.RadioButton, onClick = onClick)) {
-        Column(Modifier.background(Brush.verticalGradient(listOf(Color.White.copy(alpha = .06f), Color.Transparent))).heightIn(min = 136.dp).padding(16.dp),
+    val source = remember { MutableInteractionSource() }
+    val sheen = Scene.colors.edgeTop
+    Surface(shape = shape, color = if (selected) Scene.selectionFill else Scene.glass, border = if (selected) BorderStroke(1.5.dp, Scene.selectionRing) else Scene.edge,
+        modifier = modifier.cardShadow(shape).pressable(source).clip(shape)
+            .selectable(selected = selected, role = Role.RadioButton, interactionSource = source, indication = LocalIndication.current, onClick = onClick)) {
+        Column(Modifier.background(Brush.verticalGradient(listOf(sheen.copy(alpha = sheen.alpha * .25f), Color.Transparent))).heightIn(min = 136.dp).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
             val tile = RoundedCornerShape(14.dp)
             Box(Modifier.size(44.dp).clip(tile).background(Scene.tile).border(Scene.edge, tile),
@@ -551,8 +624,9 @@ internal fun PhoneOnboarding(
             drivers.forEach { driver ->
                 val on = driver.id == selected
                 val shape = RoundedCornerShape(18.dp)
-                Row(Modifier.fillMaxWidth().clip(shape).background(if (on) Scene.glow.copy(alpha = .12f) else Color.Transparent)
-                    .border(1.dp, if (on) Scene.glow.copy(alpha = .5f) else Color.Transparent, shape)
+                // Chosen = selection fill + 1.5-dp ring + the lit radio, never colour alone.
+                Row(Modifier.fillMaxWidth().clip(shape).background(if (on) Scene.selectionFill else Color.Transparent)
+                    .border(1.5.dp, if (on) Scene.selectionRing else Color.Transparent, shape)
                     .selectable(selected = on, role = Role.RadioButton) { onPick(driver.id) }
                     .heightIn(min = 56.dp).padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -569,11 +643,11 @@ internal fun PhoneOnboarding(
 
 // ───────────────────────── account card (settings) ─────────────────────────
 
-/** The circle with the account's initial; photos are not downloaded. */
+/** The circle with the account's initial, in the scene's icon-tile gradient; photos are not downloaded. */
 @Composable private fun Avatar(initial: String, sizeDp: Int) {
-    Box(Modifier.size(sizeDp.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF3B6FFF), Color(0xFF39D5F0))))
+    Box(Modifier.size(sizeDp.dp).clip(CircleShape).background(Scene.tile).border(Scene.edge, CircleShape)
         .clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
-        Text(initial, color = Color.White, fontWeight = FontWeight.Bold, fontSize = (sizeDp * .42f).sp)
+        Text(initial, color = Scene.onTile, fontWeight = FontWeight.Bold, fontSize = (sizeDp * .42f).sp)
     }
 }
 

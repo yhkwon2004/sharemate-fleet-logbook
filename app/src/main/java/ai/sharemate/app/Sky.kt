@@ -1,14 +1,17 @@
 package ai.sharemate.app
 
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
-
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -20,15 +23,19 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.unit.dp
 import kotlin.math.abs
+import kotlin.math.min
 import kotlin.random.Random
 
 /*
  * The city across the river, in three lights. One seeded skyline (the same towers every launch, denser and taller to the
  * right so the greeting on the left stays calm) is painted as a clear morning, a dusk with an orange horizon, or a deep
- * night, and [HomeBackdrop] cross-fades between them when the scene changes. Decorative only: no semantics.
+ * night, and [HomeBackdrop] cross-fades between them when the scene changes. Decorative only: no semantics. Nothing here
+ * reads the clock: the skyline is still, and the only motion is the one crossfade of a parked scene change.
  */
 
 private class SkyTower(val left: Float, val width: Float, val height: Float, val lit: List<Offset>, val crown: Int, val cool: Boolean, val reflect: Float)
@@ -56,8 +63,9 @@ private fun skylineScene(): SkyScene {
     val ridge = List(9) { i -> Offset(.30f + i * .09f, .06f + r.nextFloat() * .10f) }
     val far = towers(.34f, .32f, .012f, .028f, .16f, .76f)
     val near = towers(.44f, .44f, .016f, .036f, .30f, .82f)
-    // A few soft clouds high in the day sky, kept left of the dense towers and away from the greeting block's top.
-    val clouds = List(5) { i -> SkyCloud(.08f + i * .19f + r.nextFloat() * .08f, .08f + r.nextFloat() * .16f, .7f + r.nextFloat() * .6f) }
+    // Four day clouds, high and over the city's half of the sky (x .50–.95, y .06–.20): never under the hero column or the sun.
+    // Drawn last from the seed so the towers stay the towers of 2.8.
+    val clouds = List(4) { i -> SkyCloud(.50f + i * .115f + r.nextFloat() * .055f, .06f + r.nextFloat() * .14f, .7f + r.nextFloat() * .6f) }
     return SkyScene(stars, clouds, far, near, ridge)
 }
 
@@ -67,6 +75,8 @@ private class SkyPaint(
     val ridge: Color, val farBody: Color, val farWarm: Color, val farCool: Color, val nearBody: Color, val bloom: Color, val nearWarm: Color, val nearCool: Color,
     val antenna: Color, val beacon: Color, val deck: Color, val post: Color, val lamp: Color, val lampReflect: Color, val lines: Color,
     val reflectWarm: Color, val reflectCool: Color, val stars: Float, val orb: Color, val orbHalo: Color, val orbShade: Color?, val orbRadius: Float, val clouds: Color?,
+    /** Day extras: the near towers shade to [nearBodyBottom] at the river, the sun's disc runs [orbCore] → [orb] at its rim, the clouds carry a [cloudShade] underside. */
+    val nearBodyBottom: Color? = null, val orbCore: Color? = null, val orbHaloRadius: Float = .16f, val cloudShade: Color? = null, val beaconRadius: Float = 3.2f,
 )
 
 private val DuskPaint = SkyPaint(
@@ -91,24 +101,62 @@ private val NightPaint = SkyPaint(
     orb = Color(0xFFF8F0DC), orbHalo = Color(0x4DF6EBD3), orbShade = Color(0x1A0B111C), orbRadius = .040f, clouds = null,
 )
 
-/** A clear morning: blue overhead fading to a warm haze at the horizon, a low sun, white clouds, pale towers with a few glints. */
+/**
+ * A clear morning (2.10 spec, section A): a deep blue overhead that warms to a pale haze at the horizon, a low sun with a
+ * wide halo and no rays, four still white clouds, a pale-blue ridge and far towers, near towers in a slate blue that keeps
+ * 2.2:1 against the mid sky so the city stays present behind white glass, pale water and a slate bridge without lamp
+ * reflections. No stars, no bloom, no red beacons: nothing that reads as night.
+ */
 private val DayPaint = SkyPaint(
-    sky = listOf(0f to Color(0xFF7FB6EE), .42f to Color(0xFFBFDAF5), .78f to Color(0xFFE6EEF7), 1f to Color(0xFFF6EADA)),
-    horizonGlow = listOf(Color(0x55FFE3B8), Color(0x1FFFD9A0), Color(0x00FFD9A0)),
-    water = listOf(0f to Color(0xFFCFE0F2), .4f to Color(0xFFDEE8F4), 1f to Color(0xFFEEF3FA)),
-    ridge = Color(0xFFB7C8DD), farBody = Color(0xFFC7D5E6), farWarm = Color(0x59FFFFFF), farCool = Color(0x40FFFFFF), nearBody = Color(0xFF9AACC4),
-    bloom = Color.Transparent, nearWarm = Color(0x8CFFFFFF), nearCool = Color(0x66FFFFFF), antenna = Color(0xFF8E9FB8), beacon = Color(0xFFE06A5A),
-    deck = Color(0xFFA7B8CE), post = Color(0xFFB9C7D9), lamp = Color(0x99FFFFFF), lampReflect = Color(0x33FFFFFF), lines = Color(0x40FFFFFF),
-    reflectWarm = Color(0x40FFFFFF), reflectCool = Color(0x40FFFFFF), stars = 0f,
-    orb = Color(0xFFFFF6DC), orbHalo = Color(0x59FFE4A8), orbShade = null, orbRadius = .044f, clouds = Color(0x9EFFFFFF),
+    sky = listOf(0f to Color(0xFF4F9BE8), .45f to Color(0xFF8FC1F2), .70f to Color(0xFFD7E9F8), 1f to Color(0xFFF3EEE4)),
+    horizonGlow = listOf(Color(0x99FFFFFF), Color(0x40FFFFFF), Color(0x00FFFFFF)),
+    water = listOf(0f to Color(0xFFB9D4EC), .40f to Color(0xFFD5E6F4), 1f to Color(0xFFEEF3FA)),
+    ridge = Color(0xFFAEC1D6), farBody = Color(0xFFB5C6DA), farWarm = Color(0x8CFFFFFF), farCool = Color(0x80E6EEF7), nearBody = Color(0xFF7B90AC),
+    bloom = Color.Transparent, nearWarm = Color(0xCCDCEAF7), nearCool = Color(0x99FFFFFF), antenna = Color(0xFF5B6B82), beacon = Color(0xCCFFFFFF),
+    deck = Color(0xFF5B6B82), post = Color(0xFF7F8EA3), lamp = Color(0xFFD8E2EE), lampReflect = Color.Transparent, lines = Color(0x4DFFFFFF),
+    reflectWarm = Color(0x59FFFFFF), reflectCool = Color(0x59FFFFFF), stars = 0f,
+    orb = Color(0xFFFFD27A), orbHalo = Color(0x8CFFF1C2), orbShade = null, orbRadius = .045f, clouds = Color(0xB3FFFFFF),
+    nearBodyBottom = Color(0xFF6A7F9B), orbCore = Color(0xFFFFF3C4), orbHaloRadius = .30f, cloudShade = Color(0x73C9D8E8), beaconRadius = 2.2f,
 )
 
 private fun paintFor(phase: ScenePhase) = when (phase) { ScenePhase.DAY -> DayPaint; ScenePhase.DUSK -> DuskPaint; ScenePhase.NIGHT -> NightPaint }
 
-/** The decorative hero background for one [phase]: sky, city across the river, bridge, reflections. No semantics. */
-@Composable internal fun Skyline(phase: ScenePhase, modifier: Modifier = Modifier, horizonAt: Float = .62f, heightScale: Float = 1f, orbAt: Offset = Offset(.53f, .40f)) {
+// ───────────────────────── the crossfade's motion (pure, unit-tested) ─────────────────────────
+
+/**
+ * Where the sun or moon sits at [t] (0–1) of the crossfade, as a fraction of the sky height below its place: an entering
+ * orb rises 8 % into place (LinearOutSlowIn), a leaving one sinks away (FastOutLinearIn), a settled one does not move.
+ */
+internal fun orbLift(entering: Boolean, leaving: Boolean, t: Float): Float = when {
+    entering -> .08f * (1f - LinearOutSlowInEasing.transform(t.coerceIn(0f, 1f)))
+    leaving -> .08f * FastOutLinearInEasing.transform(t.coerceIn(0f, 1f))
+    else -> 0f
+}
+
+/** How much of the stars shows at [t] of the crossfade: they fade within its first 40 %, in for an arriving night and out for a leaving one. */
+internal fun starFade(entering: Boolean, leaving: Boolean, t: Float): Float {
+    val early = (t.coerceIn(0f, 1f) / .4f).coerceAtMost(1f)
+    return when { entering -> early; leaving -> 1f - early; else -> 1f }
+}
+
+/**
+ * The decorative hero background for one [phase]: sky, city across the river, bridge, reflections. No semantics.
+ * [entering] marks a skyline arriving through a scene change (its orb rises into place), [leaving] one on its way out.
+ */
+@Composable internal fun Skyline(phase: ScenePhase, modifier: Modifier = Modifier, horizonAt: Float = .62f, heightScale: Float = 1f, orbAt: Offset = Offset(.53f, .40f),
+    entering: Boolean = false, leaving: Boolean = false) {
     val scene = remember { skylineScene() }
     val p = paintFor(phase)
+    // One clock per crossfade, read only inside the draw so the cached paths never rebuild; nothing moves under reduced motion.
+    val timing = LocalSceneChange.current
+    val reduce = LocalReduceMotion.current
+    val moving = (entering || leaving) && !reduce
+    val progress = remember { Animatable(if (moving) 0f else 1f) }
+    LaunchedEffect(entering, leaving) {
+        if (!moving) { progress.snapTo(1f); return@LaunchedEffect }
+        progress.snapTo(0f)
+        progress.animateTo(1f, tween(timing.crossfadeMs, easing = LinearEasing))
+    }
     Spacer(modifier.clearAndSetSemantics {}.drawWithCache {
         val w = size.width
         val h = size.height
@@ -137,6 +185,8 @@ private fun paintFor(phase: ScenePhase) = when (phase) { ScenePhase.DAY -> DayPa
         }
         val farBodies = bodies(scene.far)
         val nearBodies = bodies(scene.near)
+        // By day the near towers shade from their tops to the river, so they read as buildings in light rather than cut-outs.
+        val nearFill: Brush? = p.nearBodyBottom?.let { Brush.verticalGradient(listOf(p.nearBody, it), startY = horizon - ht * scene.near.maxOf { t -> t.height }, endY = horizon) }
         fun windows(list: List<SkyTower>, cool: Boolean) = Path().apply {
             list.filter { it.cool == cool }.forEach { t ->
                 val left = w * t.left; val tw = w * t.width; val th = ht * t.height * .86f; val top = horizon - ht * t.height + ht * t.height * .1f
@@ -147,7 +197,10 @@ private fun paintFor(phase: ScenePhase) = when (phase) { ScenePhase.DAY -> DayPa
         val nearWarm = windows(scene.near, false); val nearCool = windows(scene.near, true)
         val antennas = scene.near.filter { it.crown == 1 && it.height > .26f }
         val orb = Offset(w * orbAt.x, h * orbAt.y)
-        val orbHalo = Brush.radialGradient(listOf(p.orbHalo, Color.Transparent), center = orb, radius = ht * (if (p.clouds != null) .26f else .16f))
+        val haloRadius = ht * p.orbHaloRadius
+        val orbHalo = Brush.radialGradient(listOf(p.orbHalo, p.orbHalo.copy(alpha = 0f)), center = orb, radius = haloRadius)
+        // The day sun is a soft disc, pale at the centre and warm at the rim; the moon stays a flat disc with its shade.
+        val orbDisc: Brush? = p.orbCore?.let { Brush.radialGradient(listOf(it, p.orb), center = orb, radius = ht * p.orbRadius) }
         // A soft glow around every few warm windows so the towers read as lit from inside rather than dotted.
         val bloom = Path().apply {
             scene.near.filter { !it.cool }.forEach { t ->
@@ -166,40 +219,53 @@ private fun paintFor(phase: ScenePhase) = when (phase) { ScenePhase.DAY -> DayPa
                 addRect(Rect(cx - s * .8f, cy + s * .05f, cx + s * .8f, cy + s * .45f))
             }
         }
+        val cloudShadeOffset = h * .012f
         onDrawBehind {
+            // The crossfade clock is the only state read here: the draw invalidates, the paths above do not. The orb and the
+            // stars move on the part of the crossfade the driver sees (the fade-through still hides the content at first).
+            val t = sceneRevealProgress(progress.value, timing)
+            val lift = ht * orbLift(entering, leaving, t)
+            val starAlpha = p.stars * starFade(entering, leaving, t)
             drawRect(sky, size = Size(w, horizon))
             drawRect(glow, size = Size(w, horizon))
-            if (p.stars > 0f) scene.stars.forEach { (x, y, a) -> drawCircle(Color.White.copy(alpha = (a * p.stars).coerceAtMost(1f)), radius = 1.2f + a, center = Offset(w * x, h * y)) }
-            // The sun or the moon rests just above the skyline, right of the search bar so it never sits behind text or chips.
-            drawCircle(orbHalo, radius = ht * (if (p.clouds != null) .26f else .16f), center = orb)
-            drawCircle(p.orb, radius = ht * p.orbRadius, center = orb)
-            p.orbShade?.let { drawCircle(it, radius = ht * .030f, center = orb + Offset(ht * .012f, -ht * .006f)) }
-            p.clouds?.let { drawPath(clouds, it) }
+            if (starAlpha > 0f) scene.stars.forEach { (x, y, a) -> drawCircle(Color.White.copy(alpha = (a * starAlpha).coerceAtMost(1f)), radius = 1.2f + a, center = Offset(w * x, h * y)) }
+            // The sun or the moon rests just above the skyline, right of the search bar so it never sits behind text or chips;
+            // during a scene change it rises the last 8 % of the sky height into place (or sinks away).
+            translate(top = lift) {
+                drawCircle(orbHalo, radius = haloRadius, center = orb)
+                if (orbDisc != null) drawCircle(orbDisc, radius = ht * p.orbRadius, center = orb) else drawCircle(p.orb, radius = ht * p.orbRadius, center = orb)
+                p.orbShade?.let { drawCircle(it, radius = ht * .030f, center = orb + Offset(ht * .012f, -ht * .006f)) }
+            }
+            p.clouds?.let { fill ->
+                p.cloudShade?.let { shade -> translate(top = cloudShadeOffset) { drawPath(clouds, shade) } }
+                drawPath(clouds, fill)
+            }
             drawPath(ridge, p.ridge)
             drawPath(farBodies, p.farBody)
             drawPath(farWarm, p.farWarm); drawPath(farCool, p.farCool)
-            drawPath(nearBodies, p.nearBody)
+            if (nearFill != null) drawPath(nearBodies, nearFill) else drawPath(nearBodies, p.nearBody)
             if (p.bloom.alpha > 0f) drawPath(bloom, p.bloom)
             drawPath(nearWarm, p.nearWarm); drawPath(nearCool, p.nearCool)
             antennas.forEach { t ->
                 val x = w * (t.left + t.width / 2); val top = horizon - ht * t.height
                 drawLine(p.antenna, Offset(x, top), Offset(x, top - ht * .05f), strokeWidth = 2.5f)
-                drawCircle(p.beacon, radius = 3.2f, center = Offset(x, top - ht * .05f))
+                drawCircle(p.beacon, radius = p.beaconRadius, center = Offset(x, top - ht * .05f))
             }
             drawRect(water, topLeft = Offset(0f, horizon), size = Size(w, h - horizon))
             scene.near.filter { it.reflect > 0f }.forEach { t ->
                 val left = w * (t.left + t.width * .3f); val streak = h * t.reflect
-                drawRect(Brush.verticalGradient(listOf(if (t.cool) p.reflectCool else p.reflectWarm, Color.Transparent), startY = horizon, endY = horizon + streak),
+                val tint = if (t.cool) p.reflectCool else p.reflectWarm
+                drawRect(Brush.verticalGradient(listOf(tint, tint.copy(alpha = 0f)), startY = horizon, endY = horizon + streak),
                     topLeft = Offset(left, horizon), size = Size(w * t.width * .4f, streak))
             }
-            // The bridge: a deck with a string of lights and their wavering reflection.
+            // The bridge: a deck with a string of lights and (by night) their wavering reflection.
             val deck = horizon - h * .012f
             drawLine(p.deck, Offset(w * .22f, deck), Offset(w, deck), strokeWidth = 5f, cap = StrokeCap.Round)
             var x = w * .23f
             while (x < w) {
                 drawLine(p.post, Offset(x, deck), Offset(x, horizon + h * .015f), strokeWidth = 3f)
                 drawCircle(p.lamp, radius = 2.6f, center = Offset(x + w * .008f, deck - 3f))
-                drawLine(p.lampReflect, Offset(x + w * .008f, horizon + h * .03f), Offset(x + w * .008f, horizon + h * .07f), strokeWidth = 2f)
+                if (p.lampReflect.alpha > 0f) drawLine(p.lampReflect, Offset(x + w * .008f, horizon + h * .03f), Offset(x + w * .008f, horizon + h * .07f), strokeWidth = 2f)
                 x += w * .034f
             }
             for (i in 1..5) drawLine(p.lines, Offset(w * .2f, horizon + h * .05f * i), Offset(w, horizon + h * .05f * i), strokeWidth = 1.5f)
@@ -207,24 +273,70 @@ private fun paintFor(phase: ScenePhase) = when (phase) { ScenePhase.DAY -> DayPa
     })
 }
 
-/** The scene cross-fade: 900 ms, so a sunrise is a change of light rather than a flip. */
-internal const val MOTION_SCENE_MS = 900
+/** The whole fade-through of an automatic scene change (ms): the content leaves, the sky crossfades while it is hidden, the content returns. See [sceneChangeTiming]. */
+internal const val MOTION_SCENE_MS = 800
+
+/** One scrim over the sky: colour stops (fraction → colour) along the vertical or the horizontal axis. */
+internal class SkyScrim(val vertical: Boolean, val stops: List<Pair<Float, Color>>)
 
 /**
- * The whole home screen's background: the city edge to edge in the current scene's light, with a scrim from the left for
- * the greeting and one from the bottom so the widgets sit on the calm base colour. Cross-fades when the scene changes.
+ * The scrims that keep text legible over the sky, in painting order (pure, unit-tested). By night the base colour comes in
+ * from the left for the greeting and from the bottom for the widgets, as in 2.8. By day the haze is white and lighter so the
+ * sky shows: on the car a hero haze (.90 → .76 at the hero column's right edge → 0 at [heroFade] past it), on the phone a
+ * top haze (.88 → .76 at the greeting's bottom → 0 at [greetingFade] below), on the sign-in (no left scrim) a top scrim over
+ * the upper 55 %. The bottom scrim is the one built in 2.8, lighter by day, and always settles on the base colour.
+ * [heroEdge] and [heroFade] are fractions of the width, [greetingBottom] and [greetingFade] of the height.
  */
-@Composable internal fun HomeBackdrop(modifier: Modifier = Modifier, horizonAt: Float = .52f, heightScale: Float = .72f, moonAt: Offset = Offset(.56f, .22f),
+internal fun skyScrims(day: Boolean, compact: Boolean, leftScrim: Boolean, horizonAt: Float, haze: Color, bg: Color,
+    heroEdge: Float = .47f, heroFade: Float = .18f, greetingBottom: Float = .20f, greetingFade: Float = .14f): List<SkyScrim> {
+    val clear = haze.copy(alpha = 0f)
+    val lead = when {
+        day && !leftScrim -> SkyScrim(vertical = true, listOf(0f to haze.copy(alpha = .84f), .55f to clear))
+        day && compact -> SkyScrim(vertical = true, listOf(0f to haze.copy(alpha = .88f), greetingBottom to haze.copy(alpha = .76f), (greetingBottom + greetingFade).coerceAtMost(1f) to clear))
+        day -> SkyScrim(vertical = false, listOf(0f to haze.copy(alpha = .90f), heroEdge to haze.copy(alpha = .76f), (heroEdge + heroFade).coerceAtMost(1f) to clear))
+        leftScrim -> SkyScrim(vertical = false, listOf(0f to haze.copy(alpha = .92f), .38f to haze.copy(alpha = .62f), .74f to clear))
+        else -> null
+    }
+    val base = SkyScrim(vertical = true, listOf(0f to haze.copy(alpha = if (day) .25f else .35f), .14f to clear,
+        (horizonAt - .04f).coerceAtLeast(.2f) to clear, (horizonAt + .16f).coerceAtMost(.98f) to haze.copy(alpha = if (day) .85f else .90f), 1f to bg))
+    return listOfNotNull(lead, base)
+}
+
+private class SkyLedger { var changes = 0 }
+
+/**
+ * The whole home screen's background: the city edge to edge in the current scene's light, with the scrims of [skyScrims]
+ * so the greeting and the widgets stay legible. A scene change cross-fades the two skylines on the clock of
+ * [LocalSceneChange] (600 ms inside the 800 ms fade-through, 360 inside 480 on a tap), the arriving sun or moon rising into
+ * place while the leaving one sinks; an instant swap under reduced motion. [moonAt] places the sun by day as well: on the
+ * car (.62, .21), clear of the hero haze; the phone passes its own.
+ */
+@Composable internal fun HomeBackdrop(modifier: Modifier = Modifier, horizonAt: Float = .52f, heightScale: Float = .72f, moonAt: Offset = Offset(.62f, .21f),
     leftScrim: Boolean = true) {
-    val bg = Scene.bg
+    val colors = Scene.colors
+    val day = colors.isDay
+    val haze = colors.haze
+    val bg = colors.bg
+    val compact = LocalCompactApp.current
+    val gutter = LocalLayout.current.gutter
     val reduce = LocalReduceMotion.current
+    val phase = LocalScenePhase.current
+    val crossfadeMs = LocalSceneChange.current.crossfadeMs
+    // The first skyline simply appears (never an entrance on launch or on return); one composed later is a scene change.
+    val ledger = remember { SkyLedger() }
+    val entering = remember(phase) { ledger.changes++ > 0 }
     Box(modifier) {
-        Crossfade(LocalScenePhase.current, Modifier.matchParentSize(), animationSpec = if (reduce) snap() else tween(MOTION_SCENE_MS), label = "sky-phase") { phase ->
-            Skyline(phase, Modifier.matchParentSize(), horizonAt, heightScale, moonAt)
+        Crossfade(phase, Modifier.matchParentSize(), animationSpec = if (reduce) snap() else tween(crossfadeMs, easing = LinearEasing), label = "sky-phase") { shown ->
+            Skyline(shown, Modifier.matchParentSize(), horizonAt, heightScale, moonAt, entering = entering && shown == phase, leaving = shown != phase)
         }
-        if (leftScrim) Box(Modifier.matchParentSize().background(Brush.horizontalGradient(0f to bg.copy(alpha = .92f), .38f to bg.copy(alpha = .62f), .74f to Color.Transparent)))
-        Box(Modifier.matchParentSize().background(Brush.verticalGradient(0f to bg.copy(alpha = .35f), .14f to Color.Transparent,
-            (horizonAt - .04f).coerceAtLeast(.2f) to Color.Transparent, (horizonAt + .16f).coerceAtMost(.98f) to bg.copy(alpha = .90f), 1f to bg)))
+        Spacer(Modifier.matchParentSize().drawWithCache {
+            // The hero column ends 720 dp past the gutter on the car (never past 60 % of the window); the phone greeting ends about half-way to the horizon.
+            val heroEdge = min(gutter.toPx() + 720.dp.toPx(), size.width * .6f) / size.width
+            val scrims = skyScrims(day, compact, leftScrim, horizonAt, haze, bg, heroEdge = heroEdge, heroFade = 300.dp.toPx() / size.width,
+                greetingBottom = horizonAt * .5f, greetingFade = 120.dp.toPx() / size.height)
+            val brushes = scrims.map { s -> if (s.vertical) Brush.verticalGradient(*s.stops.toTypedArray()) else Brush.horizontalGradient(*s.stops.toTypedArray()) }
+            onDrawBehind { brushes.forEach { drawRect(it) } }
+        })
     }
 }
 

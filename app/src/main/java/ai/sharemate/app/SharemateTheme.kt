@@ -5,8 +5,12 @@ import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.FiniteAnimationSpec
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -16,6 +20,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
@@ -23,18 +28,25 @@ import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import java.time.LocalDateTime
 import androidx.compose.ui.platform.LocalContext
@@ -250,40 +262,74 @@ private val DayColors: ColorScheme = lightColorScheme(
 private val DayPleos = LightPleos.copy(active = Color(0xFF00703C), chartActive = Color(0xFF00703C), negative = Color(0xFFC62B0C),
     surfaceHigh = Color(0xFFE3EAF4), surfaceAccent = Color(0xFFD5DDE8), textTertiary = Color(0xFF5A6678))
 
-private fun lerpScheme(a: ColorScheme, b: ColorScheme, t: Float): ColorScheme = when {
-    t <= 0f -> a
-    t >= 1f -> b
-    else -> a.copy(
-        primary = lerp(a.primary, b.primary, t), onPrimary = lerp(a.onPrimary, b.onPrimary, t),
-        primaryContainer = lerp(a.primaryContainer, b.primaryContainer, t), onPrimaryContainer = lerp(a.onPrimaryContainer, b.onPrimaryContainer, t),
-        inversePrimary = lerp(a.inversePrimary, b.inversePrimary, t),
-        secondary = lerp(a.secondary, b.secondary, t), onSecondary = lerp(a.onSecondary, b.onSecondary, t),
-        secondaryContainer = lerp(a.secondaryContainer, b.secondaryContainer, t), onSecondaryContainer = lerp(a.onSecondaryContainer, b.onSecondaryContainer, t),
-        tertiary = lerp(a.tertiary, b.tertiary, t), onTertiary = lerp(a.onTertiary, b.onTertiary, t),
-        tertiaryContainer = lerp(a.tertiaryContainer, b.tertiaryContainer, t), onTertiaryContainer = lerp(a.onTertiaryContainer, b.onTertiaryContainer, t),
-        background = lerp(a.background, b.background, t), onBackground = lerp(a.onBackground, b.onBackground, t),
-        surface = lerp(a.surface, b.surface, t), onSurface = lerp(a.onSurface, b.onSurface, t),
-        surfaceVariant = lerp(a.surfaceVariant, b.surfaceVariant, t), onSurfaceVariant = lerp(a.onSurfaceVariant, b.onSurfaceVariant, t),
-        surfaceTint = lerp(a.surfaceTint, b.surfaceTint, t), inverseSurface = lerp(a.inverseSurface, b.inverseSurface, t), inverseOnSurface = lerp(a.inverseOnSurface, b.inverseOnSurface, t),
-        error = lerp(a.error, b.error, t), onError = lerp(a.onError, b.onError, t),
-        errorContainer = lerp(a.errorContainer, b.errorContainer, t), onErrorContainer = lerp(a.onErrorContainer, b.onErrorContainer, t),
-        outline = lerp(a.outline, b.outline, t), outlineVariant = lerp(a.outlineVariant, b.outlineVariant, t), scrim = lerp(a.scrim, b.scrim, t),
-        surfaceBright = lerp(a.surfaceBright, b.surfaceBright, t), surfaceDim = lerp(a.surfaceDim, b.surfaceDim, t),
-        surfaceContainer = lerp(a.surfaceContainer, b.surfaceContainer, t), surfaceContainerHigh = lerp(a.surfaceContainerHigh, b.surfaceContainerHigh, t),
-        surfaceContainerHighest = lerp(a.surfaceContainerHighest, b.surfaceContainerHighest, t), surfaceContainerLow = lerp(a.surfaceContainerLow, b.surfaceContainerLow, t),
-        surfaceContainerLowest = lerp(a.surfaceContainerLowest, b.surfaceContainerLowest, t),
-    )
-}
-
-private fun lerpPleos(a: PleosColors, b: PleosColors, t: Float): PleosColors = when {
-    t <= 0f -> a
-    t >= 1f -> b
-    else -> PleosColors(lerp(a.active, b.active, t), lerp(a.positive, b.positive, t), lerp(a.negative, b.negative, t),
-        lerp(a.gleoBubble, b.gleoBubble, t), lerp(a.gleoBubbleSecondary, b.gleoBubbleSecondary, t), lerp(a.gleoSpeaker, b.gleoSpeaker, t), lerp(a.gleoSurface, b.gleoSurface, t),
-        lerp(a.surfaceHigh, b.surfaceHigh, t), lerp(a.surfaceAccent, b.surfaceAccent, t), lerp(a.textTertiary, b.textTertiary, t), lerp(a.chartActive, b.chartActive, t))
-}
-
 val LocalPleosColors = staticCompositionLocalOf { DarkPleos }
+
+// ───────────────────────── the scene change: a fade-through (pure, unit-tested) ─────────────────────────
+
+/**
+ * The clock of one scene change, in ms. The content leaves over [outMs] (FastOutLinearIn) behind a scrim of the base
+ * colour; every token, the Material scheme, the Pleos colours and the sky's phase swap once at [swapAtMs]; the base colour
+ * travels from the old scene's to the new one's over [hiddenMs] while the two skylines cross-fade for [crossfadeMs]; the
+ * content returns over [inMs] (LinearOutSlowIn). Nothing is lerped between palettes, so no text is ever drawn in a
+ * half-way colour on a half-way background.
+ */
+@Immutable
+data class SceneChangeTiming(val outMs: Int, val hiddenMs: Int, val inMs: Int) {
+    val swapAtMs: Int get() = outMs
+    val crossfadeMs: Int get() = hiddenMs + inMs
+    val totalMs: Int get() = outMs + hiddenMs + inMs
+}
+
+/** 800 ms when the clock changes the scene (200 out · 360 hidden · 240 in); 480 ms when the driver tapped 자동 · 낮 · 밤 and is watching. */
+internal fun sceneChangeTiming(override: Boolean): SceneChangeTiming = if (override) SceneChangeTiming(120, 216, 144) else SceneChangeTiming(200, 360, 240)
+
+/** The scrim over the content [ms] into a change: 0 → 1 as the content leaves, 1 while hidden, 1 → 0 as it returns; 0 once the change is over. */
+internal fun sceneScrimAlpha(ms: Float, timing: SceneChangeTiming): Float = when {
+    ms <= 0f -> 0f
+    ms < timing.outMs -> FastOutLinearInEasing.transform(ms / timing.outMs)
+    ms < timing.outMs + timing.hiddenMs -> 1f
+    ms < timing.totalMs -> 1f - LinearOutSlowInEasing.transform((ms - timing.outMs - timing.hiddenMs) / timing.inMs)
+    else -> 0f
+}
+
+/** How far the base colour under the scrim has travelled from the old scene's to the new one's: it moves only while the content is hidden. */
+internal fun sceneBaseFraction(ms: Float, timing: SceneChangeTiming): Float = when {
+    ms <= timing.outMs -> 0f
+    ms >= timing.outMs + timing.hiddenMs -> 1f
+    else -> FastOutSlowInEasing.transform((ms - timing.outMs) / timing.hiddenMs)
+}
+
+/**
+ * The clock (ms) at which the scrim of a change on [timing] is [alpha] thick while the content leaves ([leaving]) or while it
+ * returns: the inverse of [sceneScrimAlpha], so a change that interrupts another carries on from the scrim as it stands
+ * instead of snapping.
+ */
+internal fun sceneClockAt(alpha: Float, timing: SceneChangeTiming, leaving: Boolean): Float {
+    val a = alpha.coerceIn(0f, 1f)
+    var lo = if (leaving) 0f else (timing.outMs + timing.hiddenMs).toFloat()
+    var hi = if (leaving) timing.outMs.toFloat() else timing.totalMs.toFloat()
+    // The scrim rises with the clock on the way out and falls on the way back: bisect accordingly.
+    repeat(24) {
+        val mid = (lo + hi) / 2
+        if ((sceneScrimAlpha(mid, timing) < a) == leaving) lo = mid else hi = mid
+    }
+    return (lo + hi) / 2
+}
+
+/**
+ * The sky's crossfade clock [t] (0–1) mapped onto the part the driver can see: the scrim still hides the content for the
+ * first [SceneChangeTiming.hiddenMs] of the crossfade, so the orb rises and the stars fade while the content returns.
+ */
+internal fun sceneRevealProgress(t: Float, timing: SceneChangeTiming): Float {
+    val hidden = timing.hiddenMs.toFloat() / timing.crossfadeMs
+    return ((t - hidden) / (1f - hidden)).coerceIn(0f, 1f)
+}
+
+/** The timing of the scene change in progress (or of the last one), provided by [SceneTheme]; the sky's crossfade runs on it. */
+val LocalSceneChange = compositionLocalOf { sceneChangeTiming(false) }
+
+/** True in the phone build (a theme with compact = true); the backdrop lays its day haze from the top there instead of from the left. */
+val LocalCompactApp = staticCompositionLocalOf { false }
 
 private fun typographyFor(compact: Boolean): Typography = if (!compact) CarTypography else CarTypography.copy(
     displayLarge = type(52, 60, FontWeight.Medium, -1.5), displayMedium = type(40, 48, FontWeight.Medium, -1.0),
@@ -299,36 +345,101 @@ private val SharemateShapes = Shapes(extraSmall = RoundedCornerShape(8.dp), smal
 /** A fixed day or night Material scheme, for screens that stay in one light (the splash, the tutorial). */
 @Composable
 fun SharemateTheme(compact: Boolean = false, dark: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
-    CompositionLocalProvider(LocalPleosColors provides if (dark) DarkPleos else LightPleos, LocalReduceMotion provides rememberReduceMotion()) {
+    CompositionLocalProvider(LocalPleosColors provides if (dark) DarkPleos else LightPleos, LocalReduceMotion provides rememberReduceMotion(), LocalCompactApp provides compact) {
         MaterialTheme(colorScheme = if (dark) DarkColors else LightColors, typography = typographyFor(compact), shapes = SharemateShapes, content = content)
     }
 }
 
+/** One requested scene change: the phase to show and whether the driver asked for it (a 자동 · 낮 · 밤 tap) or the clock did. Identity, not value: every change is its own. */
+private class SceneChange(val phase: ScenePhase, val byTap: Boolean)
+
+/**
+ * Plain memory for [SceneTheme] (no snapshot state, so nothing is written backwards during composition): the mode as of the
+ * last composition, so a change can tell a tap from the clock, and the phase that was on screen when [SceneTheme.hold] went up.
+ */
+private class SceneLedger(var mode: SceneMode, var held: ScenePhase)
+
+/** Whether a change of phase is the driver's doing: it arrives in the same composition as a new 자동 · 낮 · 밤 choice (pure, unit-tested). */
+internal fun sceneChangeIsTap(modeNow: SceneMode, modeBefore: SceneMode): Boolean = modeNow != modeBefore
+
 /**
  * The app's theme (2.10): the scene follows the clock (approximate Seoul sunrise and sunset) or the driver's 자동 · 낮 · 밤
- * choice, and a change of scene cross-fades every colour over [MOTION_SCENE_MS] instead of flipping. Night and dusk share the
- * 2.8 Midnight palette; day is its bright twin. Provides [LocalScene], [LocalScenePhase], [LocalPleosColors] and Material.
+ * choice. A change of scene is a fade-through on [sceneChangeTiming]: the content fades to the base colour, every token
+ * swaps once while it is hidden (the sky cross-fades underneath, see [HomeBackdrop]), and the content fades back in —
+ * 800 ms for the clock, 480 ms for a tap, an instant swap under reduced motion. While [hold] is true (the car is driving)
+ * the scene stays as it is and the pending phase lands when hold drops. Night and dusk share the 2.8 Midnight palette; day
+ * is its bright twin. Provides [LocalScene], [LocalScenePhase], [LocalPleosColors], [LocalSceneChange], [LocalCompactApp] and Material.
  */
 @Composable
 fun SceneTheme(compact: Boolean = false, hold: Boolean = false, content: @Composable () -> Unit) {
     val mode = rememberSceneMode()
-    // Re-evaluated when the phase can next change (sunrise, dusk), and at least every hour; no per-second clock here.
-    val phase by produceState(scenePhaseAt(LocalDateTime.now(), mode), mode) {
-        while (true) {
-            value = scenePhaseAt(LocalDateTime.now(), mode)
-            delay(nextSceneChangeIn(LocalDateTime.now(), mode).coerceIn(15_000L, 3_600_000L))
+    // The clock looks again each time the app comes to the front and whenever the phase can next change (sunrise, dusk), at
+    // least every hour; no per-second ticking. The phase itself is worked out in composition, so a 자동 · 낮 · 밤 tap changes it
+    // in the very frame the mode changes (that is how a tap is told from the clock below).
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    var tick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(mode, lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                tick++
+                delay(nextSceneChangeIn(LocalDateTime.now(), mode).coerceIn(15_000L, 3_600_000L))
+            }
         }
     }
-    // While [hold] is true (the car is driving) the scene stays as it is; the change lands at the next stop.
-    var shown by remember { mutableStateOf(phase) }
-    if (!hold) shown = phase
+    val phase = remember(mode, tick) { scenePhaseAt(LocalDateTime.now(), mode) }
+    val ledger = remember { SceneLedger(mode, phase) }
+    // The phase asked for: the clock's, unless held (driving), in which case the one that was on screen when the hold went up.
+    if (!hold) ledger.held = phase
+    val target = if (hold) ledger.held else phase
     val reduce = rememberReduceMotion()
-    val dayness by animateFloatAsState(if (shown == ScenePhase.DAY) 1f else 0f,
-        if (reduce) snap() else tween(MOTION_SCENE_MS, easing = FastOutSlowInEasing), label = "dayness")
-    val colors = remember(dayness) { lerpScene(NightSceneColors, DaySceneColors, dayness) }
-    val scheme = remember(dayness) { lerpScheme(DarkColors, DayColors, dayness) }
-    val pleos = remember(dayness) { lerpPleos(DarkPleos, DayPleos, dayness) }
-    CompositionLocalProvider(LocalScene provides colors, LocalScenePhase provides shown, LocalPleosColors provides pleos, LocalReduceMotion provides reduce) {
-        MaterialTheme(colorScheme = scheme, typography = typographyFor(compact), shapes = SharemateShapes, content = content)
+    // A change that arrives with a new mode is the driver's tap (480 ms); with the same mode it is the clock (800 ms).
+    val change = remember(target) { SceneChange(target, byTap = sceneChangeIsTap(mode, ledger.mode)) }
+    SideEffect { ledger.mode = mode }
+
+    // What is on screen: the phase in effect, the clock (ms) of the change in progress, and the base colour the scrim is leaving.
+    var shown by remember { mutableStateOf(target) }
+    var timing by remember { mutableStateOf(sceneChangeTiming(false)) }
+    var from by remember { mutableStateOf(sceneColorsFor(target).bg) }
+    val clock = remember { Animatable(timing.totalMs.toFloat()) }
+    LaunchedEffect(change) {
+        val idle = clock.value >= timing.totalMs
+        if (change.phase == shown && idle) return@LaunchedEffect
+        if (reduce) { shown = change.phase; from = sceneColorsFor(change.phase).bg; clock.snapTo(timing.totalMs.toFloat()); return@LaunchedEffect }
+        // A second change mid-way carries on from where the scrim is, so it never snaps.
+        val alpha = sceneScrimAlpha(clock.value, timing)
+        from = lerp(from, sceneColorsFor(shown).bg, sceneBaseFraction(clock.value, timing))
+        val t = sceneChangeTiming(change.byTap)
+        timing = t
+        if (change.phase == shown) {
+            // The target came back to what is shown: just let the content back in.
+            val at = sceneClockAt(alpha, t, leaving = false)
+            clock.snapTo(at)
+            clock.animateTo(t.totalMs.toFloat(), tween((t.totalMs - at).toInt().coerceAtLeast(1), easing = LinearEasing))
+            return@LaunchedEffect
+        }
+        val at = sceneClockAt(alpha, t, leaving = true)
+        clock.snapTo(at)
+        clock.animateTo(t.outMs.toFloat(), tween((t.outMs - at).toInt().coerceAtLeast(1), easing = LinearEasing))
+        // The swap: tokens, Material, Pleos and the sky's phase change together in this one frame, behind the scrim.
+        shown = change.phase
+        clock.animateTo(t.totalMs.toFloat(), tween(t.hiddenMs + t.inMs, easing = LinearEasing))
+    }
+
+    val colors = sceneColorsFor(shown)
+    val scheme = if (colors.isDay) DayColors else DarkColors
+    val pleos = if (colors.isDay) DayPleos else DarkPleos
+    val to = colors.bg
+    CompositionLocalProvider(LocalScene provides colors, LocalScenePhase provides shown, LocalPleosColors provides pleos, LocalReduceMotion provides reduce,
+        LocalSceneChange provides timing, LocalCompactApp provides compact) {
+        MaterialTheme(colorScheme = scheme, typography = typographyFor(compact), shapes = SharemateShapes) {
+            // The fade-through scrim: the base colour over everything, thickening as the content leaves and thinning as it returns.
+            // Only the draw reads the clock, so the content does not recompose per frame.
+            Box(Modifier.drawWithContent {
+                drawContent()
+                val ms = clock.value
+                val alpha = sceneScrimAlpha(ms, timing)
+                if (alpha > 0f) drawRect(lerp(from, to, sceneBaseFraction(ms, timing)).copy(alpha = alpha))
+            }) { content() }
+        }
     }
 }

@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -78,13 +79,13 @@ internal fun expenseStillAt(trip: Trip?, index: Int, snapshot: TripExpense): Boo
     onPickDriver: () -> Unit, pendingEdit: PendingEdit? = null, classify: (Trip, TripPurpose) -> Unit = { trip, purpose -> send(SyncCommand.Classify(trip.id, purpose)) }) {
     val zone = remember { ZoneId.systemDefault() }
     val followUp = LocalFollowUp.current
-    val pleos = LocalPleosColors.current
+    val tokens = phoneTokens()
     val trip = data.trips.firstOrNull { it.id == tripId } ?: data.open?.takeIf { it.id == tripId }
     val latestTrip by rememberUpdatedState(trip)
     Column(Modifier.fillMaxSize()) {
         if (trip == null) {
             PhoneRouteHeader("운행 상세", onBack = onBack)
-            PhoneBanner(true, "이 운행은 차량에서 삭제됐어요 · 목록으로 돌아가요", Modifier.padding(horizontal = 20.dp, vertical = 8.dp), tone = MaterialTheme.colorScheme.errorContainer)
+            PhoneBanner(true, "이 운행은 차량에서 삭제됐어요 · 목록으로 돌아가요", Modifier.padding(horizontal = tokens.gutter, vertical = 8.dp), tone = MaterialTheme.colorScheme.errorContainer)
             return
         }
         val history = remember(data.trips) { phoneTrips(data) }
@@ -100,14 +101,19 @@ internal fun expenseStillAt(trip: Trip?, index: Int, snapshot: TripExpense): Boo
         PhoneRouteHeader("${dayLabel(localDate(trip.startAt, zone))} · ${hm(trip.startAt)}–${if (trip.open) "기록 중" else hm(trip.endAt ?: trip.updatedAt)}",
             subtitle = listOfNotNull(if (trip.demo) "시연 데이터" else null, if (trip.origin == TripOrigin.GAP_FILL) "누락 구간 보완" else null).joinToString(" · ").ifBlank { null },
             onBack = onBack, trailing = { PendingPurposeChip(trip.purpose, pendingEdit?.purpose) })
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        // The detail keeps to the content width and centres on a wide window (spec B); the header above spans the window.
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+        Column(Modifier.contentWidth().fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = tokens.gutter).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(tokens.cardGap + 4.dp)) {
             if (phoneEditedAfterClose(trip)) Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
                 Text("마감 후 수정 · 마감된 달의 기록을 고쳤어요", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
             } else closedMonthOf(data, trip, zone)?.let { Muted("마감된 달의 기록이에요 · 고치면 ‘마감 후 수정’으로 표시돼요") }
 
-            Surface(shape = RoundedCornerShape(24.dp), color = pleos.surfaceHigh, modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(kmText(trip.distanceKm), style = scaledDisplay(MaterialTheme.typography.displaySmall, MaterialTheme.typography.headlineMedium).copy(fontFeatureSettings = "tnum"))
+            Surface(shape = RoundedCornerShape(24.dp), color = Scene.glass, contentColor = Scene.text, border = Scene.edge, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(tokens.panelPadding), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    val distanceStyle = scaledDisplay(MaterialTheme.typography.displaySmall, MaterialTheme.typography.headlineMedium).copy(fontFeatureSettings = "tnum")
+                    // A finished trip's distance is data and may change on sync, so it cross-fades; a recording trip is live telemetry and simply updates.
+                    if (trip.open) Text(kmText(trip.distanceKm), style = distanceStyle)
+                    else DigitChange(kmText(trip.distanceKm), style = distanceStyle, color = Scene.text)
                     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                         Stat("⑤ 주행 전 계기판", kmText(trip.startOdometerKm), Modifier.weight(1f))
                         Stat("⑥ 주행 후 계기판", kmText(trip.endOdometerKm), Modifier.weight(1f))
@@ -166,7 +172,7 @@ internal fun expenseStillAt(trip: Trip?, index: Int, snapshot: TripExpense): Boo
 
             Eyebrow("⑩ 비고")
             OutlinedTextField(note, { if (it.length <= 300) note = it }, Modifier.fillMaxWidth(), label = { Text("방문처·업무 내용") }, enabled = paired,
-                supportingText = { Text("${note.length} / 300") }, shape = RoundedCornerShape(14.dp), minLines = 2)
+                supportingText = { Text("${note.length} / 300") }, shape = RoundedCornerShape(14.dp), minLines = 2, colors = sceneTextFieldColors())
             if (paired) PhoneLoadingButton("메모 저장", loading = savingNote, loadingLabel = "보내는 중…", enabled = note.trim() != trip.note, outlined = true, modifier = Modifier.fillMaxWidth()) {
                 savingNote = true
                 send(SyncCommand.Note(trip.id, note.trim()))
@@ -195,6 +201,7 @@ internal fun expenseStillAt(trip: Trip?, index: Int, snapshot: TripExpense): Boo
                 }
             }
         }
+        }
     }
 }
 
@@ -212,7 +219,7 @@ internal fun expenseStillAt(trip: Trip?, index: Int, snapshot: TripExpense): Boo
                 Text("삭제", style = MaterialTheme.typography.labelLarge, fontWeight = if (armed) FontWeight.Bold else FontWeight.Medium, color = colors.onErrorContainer)
             }
         }) {
-        Row(Modifier.fillMaxWidth().background(colors.surface).heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 10.dp)
+        Row(Modifier.fillMaxWidth().background(Scene.glass).heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 10.dp)
             .semantics(mergeDescendants = true) { if (enabled) customActions = listOf(CustomAccessibilityAction("$label 삭제") { latestDelete(); true }) },
             verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -232,14 +239,15 @@ internal fun expenseStillAt(trip: Trip?, index: Int, snapshot: TripExpense): Boo
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             ExpenseType.entries.forEach { candidate ->
-                FilterChip(selected = type == candidate.name, onClick = { type = candidate.name }, label = { Text(candidate.label, style = MaterialTheme.typography.labelSmall) },
-                    modifier = Modifier.heightIn(min = 40.dp))
+                val chosen = type == candidate.name
+                FilterChip(selected = chosen, onClick = { type = candidate.name }, label = { Text(candidate.label, style = MaterialTheme.typography.labelSmall) },
+                    colors = sceneChipColors(), border = sceneChipBorder(chosen), modifier = Modifier.heightIn(min = 48.dp))
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(amount, { if (it.length <= 8 && it.all(Char::isDigit)) amount = it }, Modifier.weight(1f), singleLine = true, isError = error != null,
                 label = { Text("금액 (원)") }, supportingText = { Text(error ?: value?.let(::formatWon) ?: "1원~1,000만 원") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                shape = RoundedCornerShape(14.dp))
+                shape = RoundedCornerShape(14.dp), colors = sceneTextFieldColors())
             PhoneLoadingButton("추가", loading = false, enabled = enabled && error == null && value != null, modifier = Modifier.semantics { contentDescription = "경비 추가" }) {
                 onAdd(ExpenseType.valueOf(type), value!!); amount = ""
             }

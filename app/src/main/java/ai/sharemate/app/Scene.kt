@@ -15,7 +15,6 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,7 +26,8 @@ import java.time.LocalTime
  * The scene (2.10): the same composition in three lights. Night and dusk keep the Midnight look of 2.8; day is a bright,
  * clear version of it with dark text on white glass. The phase follows the clock (approximate Seoul sunrise and sunset) unless
  * the driver picks 낮 or 밤 in settings. Every screen reads its colours through [Scene] so the whole app moves together, and
- * [SceneTheme] cross-fades the palette instead of flipping it.
+ * [SceneTheme] fades the content through the base colour and swaps the palette once while it is hidden (a fade-through:
+ * no token is ever lerped, so no text is drawn half-way between two palettes).
  */
 
 enum class ScenePhase { DAY, DUSK, NIGHT }
@@ -105,25 +105,8 @@ internal val DaySceneColors = SceneColors(
     haze = Color(0xFFFFFFFF), sun = Color(0xFFFFD27A), shadow = Color(0x1F121A2B),
 )
 
-/** The palette between night ([t] = 0) and day ([t] = 1), for the cross-fade. */
-internal fun lerpScene(a: SceneColors, b: SceneColors, t: Float): SceneColors = when {
-    t <= 0f -> a
-    t >= 1f -> b
-    else -> SceneColors(
-        bg = lerp(a.bg, b.bg, t), rail = lerp(a.rail, b.rail, t), glass = lerp(a.glass, b.glass, t), glassBorder = lerp(a.glassBorder, b.glassBorder, t),
-        text = lerp(a.text, b.text, t), textSecondary = lerp(a.textSecondary, b.textSecondary, t), textMuted = lerp(a.textMuted, b.textMuted, t),
-        glow = lerp(a.glow, b.glow, t), warn = lerp(a.warn, b.warn, t), badge = lerp(a.badge, b.badge, t), brand = lerp(a.brand, b.brand, t),
-        edgeTop = lerp(a.edgeTop, b.edgeTop, t), edgeMid = lerp(a.edgeMid, b.edgeMid, t), edgeBottom = lerp(a.edgeBottom, b.edgeBottom, t),
-        tileStart = lerp(a.tileStart, b.tileStart, t), tileEnd = lerp(a.tileEnd, b.tileEnd, t), onTile = lerp(a.onTile, b.onTile, t),
-        divider = lerp(a.divider, b.divider, t), ringTrack = lerp(a.ringTrack, b.ringTrack, t),
-        fill = lerp(a.fill, b.fill, t),
-        positive = lerp(a.positive, b.positive, t), negative = lerp(a.negative, b.negative, t), outline = lerp(a.outline, b.outline, t),
-        selectionFill = lerp(a.selectionFill, b.selectionFill, t), selectionRing = lerp(a.selectionRing, b.selectionRing, t),
-        haze = lerp(a.haze, b.haze, t), sun = lerp(a.sun, b.sun, t), shadow = lerp(a.shadow, b.shadow, t),
-        glowCool = lerp(a.glowCool, b.glowCool, t), glowWarm = lerp(a.glowWarm, b.glowWarm, t), accent = lerp(a.accent, b.accent, t),
-        isDay = t >= .5f,
-    )
-}
+/** The tokens of one phase: day has its own palette; dusk shares the night one (only the sky tells them apart). Never lerped. */
+internal fun sceneColorsFor(phase: ScenePhase): SceneColors = if (phase == ScenePhase.DAY) DaySceneColors else NightSceneColors
 
 /** The palette in effect, provided by [SceneTheme]; night when nothing provides it (previews, the splash). */
 val LocalScene = compositionLocalOf { NightSceneColors }

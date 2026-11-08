@@ -1,6 +1,8 @@
 package ai.sharemate.app
 
+import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
@@ -67,5 +69,30 @@ class PhoneMidnightTest {
         assertEquals(15.5, day.km, 1e-9); assertEquals("열린 운행도 건수에 포함", 2, day.trips); assertEquals(3_000L, day.expenseWon)
         assertEquals("어제 시작한 열린 운행은 오늘 거리에 넣지 않음", 12.0,
             phoneToday(data.copy(open = data.open!!.copy(startAt = at(11, 19, 23))), today, zone).km, 1e-9)
+    }
+
+    @Test fun heroColumnsFollowTheWidthAndTheFontScale() {
+        assertEquals("세로 휴대폰: 2 × 2", 2, phoneHeroColumns(371.dp, 1f))
+        assertEquals("태블릿: 네 장 가로", 4, phoneHeroColumns(664.dp, 1f))
+        assertEquals("경계값", 4, phoneHeroColumns(640.dp, 1f))
+        assertEquals("1.3× 글꼴: 한 줄에 한 장", 1, phoneHeroColumns(664.dp, 1.3f))
+        assertEquals("큰 글꼴은 너비도 배율로 나눠 봄", 2, phoneHeroColumns(700.dp, 1.15f))
+    }
+
+    @Test fun landscapePhoneGetsTheRailAndTheSplitHero() {
+        assertTrue(phoneUsesRail(915.dp, 412.dp))
+        assertFalse("세로 휴대폰은 아래 탭", phoneUsesRail(412.dp, 915.dp))
+        assertFalse("가로 태블릿도 아래 탭", phoneUsesRail(1280.dp, 800.dp))
+        assertTrue(phoneHomeSplit(600.dp, 300.dp))
+        assertFalse("세로", phoneHomeSplit(371.dp, 800.dp))
+        assertFalse("태블릿은 쌓은 히어로에 네 장 가로", phoneHomeSplit(760.dp, 700.dp))
+        assertFalse("너무 좁으면 쌓기", phoneHomeSplit(500.dp, 300.dp))
+        assertFalse("1.3× 글꼴은 한 열", phoneHomeSplit(600.dp, 300.dp, 1.3f))
+    }
+
+    @Test fun dayHazeEndsUnderTheGreetingOrAtAQuarterOfTheHeight() {
+        assertEquals(420f, phoneHazeEnd(420f, 2000f), 0f)
+        assertEquals("측정 전에는 높이의 26 %", 520f, phoneHazeEnd(0f, 2000f), 0f)
+        assertEquals("화면 밖 값은 무시", 520f, phoneHazeEnd(2400f, 2000f), 0f)
     }
 }

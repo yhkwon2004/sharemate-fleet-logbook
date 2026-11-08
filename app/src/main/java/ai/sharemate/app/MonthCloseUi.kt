@@ -1,9 +1,9 @@
 package ai.sharemate.app
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,10 +12,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -55,6 +55,9 @@ import java.time.temporal.ChronoUnit
 
 internal const val MONTH_CLOSE_BANNER_DAY = 25
 internal const val SEALED_EDIT_MARK = "마감된 달의 기록 수정"
+
+/** The month-close card keeps to this width in the 월간·Excel column (spec B). */
+internal val MONTH_CLOSE_MAX_WIDTH = 760.dp
 
 // ───────────────────────── pure helpers ─────────────────────────
 
@@ -117,8 +120,8 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
 
 /** Small neutral chip for a trip row or a header: "마감 후 수정", "마감됨 · 11/1". Never a lock; the record stays editable. */
 @Composable internal fun MonthCloseChip(text: String, modifier: Modifier = Modifier) {
-    Surface(modifier, shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-        Text(text, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp), maxLines = 1)
+    Surface(modifier, shape = RoundedCornerShape(10.dp), color = Scene.fill, contentColor = Scene.textSecondary, border = BorderStroke(1.dp, Scene.divider)) {
+        Text(text, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp), maxLines = 1)
     }
 }
 
@@ -126,17 +129,16 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
 
 // ───────────────────────── 홈 배너 ─────────────────────────
 
-/** One line under the status hero with the real deadline; × hides it for this month only. */
+/** One glass line under the status hero with the real deadline; × hides it for this month only. */
 @Composable internal fun MonthCloseBanner(status: MonthStatus, onOpen: () -> Unit, onDismiss: () -> Unit, modifier: Modifier = Modifier, today: LocalDate = LocalDate.now(zone)) {
-    val colors = MaterialTheme.colorScheme
     val text = monthCloseBannerText(status, today)
-    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = colors.surfaceVariant, contentColor = colors.onSurfaceVariant) {
+    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = Scene.glass, contentColor = Scene.text, border = Scene.edge) {
         Row(Modifier.heightIn(min = 64.dp).padding(start = 20.dp, end = 6.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(text, Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.bodyLarge, color = colors.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(text, Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.bodyLarge, color = Scene.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
             TextButton(onClick = onOpen, modifier = Modifier.heightIn(min = 56.dp)) { Text(if (status.issues == 0) "마감하기" else "정리하기") }
             IconButton(onClick = onDismiss, modifier = Modifier.size(56.dp)) {
-                Text("×", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.clearAndSetSemantics { contentDescription = "이달 마감 안내 닫기" })
+                Text("×", style = MaterialTheme.typography.headlineSmall, color = Scene.textSecondary, modifier = Modifier.clearAndSetSemantics { contentDescription = "이달 마감 안내 닫기" })
             }
         }
     }
@@ -156,17 +158,18 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
 /**
  * The stepper of what is left: ① purposes and drivers, ② card questions, ③ Excel, ④ close. Each open step is a jump to
  * the place that finishes it; ④ opens only when the month is really ready. Closed shows the sign-off and 마감 해제.
+ * In the 월간·Excel column the panel keeps to 760 dp at the start; the home card ([compact]) fills its column.
  */
 @Composable internal fun MonthClosePanel(status: MonthStatus, onIssues: () -> Unit, onReviews: () -> Unit, onExport: () -> Unit, exporting: Boolean,
     act: Act, repository: TripLogRepository, modifier: Modifier = Modifier, compact: Boolean = false, editedAfterClose: Int = 0, today: LocalDate = LocalDate.now(zone)) {
     val followUp = LocalFollowUp.current
-    val colors = MaterialTheme.colorScheme
-    val pleos = LocalPleosColors.current
     val name = monthLabel(status.month, today)
     val key = monthKey(status.month)
     val closed = status.closed
     val percent = status.percent
-    Panel(modifier, padding = if (compact) 22.dp else 28.dp) {
+    // The completion bar sweeps from the previous value to the new one (spec C); TalkBack hears the real figure.
+    val progress = sweepProgress((percent ?: 0) / 100f)
+    Panel(if (compact) modifier else modifier.widthIn(max = MONTH_CLOSE_MAX_WIDTH), padding = if (compact) 22.dp else LocalLayout.current.panelPadding) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Eyebrow(if (compact) "월 마감 · ${status.trips}건" else "MONTH CLOSE · ${status.trips}건")
             Spacer(Modifier.weight(1f))
@@ -174,8 +177,8 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
         }
         Text(when { closed != null -> "$name 운행일지 마감됨"; percent == null -> "$name 운행이 아직 없어요"; else -> "$name 운행일지 ${percent}% 완성" },
             style = if (compact) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
-        if (percent != null) LinearProgressIndicator(progress = { percent / 100f }, modifier = Modifier.fillMaxWidth().height(10.dp)
-            .semantics { contentDescription = "완성률 ${percent}퍼센트" }, color = pleos.chartActive, trackColor = pleos.surfaceHigh, drawStopIndicator = {})
+        if (percent != null) LinearProgressIndicator(progress = { progress.value }, modifier = Modifier.fillMaxWidth().height(10.dp)
+            .semantics { contentDescription = "완성률 ${percent}퍼센트" }, color = Scene.positive, trackColor = Scene.ringTrack, drawStopIndicator = {})
         if (closed != null) {
             Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                 Stat("운행", "${closed.trips}건", Modifier.weight(1f))
@@ -197,7 +200,7 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 steps.forEachIndexed { index, step ->
                     StepRow(index + 1, step, exporting && index == 2, when (index) { 0 -> onIssues; 1 -> onReviews; 2 -> onExport; else -> null })
-                    if (index < steps.lastIndex) HorizontalDivider(color = colors.outlineVariant.copy(alpha = .6f), modifier = Modifier.padding(start = 46.dp))
+                    if (index < steps.lastIndex) HorizontalDivider(color = Scene.divider, modifier = Modifier.padding(start = 46.dp))
                 }
             }
             LoadingAction("$name 마감", "마감 중…", act, Modifier.fillMaxWidth(), enabled = status.ready) {
@@ -217,19 +220,19 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
 
 @Composable private fun StepRow(number: Int, step: CloseStep, busy: Boolean, onAction: (() -> Unit)?) {
     val colors = MaterialTheme.colorScheme
-    val pleos = LocalPleosColors.current
     val state = when { step.done -> "완료"; step.optional -> "선택"; else -> "남음" }
     Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).semantics(mergeDescendants = true) { stateDescription = state },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        Box(Modifier.size(32.dp).clip(CircleShape).background(when { step.done -> pleos.chartActive; step.optional -> pleos.surfaceHigh; else -> colors.primary }),
+        // Done is the scene's positive with the scheme's text for it; a step still to do is the primary disc; an optional one the row fill.
+        Box(Modifier.size(32.dp).clip(CircleShape).background(when { step.done -> Scene.positive; step.optional -> Scene.fill; else -> colors.primary }),
             contentAlignment = Alignment.Center) {
             Text(if (step.done) "✓" else number.toString(), style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center,
-                color = when { step.done -> colors.onTertiary; step.optional -> colors.onSurface; else -> colors.onPrimary },
+                color = when { step.done -> colors.onTertiary; step.optional -> Scene.text; else -> colors.onPrimary },
                 modifier = Modifier.clearAndSetSemantics { contentDescription = "${number}단계" })
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(step.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(step.detail, style = MaterialTheme.typography.bodySmall, color = if (!step.done && !step.optional && step.action != null) pleos.negative else colors.onSurfaceVariant,
+            Text(step.detail, style = MaterialTheme.typography.bodySmall, color = if (!step.done && !step.optional && step.action != null) Scene.negative else Scene.textSecondary,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (step.action != null && onAction != null) TextButton(onClick = onAction, enabled = !busy, modifier = Modifier.heightIn(min = 56.dp)) {

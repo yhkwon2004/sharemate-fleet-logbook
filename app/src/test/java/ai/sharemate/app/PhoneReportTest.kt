@@ -64,4 +64,11 @@ class PhoneReportTest {
         assertTrue(phoneEditedAfterClose(trip("b", 2, kim.id, history = listOf("휴대폰에서 목적 변경", "마감된 달의 기록 수정 · 11/2 09:10"))))
         assertEquals(SEALED_EDIT_MARK, "마감된 달의 기록 수정")
     }
+
+    @Test fun theCardsPageForwardToALaterMonthAndBackToAnEarlierOne() {
+        assertTrue(monthSwapForward(YearMonth.of(2026, 10), YearMonth.of(2026, 11)))
+        assertFalse(monthSwapForward(YearMonth.of(2026, 11), YearMonth.of(2026, 10)))
+        assertFalse("같은 달은 앞으로 가지 않음", monthSwapForward(YearMonth.of(2026, 11), YearMonth.of(2026, 11)))
+        assertTrue("해가 바뀌어도 달력 순서대로", monthSwapForward(YearMonth.of(2025, 12), YearMonth.of(2026, 1)))
+    }
 }
