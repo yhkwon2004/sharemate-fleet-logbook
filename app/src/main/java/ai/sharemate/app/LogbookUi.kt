@@ -448,11 +448,19 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                 tools()
             }
         } else {
+            // Narrow windows: the mark sits beside the tab pill (which scrolls when it does not fit), then one row for the
+            // recording state, the short window's clock, the employee and the tools. Two rows instead of three, so a short,
+            // narrow window keeps most of its height for the page.
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                mark(); time(); Spacer(Modifier.weight(1f)); tools()
+                mark()
+                GlassTabs(tabs, selected, onSelect, Modifier.weight(1f, fill = false).horizontalScroll(rememberScrollState()), compact = layout.short)
             }
-            GlassTabs(tabs, selected, onSelect, Modifier.horizontalScroll(rememberScrollState()), compact = layout.short)
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) { Box(Modifier.weight(1f)) { StatusPill(state) }; employee(Modifier) }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(Modifier.weight(1f)) { StatusPill(state) }
+                time()
+                employee(Modifier.weight(1f, fill = false))
+                tools()
+            }
         }
     }
 }
