@@ -237,7 +237,7 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
  * so the account can say which employee it is.
  */
 @Composable internal fun PhoneReservationsTab(data: TripLogData, account: PhoneAccount?, paired: Boolean, connected: Boolean, busy: Boolean, now: Long,
-    send: (SyncCommand) -> Unit, onPickMe: () -> Unit, modifier: Modifier = Modifier) {
+    send: (SyncCommand, () -> Unit) -> Unit, onPickMe: () -> Unit, modifier: Modifier = Modifier) {
     val tz = remember { ZoneId.systemDefault() }
     val followUp = LocalFollowUp.current
     val today = Instant.ofEpochMilli(now).atZone(tz).toLocalDate()
@@ -262,17 +262,19 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
         DateStrip(dates, selected, today, data, tz) { selectedDay = it.toEpochDay(); error = null }
         DayTimeline(selected, today, dayBookings, data, driverId, now, tz, enabled = blocked == null) { hour -> setSlot(slotFromHour(hour, selected, dayBookings, now, tz)); scope.launch { formView.bringIntoView() } }
         Box(Modifier.bringIntoViewRequester(formView)) {
-        ReservationForm(data, selected, start, end, driverId, blocked, busy, error, tz, onSlot = setSlot, onPickMe = onPickMe, onError = { error = it }) { request ->
-            send(SyncCommand.Reserve(request))
-            followUp(FollowUp(reservationSentText(selected, start, end)))
-            // The sent window is now the car's booking; the form moves on to the time right after it instead of flagging its own request.
-            val next = slotAfterSent(end)
-            if (next != null) setSlot(next) else { selectedDay = selected.plusDays(1).toEpochDay(); error = null }
+        ReservationForm(data, selected, start, end, driverId, blocked, busy, error, tz, onSlot = setSlot, onPickMe = onPickMe, onError = { error = it }) { request, confirmed ->
+            send(SyncCommand.Reserve(request)) {
+                confirmed()
+                followUp(FollowUp(reservationSentText(selected, start, end)))
+                val next = slotAfterSent(end)
+                if (next != null) setSlot(next) else { selectedDay = selected.plusDays(1).toEpochDay(); error = null }
+            }
         }
         }
         ReservationLists(data, driverId, now, tz, enabled = blocked == null && !busy) { reservation ->
-            send(SyncCommand.CancelReservation(reservation.id))
-            followUp(FollowUp("예약을 취소했어요", "실행 취소") { send(SyncCommand.RestoreReservation(reservation.id)) })
+            send(SyncCommand.CancelReservation(reservation.id)) {
+                followUp(FollowUp("예약을 취소했어요", "실행 취소") { send(SyncCommand.RestoreReservation(reservation.id)) {} })
+            }
         }
     }
 }
@@ -389,12 +391,12 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
 }
 
 @Composable private fun ReservationForm(data: TripLogData, date: LocalDate, start: Int, end: Int, driverId: String?, blocked: String?, busy: Boolean, error: String?, tz: ZoneId,
-    onSlot: (Pair<Int, Int>) -> Unit, onPickMe: () -> Unit, onError: (String?) -> Unit, onSubmit: (Reservation) -> Unit) {
+    onSlot: (Pair<Int, Int>) -> Unit, onPickMe: () -> Unit, onError: (String?) -> Unit, onSubmit: (Reservation, () -> Unit) -> Unit) {
     var purposeName by rememberSaveable { mutableStateOf("") }
     var destination by rememberSaveable { mutableStateOf("") }
     var note by rememberSaveable { mutableStateOf("") }
     val purpose = purposeChoices.firstOrNull { it.name == purposeName }
-    val editable = blocked == null
+    val editable = blocked == null && !busy
     val startAt = epochMillisAt(date, start, tz)
     val endAt = epochMillisAt(date, end, tz)
     val conflict = remember(data, startAt, endAt) { slotConflictText(data, startAt, endAt, tz) }
@@ -437,7 +439,7 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
             val request = Reservation(UUID.randomUUID().toString(), id, startAt, endAt, purpose, destination.trim(), note.trim())
             val problem = precheckReservation(data, request, System.currentTimeMillis(), tz)
             if (problem != null) onError(problem)
-            else { onError(null); onSubmit(request); destination = ""; note = "" }
+            else { onError(null); onSubmit(request) { destination = ""; note = "" } }
         }
         Text("겹치는 예약이 있는지는 차량이 마지막으로 확인해요. 확정되면 아래 목록에 나타나요.", style = MaterialTheme.typography.labelMedium, color = Midnight.textMuted)
     }
@@ -449,7 +451,7 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
             Text(label, style = MaterialTheme.typography.titleSmall, color = Midnight.textSecondary, modifier = Modifier.weight(1f))
             StepButton("−", "$label 30분 앞당기기", enabled && canMinus, onMinus)
             Text(minutesText(minutes), style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum"), color = Midnight.text, textAlign = TextAlign.Center,
-                modifier = Modifier.width(76.dp).semantics { contentDescription = "$label ${minutesText(minutes)}"; liveRegion = LiveRegionMode.Polite })
+                modifier = Modifier.widthIn(min = 76.dp).semantics { contentDescription = "$label ${minutesText(minutes)}"; liveRegion = LiveRegionMode.Polite })
             StepButton("+", "$label 30분 늦추기", enabled && canPlus, onPlus)
         }
     }
@@ -473,7 +475,7 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
             Box(Modifier.size(16.dp).clip(CircleShape).border(2.dp, if (selected) Midnight.glow else Midnight.textMuted, CircleShape), contentAlignment = Alignment.Center) {
                 if (selected) Box(Modifier.size(8.dp).clip(CircleShape).background(Midnight.glow))
             }
-            Text(label, style = MaterialTheme.typography.labelLarge, color = if (selected) Midnight.glow else Midnight.text, maxLines = 1)
+            Text(label, Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, color = if (selected) Midnight.glow else Midnight.text)
         }
     }
 }

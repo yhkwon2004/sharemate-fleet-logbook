@@ -1,7 +1,11 @@
 package ai.sharemate.app
 
 import org.json.JSONObject
+import java.io.IOException
+import java.security.MessageDigest
 import java.security.SecureRandom
+import java.security.cert.CertificateException
+import java.security.cert.X509Certificate
 
 /*
  * Car-to-phone live sync. The vehicle hosts the server and owns the data; the phone is a client.
@@ -26,6 +30,27 @@ private val random = SecureRandom()
 internal fun newPairingCode(): String = "%06d".format(random.nextInt(1_000_000))
 internal fun newToken(): String = ByteArray(32).also(random::nextBytes).joinToString("") { "%02x".format(it) }
 internal fun validToken(value: String?) = value != null && value.matches(Regex("[a-f0-9]{64}"))
+
+internal fun pairingFingerprint(value: String): String = value.filterNot(Char::isWhitespace).lowercase().also {
+    require(validToken(it)) { "차량 화면의 인증키 64자리를 확인해 주세요." }
+}
+
+internal fun verifyPinnedCertificate(certificate: X509Certificate, fingerprint: String) {
+    certificate.checkValidity()
+    val actual = MessageDigest.getInstance("SHA-256").digest(certificate.encoded).joinToString("") { "%02x".format(it) }
+    if (!MessageDigest.isEqual(actual.toByteArray(), fingerprint.toByteArray())) throw CertificateException("Certificate pin mismatch")
+}
+
+/** Keep duplicate headers until framing is checked; a map would silently discard conflicting lengths. */
+internal fun syncContentLength(headers: List<Pair<String, String>>, path: String): Int {
+    if (headers.any { it.first.equals("transfer-encoding", ignoreCase = true) }) throw IOException("Transfer encoding is unsupported")
+    val lengths = headers.filter { it.first.equals("content-length", ignoreCase = true) }.map { it.second.trim() }
+    if (lengths.size > 1) throw IOException("Duplicate content length")
+    val raw = lengths.singleOrNull() ?: return 0
+    val length = raw.takeIf { it.matches(Regex("[0-9]{1,10}")) }?.toIntOrNull() ?: throw IOException("Invalid content length")
+    if (length > if (path == "/v2/photo") SYNC_MAX_PHOTO_BODY else SYNC_MAX_BODY) throw IOException("Body too large")
+    return length
+}
 
 /** Edits a phone may send; each maps to one repository call so validation stays in one place. */
 sealed interface SyncCommand {

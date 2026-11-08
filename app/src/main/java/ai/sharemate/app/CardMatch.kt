@@ -300,19 +300,20 @@ internal fun mergeCardEvents(data: TripLogData, events: List<CardApproval>, now:
     val demo = data.profile.demoMode
     var next = data
     events.sortedBy { it.at }.forEach { event ->
-        if (event.cancel) { next = cancelCharge(next, event, now); return@forEach }
         val cards = next.profile.cards
         val registered = event.last4 != null && event.last4 in cards
         if (event.last4 != null && cards.isNotEmpty() && !registered) return@forEach
+        if (event.cancel) { next = cancelCharge(next, event, now); return@forEach }
         val category = categorize(event.merchant)
         if (category == null && !registered) return@forEach
         if (next.charges.any { it.id == event.id || it.statementId == event.id }) return@forEach
-        val twin = next.charges.firstOrNull { other ->
+        val twin = next.charges.filter { other ->
+            other.demo == demo && (other.last4 == null || event.last4 == null || other.last4 == event.last4) &&
             other.amountWon == event.amountWon && other.state != ChargeState.CANCELED && sameMerchant(other.merchant, event.merchant) && when (event.source) {
                 CardSource.STATEMENT -> other.statementId == null && day(other.at, zone) == day(event.at, zone)
                 CardSource.NOTIFICATION -> other.source == CardSource.NOTIFICATION && abs(other.at - event.at) <= DUPLICATE_WINDOW
             }
-        }
+        }.singleOrNull()
         next = when {
             twin != null && event.source == CardSource.STATEMENT -> next.copy(charges = next.charges.map { if (it.id == twin.id) it.copy(statementId = event.id) else it })
             twin != null -> next
@@ -325,9 +326,17 @@ internal fun mergeCardEvents(data: TripLogData, events: List<CardApproval>, now:
 
 /** Fuel stations pre-authorise a round sum, cancel it, then charge the real amount; the cancel must erase the first line. */
 private fun cancelCharge(data: TripLogData, event: CardApproval, now: Long): TripLogData {
-    val original = data.charges.filter { it.amountWon == event.amountWon && it.state != ChargeState.CANCELED && it.at <= event.at + HOUR &&
-        (sameMerchant(it.merchant, event.merchant) || (it.last4 != null && it.last4 == event.last4)) }.maxByOrNull { it.at } ?: return data
-    return data.detach(original, "승인 취소", now).let { edited ->
+    if (event.id in data.handledCardCancels) return data
+    val candidates = data.charges.filter { it.demo == data.profile.demoMode && it.amountWon == event.amountWon && it.state != ChargeState.CANCELED &&
+        it.at <= event.at && (it.last4 == null || event.last4 == null || it.last4 == event.last4) && squeeze(it.merchant) == squeeze(event.merchant) }
+    if (candidates.isEmpty()) return data
+    require(data.handledCardCancels.size < MAX_CARD_CHARGES) { "카드 취소 이력 보관 한도에 도달했어요. 기존 기록은 유지됩니다." }
+    val next = data.copy(handledCardCancels = data.handledCardCancels + event.id)
+    val original = candidates.singleOrNull()
+    if (original == null || original.last4 != event.last4) return next.copy(charges = next.charges.map { charge ->
+        if (charge in candidates) charge.copy(state = ChargeState.REVIEW, reason = "승인 취소 확인 필요 · 카드와 원거래를 확인한 뒤 비용에서 제외해 주세요") else charge
+    })
+    return next.detach(original, "승인 취소", now).let { edited ->
         edited.copy(charges = edited.charges.map { if (it.id == original.id) it.copy(state = ChargeState.CANCELED, reason = "카드 승인이 취소됐어요") else it })
     }
 }

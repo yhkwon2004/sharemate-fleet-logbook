@@ -5,12 +5,39 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.async
 import java.time.Instant
 import java.time.YearMonth
 import java.time.ZoneOffset
 
 /** Pure parts of the phone shell, home, trip list and detail: routing, badges, in-flight edits, month paging, swipe targets, source lines. */
 class PhoneShellTest {
+    @Test fun failedOrPendingBookingKeepsTheDraftUntilTheCarAcceptsIt() = kotlinx.coroutines.runBlocking {
+        val command = SyncCommand.CancelReservation("booking")
+        var draft = "거래처 방문"
+        var rejected = false
+        try {
+            sendAndConfirm(command, { throw IllegalArgumentException("예약 충돌") }) { draft = "" }
+        } catch (_: IllegalArgumentException) { rejected = true }
+        assertTrue(rejected)
+        assertEquals("거래처 방문", draft)
+        val ack = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val pending = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            sendAndConfirm(command, { ack.await() }) { draft = "" }
+        }
+        assertEquals("거래처 방문", draft)
+        ack.complete(Unit)
+        pending.await()
+        assertEquals("", draft)
+    }
+
+    @Test fun firstBookingDoesNotRequireAPreviousTrip() {
+        val empty = TripLogData()
+        assertFalse(phoneHasWorkspace(empty, false))
+        assertTrue(phoneHasWorkspace(empty, true))
+        assertTrue(phoneHasWorkspace(empty.copy(profile = FleetProfile(plateNumber = "12가3456")), false))
+    }
+
     private val zone = ZoneOffset.UTC
     private val now = Instant.parse("2026-10-23T05:02:00Z").toEpochMilli()
     private val hour = 3_600_000L

@@ -260,7 +260,7 @@ private enum class AddMode(val label: String) { PAIR("차량과 연결"), MANUAL
  * be swiped away, so a half-finished pairing is not cancelled by a stray gesture. [pairError] is an earlier pairing
  * failure the caller wants shown; the sheet's own failures replace it.
  */
-@Composable internal fun PhoneAddVehicleSheet(modifier: Modifier = Modifier, busy: Boolean, pairError: String?, onPair: suspend (endpoint: String, code: String) -> Unit,
+@Composable internal fun PhoneAddVehicleSheet(modifier: Modifier = Modifier, busy: Boolean, pairError: String?, onPair: suspend (endpoint: String, code: String, fingerprint: String) -> Unit,
     onAddManual: suspend (plate: String, model: String, company: String) -> Unit, onDismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
     val followUp = LocalFollowUp.current
@@ -277,12 +277,12 @@ private enum class AddMode(val label: String) { PAIR("차량과 연결"), MANUAL
             when (mode) {
                 AddMode.PAIR -> {
                     Muted("차량 화면에 뜨는 6자리 연결 번호가 필요해요. 휴대폰과 차량이 같은 Wi-Fi나 핫스팟에 있어야 해요.")
-                    PhoneConnectCard(busy || working, error ?: pairError) { endpoint, code ->
+                    PhoneConnectCard(busy || working, error ?: pairError) { endpoint, code, fingerprint ->
                         error = null
                         scope.launch {
                             working = true
                             try {
-                                onPair(endpoint, code)
+                                onPair(endpoint, code, fingerprint)
                                 followUp(FollowUp("차량과 연결됐어요 · 기록을 받고 있어요"))
                                 onDismiss()
                             } catch (e: CancellationException) { throw e }

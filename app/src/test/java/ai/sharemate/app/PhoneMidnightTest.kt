@@ -24,7 +24,8 @@ class PhoneMidnightTest {
         val data = TripLogData(drivers = listOf(driver), vehicle = VehicleCard(socPercent = 82, odometerKm = 12_394.0),
             trips = listOf(trip("a", 11, 3, 100.0), trip("b", 11, 5, 110.0, TripPurpose.UNCLASSIFIED)))
         val lines = phoneCardLines(data, today, zone)
-        assertEquals("배터리 82%", lines.vehicle)
+        assertEquals("마지막 저장 잔량 82%", lines.vehicle)
+        assertEquals("배터리 81%", phoneCardLines(data, today, zone, socPercent = 81).vehicle)
         assertEquals("미분류 1건", lines.log); assertEquals(1, lines.logPending)
         assertEquals("기한이 다가오면 기한이 먼저", "정기검사 D-10",
             phoneCardLines(data.copy(care = VehicleCare(inspectionDue = "2026-11-30")), today, zone).vehicle)

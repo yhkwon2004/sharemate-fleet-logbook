@@ -560,9 +560,9 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     }
     // The month-close banner is a reminder for when the card is not on screen; while the stack shows the card itself, one is enough.
     val closeCardShown = parkedTasks(data, state.sync, now, zone, snoozes.value, prompt.value).firstOrNull()?.kind == TaskKind.MONTH_CLOSE
-    val live = state.live?.takeIf { it.demo == data.profile.demoMode }
+    val live = state.live?.takeIf { it.demo == data.profile.demoMode && now - it.at in 0..45_000 }
     val (odometer, odometerLive) = careOdometer(state, now)
-    val soc = live?.socPercent ?: data.vehicle.socPercent
+    val soc = live?.socPercent
     // The clock recomposes this pane every second; the card lines only change with the data, the readings and the day.
     val lines = remember(data, soc, odometer, odometerLive, today, snoozes.value) { homeCardLines(data, soc, odometer, odometerLive, today, zone, snoozes.value) }
     val cards = listOf(

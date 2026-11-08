@@ -11,6 +11,43 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 class CardMatchTest {
+    @Test fun anotherCardCannotCancelACompanyChargeAndRetriesSurviveReload() {
+        val base = TripLogData(profile = FleetProfile(cards = listOf("1234")))
+        val original = approval("GS칼텍스 판교", at(14), 50_000, last4 = "1234")
+        val data = mergeCardEvents(base, listOf(original), at(15), zone)
+        val wrong = approval("GS칼텍스 판교", at(14, 5), 50_000, last4 = "9999", cancel = true)
+        assertEquals(data, mergeCardEvents(data, listOf(wrong), at(15), zone))
+        val cancel = approval("GS칼텍스 판교", at(14, 5), 50_000, last4 = "1234", cancel = true)
+        val canceled = mergeCardEvents(data, listOf(cancel), at(15), zone)
+        assertEquals(ChargeState.CANCELED, canceled.charges.single().state)
+        // A delayed older approval must not become a new target when the same cancellation is retried.
+        val later = mergeCardEvents(canceled, listOf(approval("GS칼텍스 판교", at(13), 50_000, last4 = "1234")), at(15), zone)
+        val restored = TripLogCodec.decode(TripLogCodec.encode(later))
+        assertEquals(restored, mergeCardEvents(restored, listOf(cancel), at(15), zone))
+    }
+
+    @Test fun ambiguousCancellationKeepsBothChargesForHumanReview() {
+        val events = listOf(approval("GS칼텍스 판교", at(13), 50_000, last4 = "1234"), approval("GS칼텍스 판교", at(14), 50_000, last4 = "1234"))
+        val data = mergeCardEvents(TripLogData(), events, at(15), zone)
+        val cancel = approval("GS칼텍스 판교", at(14, 5), 50_000, last4 = "1234", cancel = true)
+        val review = mergeCardEvents(data, listOf(cancel), at(15), zone)
+        assertEquals(2, review.charges.size)
+        assertTrue(review.charges.all { it.state == ChargeState.REVIEW && it.reason.contains("승인 취소 확인") })
+        assertEquals(review, mergeCardEvents(review, listOf(cancel), at(15), zone))
+    }
+
+    @Test fun equalPaymentsOnDifferentCardsAndModesRemainSeparate() {
+        val first = approval("아이파킹 판교", at(14), 4_500, last4 = "1234")
+        val second = approval("아이파킹 판교", at(14, 1), 4_500, last4 = "5678")
+        val base = TripLogData(profile = FleetProfile(cards = listOf("1234", "5678")))
+        val data = mergeCardEvents(base, listOf(first, second), at(15), zone)
+        assertEquals(2, data.charges.size)
+        val mixed = data.copy(charges = data.charges.take(1).map { it.copy(demo = true) })
+        assertEquals(2, mergeCardEvents(mixed, listOf(second.copy(last4 = "1234")), at(15), zone).charges.size)
+        val legacy = org.json.JSONObject(TripLogCodec.encode(data).toString(Charsets.UTF_8)).apply { remove("handledCardCancels") }
+        assertTrue(TripLogCodec.decode(legacy.toString().toByteArray()).handledCardCancels.isEmpty())
+    }
+
     private val zone = ZoneId.of("Asia/Seoul")
     private fun at(hour: Int, minute: Int = 0, day: Int = 29) = LocalDateTime.of(2026, 10, day, hour, minute).atZone(zone).toInstant().toEpochMilli()
     private fun id(seed: String) = UUID.nameUUIDFromBytes(seed.toByteArray()).toString()
@@ -259,6 +296,7 @@ class CardMatchTest {
         val fuel = refillAcrossGap(VehicleCard(fuelPercent = 20, capturedAt = at(10)), DriveSample(at(12), GearState.PARK, 100.0, fuelPercent = 70))!!
         assertTrue(fuel.fuel)
         assertNull("주행 중 회생제동은 충전이 아님", refillAcrossGap(card, after.copy(gear = GearState.MOVING)))
+        assertNull("기어 미확인을 정차로 추정하지 않음", refillAcrossGap(card, after.copy(gear = GearState.UNKNOWN)))
         assertNull("잔량 오차", refillAcrossGap(card, after.copy(socPercent = 41)))
         assertNull("충전 신호가 보이는 동안은 세션이 맡음", refillAcrossGap(card, after.copy(charging = true)))
         assertNull("첫 기록에는 기준값이 없음", refillAcrossGap(VehicleCard(socPercent = 40), after))

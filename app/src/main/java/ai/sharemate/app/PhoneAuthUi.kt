@@ -307,7 +307,7 @@ internal fun PhoneOnboarding(
     busy: Boolean,
     pairError: String?,
     onSaveProfile: suspend (name: String, department: String) -> Unit,
-    onPair: suspend (endpoint: String, code: String) -> Unit,
+    onPair: suspend (endpoint: String, code: String, fingerprint: String) -> Unit,
     onAddManual: suspend (plate: String, model: String, company: String) -> Unit,
     onPickDriver: suspend (driverId: String?) -> Unit,
     onFinish: suspend () -> Unit,
@@ -360,11 +360,11 @@ internal fun PhoneOnboarding(
                                 onName = { if (it.length <= PROFILE_NAME_MAX || it.length < name.length) { name = it; nameTouched = true; profileError = null } },
                                 onDepartment = { if (it.length <= PROFILE_DEPARTMENT_MAX || it.length < department.length) { department = it; profileError = null } })
                             1 -> VehicleStep(fleet, vehicleMode, { vehicleMode = it }, busy || pairing, pairLocalError ?: pairError,
-                                onPair = { endpoint, code ->
+                                onPair = { endpoint, code, fingerprint ->
                                     pairLocalError = null
                                     scope.launch {
                                         pairing = true
-                                        try { onPair(endpoint, code); followUp(FollowUp("차량과 연결됐어요 · 기록을 받고 있어요")) }
+                                        try { onPair(endpoint, code, fingerprint); followUp(FollowUp("차량과 연결됐어요 · 기록을 받고 있어요")) }
                                         catch (e: CancellationException) { throw e }
                                         catch (e: IllegalArgumentException) { pairLocalError = e.message ?: PAIR_UNREACHABLE }
                                         catch (_: Exception) { pairLocalError = PAIR_UNREACHABLE }
@@ -478,7 +478,7 @@ internal fun PhoneOnboarding(
     }
 }
 
-@Composable private fun VehicleStep(fleet: FleetState, mode: Int, onMode: (Int) -> Unit, pairBusy: Boolean, pairError: String?, onPair: (String, String) -> Unit,
+@Composable private fun VehicleStep(fleet: FleetState, mode: Int, onMode: (Int) -> Unit, pairBusy: Boolean, pairError: String?, onPair: (String, String, String) -> Unit,
     plate: String, model: String, company: String, onPlate: (String) -> Unit, onModel: (String) -> Unit, onCompany: (String) -> Unit,
     adding: Boolean, manualError: String?, onAdd: () -> Unit) {
     StepIntro("사용할 법인차량을 등록해요",

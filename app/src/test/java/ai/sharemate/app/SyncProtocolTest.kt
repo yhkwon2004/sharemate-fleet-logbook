@@ -5,6 +5,27 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SyncProtocolTest {
+    @Test fun malformedHttpFramingIsRejectedBeforeBodyAllocation() {
+        listOf("-1", "+1", "abc", "2147483648", "999999999999999999999", "").forEach { length ->
+            assertThrows(java.io.IOException::class.java) { syncContentLength(listOf("Content-Length" to length), "/pair") }
+        }
+        assertThrows(java.io.IOException::class.java) { syncContentLength(listOf("content-length" to "1", "Content-Length" to "1"), "/pair") }
+        assertThrows(java.io.IOException::class.java) { syncContentLength(listOf("Transfer-Encoding" to "chunked"), "/pair") }
+        assertThrows(java.io.IOException::class.java) { syncContentLength(listOf("content-length" to (SYNC_MAX_BODY + 1).toString()), "/pair") }
+        assertEquals(0, syncContentLength(emptyList(), "/pair"))
+        assertEquals(17, syncContentLength(listOf("Content-Length" to "17"), "/pair"))
+        assertEquals(SYNC_MAX_PHOTO_BODY, syncContentLength(listOf("Content-Length" to SYNC_MAX_PHOTO_BODY.toString()), "/v2/photo"))
+    }
+
+    @Test fun accountOwnershipCannotBeTakenByAnotherLoginOrProvider() {
+        val original = PhoneAccount("a@example.com", "a@example.com", "A")
+        val owner = accountOwnerKey(original)
+        requireAccountOwner(null, original)
+        requireAccountOwner(owner, original.copy(name = "새 이름", signedInAt = 99))
+        assertThrows(SignInException::class.java) { requireAccountOwner(owner, original.copy(id = "b@example.com")) }
+        assertThrows(SignInException::class.java) { requireAccountOwner(owner, original.copy(provider = AccountProvider.DEMO)) }
+    }
+
     private val tripId = "6f1c9c2e-0d8a-4b4e-9f1e-0a3c2b1d4e5f"
     private val otherId = "0b2d4f6a-8c1e-4a3b-9d7f-1e2c3b4a5d6e"
 

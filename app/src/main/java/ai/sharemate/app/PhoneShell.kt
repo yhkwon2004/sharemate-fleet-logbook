@@ -148,6 +148,14 @@ internal enum class PhoneTab(val label: String, val icon: Int, val badgeLabel: S
 /** The trips the phone shows: the copy filtered to the car's current mode (real or demo). */
 internal fun phoneTrips(data: TripLogData): List<Trip> = data.trips.filter { it.demo == data.profile.demoMode }
 
+internal fun phoneHasWorkspace(data: TripLogData, paired: Boolean): Boolean =
+    paired || data.trips.isNotEmpty() || data.open != null || data.profile.plateNumber.isNotBlank()
+
+internal suspend fun sendAndConfirm(command: SyncCommand, send: suspend (SyncCommand) -> Unit, confirmed: () -> Unit) {
+    send(command)
+    confirmed()
+}
+
 /** Filter semantics shared by every tab: null = everyone, "" = trips without a driver, otherwise one driver id. */
 internal fun matchesEmployee(trip: Trip, filter: String?) = filter == null || trip.driverId.orEmpty() == filter
 
@@ -214,7 +222,7 @@ internal class PhoneReportArgs(val data: TripLogData, val month: YearMonth, val 
     val busy: Boolean, val send: (SyncCommand) -> Unit, val onOpenTrip: (String) -> Unit, val onOpenEmployee: (String) -> Unit, val exportXlsx: suspend (List<Trip>, String) -> Unit)
 
 /** Arguments the shell hands to the 예약 tab (built by PhoneReservationsTab). */
-internal class PhoneBookingArgs(val data: TripLogData, val paired: Boolean, val connected: Boolean, val busy: Boolean, val now: Long, val send: (SyncCommand) -> Unit)
+internal class PhoneBookingArgs(val data: TripLogData, val paired: Boolean, val connected: Boolean, val busy: Boolean, val now: Long, val send: (SyncCommand, () -> Unit) -> Unit)
 
 /** What the activity owns and the shell borrows: the sync client, the launchers, and the two tabs built elsewhere. */
 internal class PhoneHost(
@@ -226,7 +234,7 @@ internal class PhoneHost(
     val pickFile: () -> Unit,
     val exportXlsx: suspend (List<Trip>, String) -> Unit,
     val openAlertSettings: () -> Unit,
-    val pair: suspend (String, String) -> Unit,
+    val pair: suspend (String, String, String) -> Unit,
     val unpair: suspend () -> Unit,
     val expensesTab: @Composable (PhoneExpensesArgs) -> Unit,
     val reportTab: @Composable (PhoneReportArgs) -> Unit,
@@ -270,7 +278,7 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
     val busy = hostBusy || inFlight > 0
     val latestState by rememberUpdatedState(state)
     val month = remember(ui.month) { runCatching { YearMonth.parse(ui.month) }.getOrDefault(YearMonth.now()) }
-    val hasLog = data.trips.isNotEmpty() || data.open != null
+    val hasLog = phoneHasWorkspace(data, paired)
     val now = System.currentTimeMillis()
 
     // One place sends every command: a failure is a bar with the same command behind "다시 시도", a refusal is the car's own sentence.
@@ -279,16 +287,17 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
         val ids = when (command) { is SyncCommand.Classify -> listOf(command.tripId); is SyncCommand.ClassifyMany -> command.tripIds; else -> emptyList() }
         if (ids.isNotEmpty()) ui = ui.copy(pendingEdits = ui.pendingEdits - ids.toSet())
     }
-    val send: (SyncCommand) -> Unit = { command ->
+    val sendConfirmed: (SyncCommand, () -> Unit) -> Unit = { command, confirmed ->
         scope.launch {
             inFlight++
-            try { sendSuspend(command) }
+            try { sendAndConfirm(command, sendSuspend, confirmed) }
             catch (e: CancellationException) { throw e }
             catch (e: IllegalArgumentException) { dropPending(command); followUp(FollowUp(e.message ?: "차량이 변경을 받지 않았어요.")) }
-            catch (_: Exception) { dropPending(command); followUp(sendFailureFollowUp { sendSuspend(command) }) }
+            catch (_: Exception) { dropPending(command); followUp(sendFailureFollowUp { sendAndConfirm(command, sendSuspend, confirmed) }) }
             finally { inFlight-- }
         }
     }
+    val send: (SyncCommand) -> Unit = { sendConfirmed(it, {}) }
     fun markPending(ids: List<String>, purpose: TripPurpose) {
         val stamp = System.currentTimeMillis()
         ui = ui.copy(pendingEdits = ui.pendingEdits + ids.associateWith { PendingEdit(purpose, stamp, latestState.dataRevision) })
@@ -406,7 +415,7 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
                                                 when (tab) {
                                                     0 -> PhoneHomeTab(data, link, paired, busy, now, host.repository.photos, photoVersion, host.capture, host.fetchPhoto, commands, ui.pendingEdits,
                                                         onVehicle = { ui = ui.push(PhoneRoute.Vehicle) })
-                                                    PhoneTab.BOOK.ordinal -> host.bookingTab(PhoneBookingArgs(data, paired, link.connected, busy, now, send))
+                                                    PhoneTab.BOOK.ordinal -> host.bookingTab(PhoneBookingArgs(data, paired, link.connected, busy, now, sendConfirmed))
                                                     PhoneTab.TRIPS.ordinal -> PhoneTripList(data, ui.employeeFilter, paired, busy, now, ui.pendingEdits, commands, Modifier.fillMaxSize())
                                                     PhoneTab.EXPENSES.ordinal -> host.expensesTab(PhoneExpensesArgs(data, month, ui.employeeFilter, paired, busy, send, cardAlerts, queued, host.openAlertSettings, zone))
                                                     else -> host.reportTab(PhoneReportArgs(data, month, { ui = ui.copy(month = it.toString()) }, ui.employeeFilter, paired, busy, send,

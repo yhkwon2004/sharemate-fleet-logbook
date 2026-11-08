@@ -56,13 +56,22 @@ internal fun resumeAccount(fresh: PhoneAccount, previous: PhoneAccount?): PhoneA
     if (previous == null || previous.id != fresh.id || !previous.onboarded) fresh
     else fresh.copy(name = previous.name, department = previous.department, driverId = previous.driverId, onboarded = true)
 
+internal fun accountOwnerKey(account: PhoneAccount): String = "${account.provider.name}:${account.id}"
+
+internal fun requireAccountOwner(owner: String?, account: PhoneAccount) {
+    if (owner != null && owner != accountOwnerKey(account))
+        throw SignInException("이 기기에 보관된 차량 기록은 다른 계정의 기록이에요. 기존 계정으로 로그인해 주세요.")
+}
+
 /** The signed-in account, persisted in no-backup storage so it never leaves the phone through a cloud backup. */
 class AccountStore private constructor(context: Context) {
     private val file = AtomicFile(File(context.applicationContext.noBackupFilesDir, "phone-account.json"))
+    private val owner = AtomicFile(File(context.applicationContext.noBackupFilesDir, "phone-data-owner.txt"))
     private val mutable = MutableStateFlow(runCatching { if (file.baseFile.exists()) decodeAccount(file.readFully().toString(Charsets.UTF_8)) else null }.getOrNull())
     val account: StateFlow<PhoneAccount?> = mutable.asStateFlow()
 
     suspend fun save(account: PhoneAccount) = withContext(Dispatchers.IO) {
+        keepOwner(account)
         val stream = file.startWrite()
         try { stream.write(encodeAccount(account).toByteArray(Charsets.UTF_8)); file.finishWrite(stream) } catch (e: Exception) { file.failWrite(stream); throw e }
         mutable.value = account
@@ -73,6 +82,18 @@ class AccountStore private constructor(context: Context) {
     // The first-run answers of the account that signed out last, so signing in again with it skips the onboarding.
     private val last = File(context.applicationContext.noBackupFilesDir, "phone-account-last.json")
 
+    // shortcut: one account owns this installation; add isolated stores before supporting account switching.
+    private fun keepOwner(account: PhoneAccount) {
+        val previous = if (owner.baseFile.exists()) owner.readFully().toString(Charsets.UTF_8)
+            else mutable.value?.let(::accountOwnerKey) ?: if (last.exists()) accountOwnerKey(decodeAccount(last.readText(Charsets.UTF_8))) else null
+        requireAccountOwner(previous, account)
+        if (!owner.baseFile.exists()) {
+            val stream = owner.startWrite()
+            try { stream.write(accountOwnerKey(account).toByteArray(Charsets.UTF_8)); owner.finishWrite(stream) }
+            catch (e: Exception) { owner.failWrite(stream); throw e }
+        }
+    }
+
     /** Stores a fresh sign-in; the same account signing in again keeps its name, department, employee and finished onboarding. */
     suspend fun signIn(account: PhoneAccount) {
         val previous = withContext(Dispatchers.IO) { runCatching { if (last.exists()) decodeAccount(last.readText(Charsets.UTF_8)) else null }.getOrNull() }
@@ -80,6 +101,7 @@ class AccountStore private constructor(context: Context) {
     }
 
     suspend fun clear() = withContext(Dispatchers.IO) {
+        mutable.value?.let { keepOwner(it) }
         mutable.value?.let { runCatching { last.writeText(encodeAccount(it), Charsets.UTF_8) } }
         file.delete(); mutable.value = null
     }
@@ -121,6 +143,7 @@ internal fun demoAccount(now: Long = System.currentTimeMillis()) =
 
 /** Signs out: forgets the account on the phone and clears the Credential Manager state so the next sign-in asks again. */
 internal suspend fun signOutEverywhere(context: Context) {
-    runCatching { CredentialManager.create(context).clearCredentialState(ClearCredentialStateRequest()) }
     AccountStore.get(context).clear()
+    PhoneSyncClient.get(context).stop()
+    runCatching { CredentialManager.create(context).clearCredentialState(ClearCredentialStateRequest()) }
 }

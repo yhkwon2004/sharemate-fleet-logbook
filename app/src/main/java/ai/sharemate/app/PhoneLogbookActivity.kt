@@ -112,11 +112,12 @@ private fun readLogbook(context: android.content.Context, uri: Uri): TripLogData
     val followUp = feedback.second
     SideEffect { dispatchRef.value = followUp }
 
-    LaunchedEffect(Unit) { repository.ensureLoaded(); sync.start() }
+    LaunchedEffect(Unit) { repository.ensureLoaded() }
 
     // 2.9: who is using the phone, and which company vehicle it shows. The account gates the shell; the fleet picks the car.
     val accounts = remember { AccountStore.get(context) }
     val account by accounts.account.collectAsState()
+    LaunchedEffect(account?.id) { if (account != null) sync.start() else sync.stop() }
     val fleet by sync.fleetState.collectAsState()
     var signInBusy by remember { mutableStateOf(false) }
     var signInError by remember { mutableStateOf<String?>(null) }
@@ -135,9 +136,9 @@ private fun readLogbook(context: android.content.Context, uri: Uri): TripLogData
         }
     }
     // Pairing from onboarding or the add-vehicle sheet: the car's own sentence lands under the code field.
-    val pairVehicle: suspend (String, String) -> Unit = { endpoint, code ->
+    val pairVehicle: suspend (String, String, String) -> Unit = { endpoint, code, fingerprint ->
         pairError = null
-        try { sync.pair(endpoint, code); paired = true }
+        try { sync.pair(endpoint, code, fingerprint); paired = true }
         catch (e: CancellationException) { throw e }
         catch (e: IllegalArgumentException) { pairError = e.message ?: PAIR_UNREACHABLE; throw e }
         catch (e: Exception) { pairError = PAIR_UNREACHABLE; throw IllegalArgumentException(PAIR_UNREACHABLE, e) }
@@ -243,7 +244,7 @@ private fun readLogbook(context: android.content.Context, uri: Uri): TripLogData
     val assistantWriter = remember(sync, repository) { PhoneAssistantWriter(sync) { repository.state.value.data } }
     val host = remember(sync, repository) {
         PhoneHost(repository, sync, capture = capture, fetchPhoto = fetchPhoto, importStatement = importStatement, pickFile = pickFile, exportXlsx = exportXlsx,
-            openAlertSettings = openAlertSettings, pair = { endpoint, code -> sync.pair(endpoint, code); paired = true }, unpair = { sync.unpair(); paired = false },
+            openAlertSettings = openAlertSettings, pair = { endpoint, code, fingerprint -> sync.pair(endpoint, code, fingerprint); paired = true }, unpair = { sync.unpair(); paired = false },
             expensesTab = { a ->
                 PhoneExpensesTab(a.data, state, link, a.busy, a.send, importStatement, a.cardAlerts, a.openAlertSettings, a.queued,
                     month = a.month, employeeFilter = a.employeeFilter, paired = a.paired, zone = a.zone, importer = rememberStatementImporter(sync, a.data, a.zone, a.paired))
@@ -303,7 +304,7 @@ private fun readLogbook(context: android.content.Context, uri: Uri): TripLogData
             followUp(FollowUp("${title ?: "차량"}을 이 휴대폰에서 지웠어요")) } },
         onDismiss = { fleetOpen = false })
     if (addOpen) PhoneAddVehicleSheet(busy = hostBusy, pairError = pairError,
-        onPair = { endpoint, code -> pairVehicle(endpoint, code); addOpen = false; followUp(FollowUp("차량과 연결됐어요 · 기록을 받고 있어요")) },
+        onPair = { endpoint, code, fingerprint -> pairVehicle(endpoint, code, fingerprint); addOpen = false; followUp(FollowUp("차량과 연결됐어요 · 기록을 받고 있어요")) },
         onAddManual = { plate, model, company -> addManualVehicle(plate, model, company); addOpen = false; followUp(FollowUp("$plate 을 등록했어요 · 차량과 연결하면 실시간으로 볼 수 있어요")) },
         onDismiss = { addOpen = false })
     // Booking needs to know which employee on the car's list this account is; one short list, saved on the phone.

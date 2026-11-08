@@ -42,17 +42,17 @@ internal const val PAIR_UNREACHABLE = "차량에 닿지 않아요. 주소와 포
  * The pairing card with its inline error and its own loading state. [pair] throws IllegalArgumentException with the
  * car's sentence ("연결 번호가 달라요…"), which lands under the code field instead of in a modal.
  */
-@Composable internal fun PhonePairingBlock(busy: Boolean, pair: suspend (String, String) -> Unit, modifier: Modifier = Modifier) {
+@Composable internal fun PhonePairingBlock(busy: Boolean, pair: suspend (String, String, String) -> Unit, modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     val followUp = LocalFollowUp.current
     var working by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        PhoneConnectCard(busy || working, error) { endpoint, code ->
+        PhoneConnectCard(busy || working, error) { endpoint, code, fingerprint ->
             error = null
             scope.launch {
                 working = true
-                try { pair(endpoint, code); followUp(FollowUp("차량과 연결됐어요 · 기록을 받고 있어요")) }
+                try { pair(endpoint, code, fingerprint); followUp(FollowUp("차량과 연결됐어요 · 기록을 받고 있어요")) }
                 catch (e: CancellationException) { throw e }
                 catch (e: IllegalArgumentException) { error = e.message ?: PAIR_UNREACHABLE }
                 catch (_: Exception) { error = PAIR_UNREACHABLE }
@@ -64,7 +64,7 @@ internal const val PAIR_UNREACHABLE = "차량에 닿지 않아요. 주소와 포
 }
 
 /** Full-screen settings: car link (connect or disconnect), card alerts and statements, the logbook file, and what the app does. */
-@Composable internal fun PhoneSettingsPage(data: TripLogData, link: PhoneLink, paired: Boolean, busy: Boolean, pair: suspend (String, String) -> Unit,
+@Composable internal fun PhoneSettingsPage(data: TripLogData, link: PhoneLink, paired: Boolean, busy: Boolean, pair: suspend (String, String, String) -> Unit,
     unpair: suspend () -> Unit, cardAlerts: Boolean, queued: Int, openAlertSettings: () -> Unit, importStatement: () -> Unit, pickFile: () -> Unit, onBack: () -> Unit,
     accountSlot: @Composable () -> Unit = {}) {
     val scope = rememberCoroutineScope()
@@ -118,7 +118,7 @@ internal const val PAIR_UNREACHABLE = "차량에 닿지 않아요. 주소와 포
 }
 
 /** The screen before the first trip: what the phone is for, the pairing card (or the link status), and the file fallback. No tab bar yet. */
-@Composable internal fun PhoneConnectScreen(state: TripLogState, link: PhoneLink, paired: Boolean, busy: Boolean, pair: suspend (String, String) -> Unit,
+@Composable internal fun PhoneConnectScreen(state: TripLogState, link: PhoneLink, paired: Boolean, busy: Boolean, pair: suspend (String, String, String) -> Unit,
     pickFile: () -> Unit, modifier: Modifier = Modifier) {
     Column(modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         SharemateTheme(compact = true, dark = true) {

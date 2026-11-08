@@ -71,6 +71,8 @@ internal fun driveSignalsFresh(gear: GearState, odometer: Double?, gearAgeMillis
 internal fun freshNavigationAddress(address: String?, ageMillis: Long): String? =
     address?.trim()?.take(120)?.takeIf { it.isNotEmpty() && ageMillis in 0..45_000 }
 
+internal fun energySignalFresh(receivedAt: Long, now: Long): Boolean = receivedAt >= 0 && now - receivedAt in 0..45_000
+
 /** A gate counts as passed when the guidance stops listing it, or when the next toll entry is suddenly much further away. */
 internal fun tollGatePassed(previousMeters: Double?, currentMeters: Double?): Boolean =
     previousMeters != null && previousMeters <= 2_000 && (currentMeters == null || currentMeters > previousMeters + 1_000)
@@ -100,6 +102,9 @@ class PleosDriveSignals(context: Context) : DriveSignals {
     private var charging: Boolean? = null
     private var soc: Int? = null
     private var fuel: Int? = null
+    private var socAt = -1L
+    private var fuelAt = -1L
+    private var chargingAt = -1L
     private var vin: String? = null
     // Toll evidence for card matching; the SDK reports no payment, only the route's fare and upcoming gates.
     private var tollFare: Long? = null
@@ -150,7 +155,7 @@ class PleosDriveSignals(context: Context) : DriveSignals {
                 ticks++
                 // Listeners carry changes; the heartbeat refreshes values a platform may not push and keeps the trip alive.
                 readGear()
-                if (ticks % 2 == 0) readOdometer()
+                if (ticks % 2 == 0) { readOdometer(); readEnergyLevels() }
                 if (ticks % 2 == 1) readChargeState()
                 if (gear == GearState.MOVING && ticks % 4 == 0) requestLocation()
                 if (gear == GearState.MOVING && destination != null && naviReady) runCatching { navi?.getTBTInfo() }
@@ -222,12 +227,26 @@ class PleosDriveSignals(context: Context) : DriveSignals {
 
     private fun onSoc(value: Int?) {
         soc = value?.takeIf { it in 0..100 }
+        socAt = if (soc != null) SystemClock.elapsedRealtime() else -1L
         emit()
     }
 
     private fun onFuel(value: Int?) {
         fuel = value?.takeIf { it in 0..100 }
+        fuelAt = if (fuel != null) SystemClock.elapsedRealtime() else -1L
         emit()
+    }
+
+    private fun readEnergyLevels() {
+        val v = vehicle ?: return
+        if (socListener != null) runCatching {
+            v.getEvBattery().getEvBatteryStateOfCharge({ value -> scope.launch { if (active) onSoc(value) } },
+                { scope.launch { if (active) onSoc(null) } })
+        }.onFailure { onSoc(null) }
+        if (fuelListener != null) runCatching {
+            v.getFuel().getFuelPercent({ value -> scope.launch { if (active) onFuel(value) } },
+                { scope.launch { if (active) onFuel(null) } })
+        }.onFailure { onFuel(null) }
     }
 
     private fun onTurnList(list: List<TBTInfo>) {
@@ -238,7 +257,7 @@ class PleosDriveSignals(context: Context) : DriveSignals {
     }
 
     private fun readChargeState() {
-        val manager = properties ?: return
+        val manager = properties ?: return onChargeState(null)
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
         runCatching {
             val value = manager.getProperty(Int::class.javaObjectType, VehiclePropertyIds.EV_CHARGE_STATE, 0)
@@ -252,7 +271,7 @@ class PleosDriveSignals(context: Context) : DriveSignals {
             EvChargeState.STATE_NOT_CHARGING, EvChargeState.STATE_FULLY_CHARGED -> false
             else -> null
         }
-        if (next == charging) return
+        chargingAt = if (next != null) SystemClock.elapsedRealtime() else -1L
         charging = next
         emit()
     }
@@ -287,7 +306,7 @@ class PleosDriveSignals(context: Context) : DriveSignals {
             car = Car.createCar(context, null, Car.CAR_WAIT_TIMEOUT_DO_NOT_WAIT) { connected, ready ->
                 scope.launch {
                     if (!active) return@launch
-                    if (!ready) { properties = null; onGear(GearState.UNKNOWN); return@launch }
+                    if (!ready) { properties = null; onChargeState(null); onGear(GearState.UNKNOWN); return@launch }
                     val manager = runCatching { connected.getCarManager(Car.PROPERTY_SERVICE) as? CarPropertyManager }.getOrNull() ?: return@launch
                     properties = manager
                     runCatching {
@@ -424,7 +443,8 @@ class PleosDriveSignals(context: Context) : DriveSignals {
             if (gearAt < 0 || odometerAt < 0 || waitingForParkDistance) SignalStatus.STARTING else SignalStatus.ERROR
         mutableSamples.value = DriveSample(System.currentTimeMillis(), if (fresh) gear else GearState.UNKNOWN,
             if (fresh) distance else null, freshNavigationAddress(address, if (addressAt < 0) Long.MAX_VALUE else now - addressAt), destination,
-            charging = charging, socPercent = soc, vin = vin, fuelPercent = fuel, tollFareWon = tollFare, tollPassAt = tollPassAt)
+            charging = charging.takeIf { energySignalFresh(chargingAt, now) }, socPercent = soc.takeIf { energySignalFresh(socAt, now) },
+            vin = vin, fuelPercent = fuel.takeIf { energySignalFresh(fuelAt, now) }, tollFareWon = tollFare, tollPassAt = tollPassAt)
     }
 
     override fun stop() {
