@@ -2,9 +2,11 @@
 
 package ai.sharemate.app
 
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -141,8 +143,9 @@ internal const val FLEET_PLATE_MAX = 12
 internal const val FLEET_MODEL_MAX = 40
 internal const val FLEET_COMPANY_MAX = 60
 
+/** The status dot: the scene's 연결됨 green, amber while waiting, muted for a typed car — each at least 3:1 on the day's white glass. */
 @Composable private fun FleetLinkTone.dot(): Color = when (this) {
-    FleetLinkTone.LIVE -> LocalPleosColors.current.chartActive
+    FleetLinkTone.LIVE -> Scene.positive
     FleetLinkTone.WAITING -> Scene.warn
     FleetLinkTone.MANUAL, FleetLinkTone.NONE -> Scene.textMuted
 }
@@ -158,8 +161,9 @@ internal const val FLEET_COMPANY_MAX = 60
     val vehicle = fleet.selected
     val tone = fleetLinkTone(vehicle, link.connected)
     val description = fleetSwitcherDescription(fleet, data, link.connected, now, zone)
-    Surface(onClick = onClick, shape = RoundedCornerShape(50), color = Scene.glass, contentColor = Scene.text, border = Scene.edge,
-        modifier = modifier.heightIn(min = 48.dp).widthIn(max = 168.dp).semantics(mergeDescendants = true) { contentDescription = description; role = Role.Button }) {
+    val press = remember { MutableInteractionSource() }
+    Surface(onClick = onClick, shape = RoundedCornerShape(50), color = Scene.glass, contentColor = Scene.text, border = Scene.edge, interactionSource = press,
+        modifier = modifier.pressable(press).heightIn(min = 48.dp).widthIn(max = 168.dp).semantics(mergeDescendants = true) { contentDescription = description; role = Role.Button }) {
         Row(Modifier.heightIn(min = 48.dp).padding(start = 12.dp, end = 10.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Icon(painterResource(R.drawable.ic_vehicle), null, Modifier.size(18.dp), tint = Scene.textSecondary)
@@ -181,10 +185,11 @@ internal const val FLEET_COMPANY_MAX = 60
 @Composable internal fun PhoneFleetSheet(modifier: Modifier = Modifier, fleet: FleetState, selectedData: TripLogData, link: PhoneLink, now: Long, busy: Boolean,
     onSelect: (String) -> Unit, onAdd: () -> Unit, onRemove: (String) -> Unit, onDismiss: () -> Unit) {
     val zone = remember { ZoneId.systemDefault() }
+    val tokens = phoneTokens()
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var removing by remember { mutableStateOf<FleetVehicle?>(null) }
-    ModalBottomSheet(onDismissRequest = onDismiss, modifier = modifier, sheetState = sheet, containerColor = Scene.rail, contentColor = Scene.text) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 20.dp).navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    ModalBottomSheet(onDismissRequest = onDismiss, modifier = modifier, sheetState = sheet, sheetMaxWidth = phoneSheetMaxWidth(), containerColor = Scene.rail, contentColor = Scene.text) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = tokens.gutter).padding(bottom = 20.dp).navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) { heading() }, verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("회사 차량", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Scene.text)
@@ -216,13 +221,15 @@ internal const val FLEET_COMPANY_MAX = 60
     }
 }
 
+/** One vehicle: a 72-dp row that selects on tap (press settles it to 97 %), the selection fill and ring when it is the current car, and 삭제 beside it. */
 @Composable private fun FleetVehicleRow(vehicle: FleetVehicle, selected: Boolean, status: String, busy: Boolean, onSelect: () -> Unit, onRemove: () -> Unit) {
     val shape = RoundedCornerShape(20.dp)
-    Surface(shape = shape, color = if (selected) Scene.glow.copy(alpha = .08f) else Scene.glass, contentColor = Scene.text,
-        border = if (selected) BorderStroke(1.dp, Scene.glow.copy(alpha = .7f)) else Scene.edge, modifier = Modifier.fillMaxWidth()) {
+    val press = remember { MutableInteractionSource() }
+    Surface(shape = shape, color = if (selected) Scene.selectionFill else Scene.glass, contentColor = Scene.text,
+        border = selectionBorder(selected), modifier = Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Row(Modifier.weight(1f).heightIn(min = 72.dp)
-                .clickable(enabled = !busy, role = Role.Button, onClickLabel = if (selected) "닫기" else "이 차량 선택", onClick = onSelect)
+            Row(Modifier.weight(1f).pressable(press).heightIn(min = 72.dp)
+                .clickable(interactionSource = press, indication = LocalIndication.current, enabled = !busy, role = Role.Button, onClickLabel = if (selected) "닫기" else "이 차량 선택", onClick = onSelect)
                 .semantics(mergeDescendants = true) {
                     this.selected = selected
                     contentDescription = "${vehicle.title}, ${fleetVehicleSubtitle(vehicle)}, $status" + if (selected) ", 선택됨" else ""
@@ -266,9 +273,11 @@ private enum class AddMode(val label: String) { PAIR("차량과 연결"), MANUAL
     var working by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val latestWorking by rememberUpdatedState(working)
+    val tokens = phoneTokens()
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { it != SheetValue.Hidden || !latestWorking })
-    ModalBottomSheet(onDismissRequest = { if (!working) onDismiss() }, modifier = modifier, sheetState = sheet, containerColor = Scene.rail, contentColor = Scene.text) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 20.dp).navigationBarsPadding(),
+    ModalBottomSheet(onDismissRequest = { if (!working) onDismiss() }, modifier = modifier, sheetState = sheet, sheetMaxWidth = phoneSheetMaxWidth(),
+        containerColor = Scene.rail, contentColor = Scene.text) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = tokens.gutter).padding(bottom = 20.dp).navigationBarsPadding(),
             verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("차량 추가", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Scene.text, modifier = Modifier.semantics { heading() })
             FleetAddModeSwitch(mode, enabled = !working) { mode = it }
@@ -304,12 +313,14 @@ private enum class AddMode(val label: String) { PAIR("차량과 연결"), MANUAL
     }
 }
 
+/** 차량과 연결 · 직접 등록 as two 48-dp segments; the chosen one carries the selection fill, ring and glow label (never colour alone). */
 @Composable private fun FleetAddModeSwitch(mode: AddMode, enabled: Boolean, onChange: (AddMode) -> Unit) {
     Surface(shape = RoundedCornerShape(50), color = Scene.glass, border = Scene.edge, modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(4.dp).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             AddMode.entries.forEach { option ->
                 val on = option == mode
-                Box(Modifier.weight(1f).heightIn(min = 48.dp).background(if (on) Scene.glow.copy(alpha = .18f) else Color.Transparent, RoundedCornerShape(50))
+                Box(Modifier.weight(1f).heightIn(min = 48.dp).background(if (on) Scene.selectionFill else Color.Transparent, RoundedCornerShape(50))
+                    .border(1.5.dp, if (on) Scene.selectionRing else Color.Transparent, RoundedCornerShape(50))
                     .selectable(selected = on, enabled = enabled, role = Role.Tab) { onChange(option) }, contentAlignment = Alignment.Center) {
                     Text(option.label, style = MaterialTheme.typography.labelLarge, color = if (on) Scene.glow else Scene.textSecondary,
                         fontWeight = if (on) FontWeight.Bold else FontWeight.Normal, maxLines = 1)

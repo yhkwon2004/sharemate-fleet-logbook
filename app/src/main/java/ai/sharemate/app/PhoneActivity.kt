@@ -11,10 +11,11 @@ import android.os.Bundle
 import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -33,7 +34,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
@@ -65,7 +65,9 @@ class PhoneActivity : ComponentActivity() {
         }
         setContent {
             val state by model.state.collectAsState()
-            SharemateTheme(compact = true) {
+            // 2.10: the inspection app follows the same scene as the logbook (day by daylight, night otherwise, or the driver's choice).
+            SceneTheme(compact = true) {
+                SceneSystemBars()
                 PhoneApp(model, state, capture = { stage, view ->
                     model.prepareCapture(stage, view) { uri ->
                         try { if (view == EvidenceView.WALKAROUND) video.launch(uri) else photo.launch(uri) }
@@ -83,6 +85,15 @@ class PhoneActivity : ComponentActivity() {
             }
         }
     }
+
+    /** Bar icons follow the scene, not the system theme: dark on the day backdrop, light by night (the logbook activity does the same). */
+    @Composable private fun SceneSystemBars() {
+        val day = Scene.isDay
+        LaunchedEffect(day) {
+            val style = if (day) SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT) else SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+            enableEdgeToEdge(style, style)
+        }
+    }
 }
 
 @Composable
@@ -95,16 +106,17 @@ fun PhoneApp(model: PhoneViewModel, state: PhoneState, capture: (InspectionStage
     var viewing by remember { mutableStateOf<Pair<InspectionRecord, EvidenceItem>?>(null) }
     var accident by rememberSaveable { mutableStateOf(false) }
     val record = state.data.selected
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+    // The scene's backdrop under everything; the layout tokens are measured here, at this app's root.
+    ProvideLayout(compactApp = true, Modifier.fillMaxSize().sceneBackdrop()) { tokens ->
         Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = tokens.gutter, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("SHAREMATE /", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
-                    Text("YOUR SPACE. YOUR PACE.", fontSize = 10.sp, letterSpacing = 1.4.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("SHAREMATE /", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp, color = Scene.text)
+                    Text("YOUR SPACE. YOUR PACE.", fontSize = 10.sp, letterSpacing = 1.4.sp, color = Scene.textSecondary)
                 }
-                TextButton(onClick = enableNotifications) { Text("알림 설정") }
+                TextButton(onClick = enableNotifications, modifier = Modifier.heightIn(min = 48.dp)) { Text("알림 설정") }
             }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = tokens.gutter), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 listOf("내 차량" to 0, "촬영 기록" to 1).forEach { (label, value) ->
                     if (tab == value) Button(onClick = { tab = value }, modifier = Modifier.weight(1f).heightIn(min = 52.dp), shape = RoundedCornerShape(14.dp)) { Text(label) }
                     else OutlinedButton(onClick = { tab = value }, modifier = Modifier.weight(1f).heightIn(min = 52.dp), shape = RoundedCornerShape(14.dp)) { Text(label) }
@@ -112,7 +124,7 @@ fun PhoneApp(model: PhoneViewModel, state: PhoneState, capture: (InspectionStage
             }
             if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
-                Column(Modifier.widthIn(max = 680.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                Column(Modifier.contentWidth().verticalScroll(rememberScrollState()).padding(horizontal = tokens.gutter, vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(tokens.cardGap + 6.dp)) {
                     connectionContent(tab == 0)
                     if (state.loading) CircularProgressIndicator()
                     else if (state.loadFailed) PhoneCard {
@@ -140,8 +152,8 @@ fun PhoneApp(model: PhoneViewModel, state: PhoneState, capture: (InspectionStage
                         }
                     } else {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Text("차량 상태 기록", style = MaterialTheme.typography.titleLarge)
-                            TextButton(onClick = { history = true }, enabled = state.data.pending == null && !state.busy) { Text("보관함 ${state.data.records.size}") }
+                            Text("차량 상태 기록", style = MaterialTheme.typography.titleLarge, color = Scene.text)
+                            TextButton(onClick = { history = true }, enabled = state.data.pending == null && !state.busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("보관함 ${state.data.records.size}") }
                         }
                         if (record == null) PhoneCard {
                             Text("내 차를 둘러보는 5단계", fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
@@ -152,14 +164,14 @@ fun PhoneApp(model: PhoneViewModel, state: PhoneState, capture: (InspectionStage
                                 Text("미완료 촬영이 있어요", fontWeight = FontWeight.Bold)
                                 Text("카메라에서 돌아온 결과를 확인하지 못했습니다. 저장된 촬영을 확인하거나 취소해 주세요.")
                                 Button(onClick = { model.finishCapture(true) }, enabled = !state.busy, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("저장된 촬영 확인") }
-                                TextButton(onClick = { model.finishCapture(false) }, enabled = !state.busy) { Text("미완료 촬영 취소") }
+                                TextButton(onClick = { model.finishCapture(false) }, enabled = !state.busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("미완료 촬영 취소") }
                             }
                             RecordBody(record, state, model, capture, onPreview = { item -> if (item.video) previewVideo(record, item) else viewing = record to item })
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 OutlinedButton(onClick = model::newRecord, enabled = !state.busy && state.data.pending == null, modifier = Modifier.weight(1f).heightIn(min = 52.dp)) { Text("다른 이용 새 기록") }
                                 TextButton(onClick = { deleting = true }, enabled = !state.busy && state.data.pending == null, modifier = Modifier.heightIn(min = 52.dp)) { Text("이 기록 삭제", color = MaterialTheme.colorScheme.error) }
                             }
-                            Text("원본은 이 휴대폰에 보관됩니다. 연결한 차량에는 촬영 완료 여부·확인 결과·메모와 원본 해시를 공유합니다. 실제 반납 승인은 운영사에서 확인해 주세요.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("원본은 이 휴대폰에 보관됩니다. 연결한 차량에는 촬영 완료 여부·확인 결과·메모와 원본 해시를 공유합니다. 실제 반납 승인은 운영사에서 확인해 주세요.", style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary)
                         }
                     }
                     Spacer(Modifier.height(12.dp))
@@ -167,7 +179,8 @@ fun PhoneApp(model: PhoneViewModel, state: PhoneState, capture: (InspectionStage
             }
         }
     }
-    if (state.error != null) AlertDialog(onDismissRequest = model::clearError, title = { Text("확인이 필요해요") }, text = { Text(state.error) }, confirmButton = { TextButton(onClick = model::clearError) { Text("확인") } })
+    if (state.error != null) AlertDialog(onDismissRequest = model::clearError, title = { Text("확인이 필요해요") }, text = { Text(state.error) },
+        confirmButton = { TextButton(onClick = model::clearError, modifier = Modifier.heightIn(min = 48.dp)) { Text("확인") } })
     if (history) AlertDialog(onDismissRequest = { history = false }, title = { Text("휴대폰 보관함") }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (state.data.records.isEmpty()) Text("아직 촬영 기록이 없습니다.")
@@ -175,10 +188,10 @@ fun PhoneApp(model: PhoneViewModel, state: PhoneState, capture: (InspectionStage
                 Column { Text(phoneDate(item.createdAt)); Text(if (item.afterComplete) "이용 후 기록 완료" else if (item.beforeComplete) "탑승 전 기록 완료" else "촬영 중", style = MaterialTheme.typography.bodySmall) }
             } }
         }
-    }, confirmButton = { TextButton(onClick = { history = false }) { Text("닫기") } })
+    }, confirmButton = { TextButton(onClick = { history = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("닫기") } })
     if (deleting && record != null) AlertDialog(onDismissRequest = { deleting = false }, title = { Text("촬영 원본까지 삭제할까요?") }, text = { Text("이 휴대폰의 사진·영상·판독 결과·메모를 삭제합니다. 복구할 수 없으며, 이미 공유한 차량의 요약은 별도로 남아 있을 수 있습니다.") }, confirmButton = {
-        TextButton(onClick = { model.deleteSelected(); deleting = false }) { Text("원본과 기록 삭제", color = MaterialTheme.colorScheme.error) }
-    }, dismissButton = { TextButton(onClick = { deleting = false }) { Text("보관하기") } })
+        TextButton(onClick = { model.deleteSelected(); deleting = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("원본과 기록 삭제", color = MaterialTheme.colorScheme.error) }
+    }, dismissButton = { TextButton(onClick = { deleting = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("보관하기") } })
     viewing?.let { (selectedRecord, item) -> PhotoReviewDialog(model, selectedRecord, item) { viewing = null } }
     if (accident) {
         val (_, title, steps) = guideTopics.first { it.first == "사고 시" }
@@ -187,7 +200,7 @@ fun PhoneApp(model: PhoneViewModel, state: PhoneState, capture: (InspectionStage
                 steps.forEachIndexed { index, step -> Text("${index + 1}. $step") }
                 Text("촬영 기록 탭에서 현장과 손상 부위를 남길 수 있어요. SHAREMATE는 운영사나 보험사에 자동으로 접수하지 않습니다.", style = MaterialTheme.typography.bodySmall)
             }
-        }, confirmButton = { TextButton(onClick = { accident = false }) { Text("확인") } })
+        }, confirmButton = { TextButton(onClick = { accident = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("확인") } })
     }
 }
 
@@ -236,7 +249,7 @@ private val stepLabels = EvidenceView.entries.map { it.label } + listOf("문제 
         }
         Text(if (record.sessionId != null) "차량 대여 연결 · ${record.sessionId.take(8)}" else "휴대폰 단독 기록 · 차량 미연결", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
         if (record.sessionId == null && state.linkedSessionId != null) OutlinedButton(onClick = model::linkCurrentRecord, enabled = enabled) { Text("이 기록을 연결한 차량과 공유") }
-        if (record.sessionId != null && state.linkedSessionId != null && record.sessionId != state.linkedSessionId) Text("현재 연결 차량과 다른 대여의 기록입니다.", color = Color(0xFFFFC992))
+        if (record.sessionId != null && state.linkedSessionId != null && record.sessionId != state.linkedSessionId) Text("현재 연결 차량과 다른 대여의 기록입니다.", color = Scene.warn)
     }
     if (locked) PhoneCard {
         Text("${stage.label} 기록 완료", fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
@@ -279,7 +292,8 @@ private val stepLabels = EvidenceView.entries.map { it.label } + listOf("문제 
                 IncidentType.entries.forEach { type ->
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { RadioButton(selected = incident == type, onClick = { incident = type }, enabled = enabled); TextButton(onClick = { incident = type }, enabled = enabled, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text(type.label, modifier = Modifier.fillMaxWidth()) } }
                 }
-                OutlinedTextField(value = note, onValueChange = { if (it.length <= 1_000) note = it }, label = { Text("위치·발견 시점·상황 메모") }, supportingText = { Text("${note.length} / 1,000") }, modifier = Modifier.fillMaxWidth(), minLines = 2, enabled = enabled)
+                OutlinedTextField(value = note, onValueChange = { if (it.length <= 1_000) note = it }, label = { Text("위치·발견 시점·상황 메모") }, supportingText = { Text("${note.length} / 1,000") }, modifier = Modifier.fillMaxWidth(), minLines = 2, enabled = enabled,
+                    colors = sceneTextFieldColors())
                 Button(onClick = { model.saveIncident(incident, note) }, enabled = enabled && dirty, modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp)) { Text(if (dirty) "문제·메모 저장" else "저장된 상태") }
             }
             else -> PhoneCard {
@@ -302,18 +316,19 @@ private val stepLabels = EvidenceView.entries.map { it.label } + listOf("문제 
     }
 }
 
+/** Seven step marks, each a 48-dp target: the current one in the glow, finished ones in the positive green, the rest on the ring track. */
 @Composable private fun StepTrack(current: Int, done: (Int) -> Boolean, select: (Int) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             stepLabels.indices.forEach { index ->
-                val color = when { index == current -> MaterialTheme.colorScheme.primary; done(index) -> MaterialTheme.colorScheme.primary.copy(alpha = .45f); else -> MaterialTheme.colorScheme.outlineVariant }
-                Box(Modifier.weight(1f).heightIn(min = 32.dp).clickable { select(index) }
+                val color = when { index == current -> Scene.glow; done(index) -> Scene.positive; else -> Scene.ringTrack }
+                Box(Modifier.weight(1f).heightIn(min = 48.dp).clickable { select(index) }
                     .semantics { contentDescription = "${index + 1}단계 ${stepLabels[index]}${if (done(index)) " 완료" else ""}" }, contentAlignment = Alignment.Center) {
                     Box(Modifier.fillMaxWidth().height(6.dp).background(color, RoundedCornerShape(3.dp)))
                 }
             }
         }
-        Text("${current + 1} / ${stepLabels.size} · ${stepLabels[current]}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("${current + 1} / ${stepLabels.size} · ${stepLabels[current]}", style = MaterialTheme.typography.labelLarge, color = Scene.textSecondary)
     }
 }
 
@@ -329,16 +344,19 @@ private val stepLabels = EvidenceView.entries.map { it.label } + listOf("문제 
         failed = bitmap == null
     }
     val result = if (item.stage == InspectionStage.AFTER) record.comparisons[item.view] else null
+    // Hoisted out of the Canvas lambdas: the on-device comparison draws in the negative colour, the AI findings in the accent.
+    val comparisonStroke = Scene.negative
+    val aiStroke = Scene.accent
     AlertDialog(onDismissRequest = dismiss, title = { Text("${item.stage.label} · ${item.view.label}") }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             bitmap?.let { image ->
                 Box(Modifier.fillMaxWidth().aspectRatio(image.width.toFloat() / image.height)) {
                     Image(image.asImageBitmap(), contentDescription = "${item.view.label} 촬영 원본", modifier = Modifier.fillMaxSize())
                     if (result != null) Canvas(Modifier.fillMaxSize()) { result.boxes.forEach { box ->
-                        drawRect(Color(0xFFFF6536), Offset(box.left * size.width, box.top * size.height), Size((box.right - box.left) * size.width, (box.bottom - box.top) * size.height), style = Stroke(3.dp.toPx()))
+                        drawRect(comparisonStroke, Offset(box.left * size.width, box.top * size.height), Size((box.right - box.left) * size.width, (box.bottom - box.top) * size.height), style = Stroke(3.dp.toPx()))
                     } }
                     if (ai != null) Canvas(Modifier.fillMaxSize()) { ai.findings.forEach { box ->
-                        drawRect(Color(0xFF245BEB), Offset(box.left * size.width, box.top * size.height), Size((box.right - box.left) * size.width, (box.bottom - box.top) * size.height), style = Stroke(3.dp.toPx()))
+                        drawRect(aiStroke, Offset(box.left * size.width, box.top * size.height), Size((box.right - box.left) * size.width, (box.bottom - box.top) * size.height), style = Stroke(3.dp.toPx()))
                     } }
                 }
             } ?: if (failed) Text("사진을 읽지 못했습니다. 원본 상태를 확인해 주세요.") else CircularProgressIndicator()
@@ -358,18 +376,21 @@ private val stepLabels = EvidenceView.entries.map { it.label } + listOf("문제 
             }
             Text("원본 SHA-256\n${item.sha256}", style = MaterialTheme.typography.bodySmall)
         }
-    }, confirmButton = { TextButton(onClick = dismiss) { Text("확인") } })
+    }, confirmButton = { TextButton(onClick = dismiss, modifier = Modifier.heightIn(min = 48.dp)) { Text("확인") } })
     if (confirmingAi) AlertDialog(onDismissRequest = { confirmingAi = false }, title = { Text("사진을 AI로 확인") },
         text = { Text("선택한 차량 사진${if (item.stage == InspectionStage.AFTER) "과 같은 면의 탑승 전 사진" else ""}을 연결 서버를 거쳐 OpenAI에 전송합니다. 위치 메타데이터는 제외하며 원본 영상은 전송하지 않습니다. API 이용료가 발생할 수 있고 AI가 손상을 놓치거나 반사광을 오인할 수 있습니다.") },
-        confirmButton = { TextButton(onClick = { confirmingAi = false; model.analyzePhoto(record.id, item) }) { Text("사진 전송·분석") } },
-        dismissButton = { TextButton(onClick = { confirmingAi = false }) { Text("취소") } })
+        confirmButton = { TextButton(onClick = { confirmingAi = false; model.analyzePhoto(record.id, item) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("사진 전송·분석") } },
+        dismissButton = { TextButton(onClick = { confirmingAi = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("취소") } })
 }
 
+/** A glass card in the scene's palette; [dark] lifts the top with the primary container, the way the hero card did in 2.8. */
 @Composable private fun PhoneCard(dark: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
     val colors = MaterialTheme.colorScheme
-    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = colors.surface,
-        contentColor = colors.onSurface, tonalElevation = 0.dp, border = BorderStroke(1.dp, colors.outlineVariant)) {
-        Column(Modifier.background(Brush.linearGradient(if (dark) listOf(colors.primaryContainer, colors.surface) else listOf(colors.surface, colors.surface))).padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp), content = content)
+    val glass = Scene.glass
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = glass,
+        contentColor = Scene.text, tonalElevation = 0.dp, border = Scene.edge) {
+        Column(Modifier.background(Brush.linearGradient(if (dark) listOf(colors.primaryContainer, glass) else listOf(glass, glass))).padding(LocalLayout.current.panelPadding + 4.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp), content = content)
     }
 }
 

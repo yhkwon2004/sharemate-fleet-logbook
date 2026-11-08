@@ -3,8 +3,9 @@ package ai.sharemate.app
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
@@ -42,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -71,7 +73,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.time.YearMonth
 import java.time.ZoneId
-import java.util.Locale
 
 /*
  * 경비 tab of the phone app: money questions in one place. Totals for the month, the card payments the car could not
@@ -137,6 +138,10 @@ internal fun chargesIn(data: TripLogData, month: YearMonth, zone: ZoneId): List<
 internal fun defaultExpenseTrip(data: TripLogData): Trip? = data.trips.filter { it.demo == data.profile.demoMode && !it.open }.maxByOrNull { it.startAt }
 
 internal fun expenseTripLabel(trip: Trip): String = "${phoneTime(trip.startAt)} 출발 · ${trip.destination ?: trip.endAddress ?: "주소 미기록"}"
+
+/** The month's registered costs by kind, every kind present (0 when nothing was spent), in [ExpenseType] order. */
+internal fun expenseTypeTotals(trips: List<Trip>): Map<ExpenseType, Long> =
+    ExpenseType.entries.associateWith { type -> trips.sumOf { trip -> trip.expenses.filter { it.type == type }.sumOf { it.amountWon } } }
 
 // ───────────────────────── statement import ─────────────────────────
 
@@ -221,20 +226,20 @@ private class LauncherHolder { var launch: (() -> Unit)? = null }
             val reached = index < current || (index == current && done)
             val active = index == current
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Box(Modifier.size(22.dp).clip(CircleShape).background(when { reached -> LocalPleosColors.current.chartActive; active -> colors.primary; else -> colors.surfaceVariant }),
+                Box(Modifier.size(22.dp).clip(CircleShape).background(when { reached -> Scene.positive; active -> colors.primary; else -> Scene.fill }),
                     contentAlignment = Alignment.Center) {
                     Text(if (reached) "✓" else "${index + 1}", style = MaterialTheme.typography.labelSmall, color = when { reached -> colors.onPrimary; active -> colors.onPrimary; else -> colors.onSurfaceVariant })
                 }
                 Text(label, style = MaterialTheme.typography.labelMedium, color = if (active || reached) colors.onSurface else colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            if (index < steps.lastIndex) Box(Modifier.weight(1f).padding(horizontal = 6.dp).height(1.dp).background(if (index < current) LocalPleosColors.current.chartActive else colors.outlineVariant))
+            if (index < steps.lastIndex) Box(Modifier.weight(1f).padding(horizontal = 6.dp).height(1.dp).background(if (index < current) Scene.positive else Scene.divider))
         }
     }
 }
 
 @Composable internal fun StatementImportCard(importer: StatementImporter, busy: Boolean) {
     val steps = StatementStep.entries.map { it.label }
-    Panel(padding = 20.dp) {
+    Panel(padding = phoneTokens().panelPadding) {
         Eyebrow("카드 명세서 가져오기 · CSV·XLSX")
         StepDots(steps, importer.step.ordinal, done = importer.step == StatementStep.RESULT)
         when (importer.step) {
@@ -276,6 +281,7 @@ private class LauncherHolder { var launch: (() -> Unit)? = null }
 ) {
     val followUp = LocalFollowUp.current
     val context = LocalContext.current
+    val tokens = phoneTokens()
     val statement = importer ?: rememberStatementImporter(remember(context) { PhoneSyncClient.get(context) }, data, zone, paired)
     val demo = data.profile.demoMode
     val monthTrips = remember(data.trips, month, demo) { tripsIn(data.trips.filter { it.demo == demo }, month.atDay(1), month.atEndOfMonth(), zone) }
@@ -295,19 +301,23 @@ private class LauncherHolder { var launch: (() -> Unit)? = null }
     LaunchedEffect(decided) { if (decided.isNotEmpty()) { delay(8_000); decided = emptySet() } }
 
     Box(modifier.fillMaxSize()) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = if (paired) 104.dp else 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        // The list keeps to the content width and centres on a wide window (spec B); the add button stays at the window's corner.
+        LazyColumn(Modifier.contentWidth().fillMaxHeight().align(Alignment.TopCenter), contentPadding = PaddingValues(start = tokens.gutter, end = tokens.gutter, bottom = if (paired) 104.dp else 24.dp),
+            verticalArrangement = Arrangement.spacedBy(tokens.cardGap + 4.dp)) {
             item(key = "totals") {
-                Panel(padding = 22.dp) {
+                Panel(padding = tokens.panelPadding + 2.dp) {
                     Eyebrow("${month.monthValue}월 경비$filterLabel")
-                    Text(formatWon(trips.sumOf { it.expenseWon }), style = MaterialTheme.typography.headlineMedium.copy(fontFeatureSettings = "tnum"), modifier = Modifier.semantics { heading() })
+                    // The figures cross-fade to their new values when the mirror brings a change; they never count up (a sum is data).
+                    DigitChange(formatWon(trips.sumOf { it.expenseWon }), style = MaterialTheme.typography.headlineMedium.copy(fontFeatureSettings = "tnum"),
+                        color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.semantics { heading() })
+                    val byType = remember(trips) { expenseTypeTotals(trips) }
                     ExpenseType.entries.forEach { type ->
-                        val amount = trips.sumOf { trip -> trip.expenses.filter { it.type == type }.sumOf { it.amountWon } }
                         Row(Modifier.semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically) {
                             Text(type.label, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(formatWon(amount), style = MaterialTheme.typography.titleSmall.copy(fontFeatureSettings = "tnum"))
+                            DigitChange(formatWon(byType[type] ?: 0L), style = MaterialTheme.typography.titleSmall.copy(fontFeatureSettings = "tnum"), color = MaterialTheme.colorScheme.onSurface)
                         }
                     }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    HorizontalDivider(color = Scene.divider)
                     if (data.profile.reimbursePerKmWon > 0) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Stat("업무 거리 정산 참고", formatWon(employeeUsage(trips, data.drivers, data.profile.reimbursePerKmWon).sumOf { it.reimbursementWon }), Modifier.weight(1f))
@@ -331,7 +341,7 @@ private class LauncherHolder { var launch: (() -> Unit)? = null }
                 }
             }
             if (matched.isNotEmpty()) item(key = "matched") {
-                Panel(padding = 20.dp) {
+                Panel(padding = tokens.panelPadding) {
                     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).selectable(selected = showMatched, role = Role.Button) { showMatched = !showMatched }
                         .semantics { stateDescription = if (showMatched) "펼침" else "접힘" }, verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -342,7 +352,7 @@ private class LauncherHolder { var launch: (() -> Unit)? = null }
                     }
                     if (showMatched) matched.forEach { charge ->
                         val trip = data.trips.firstOrNull { it.id == charge.tripId } ?: data.open?.takeIf { it.id == charge.tripId }
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .6f))
+                        HorizontalDivider(color = Scene.divider)
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text("${formatWon(charge.amountWon)} · ${charge.merchant}", style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -358,7 +368,7 @@ private class LauncherHolder { var launch: (() -> Unit)? = null }
                 }
             }
             if (excluded.isNotEmpty()) item(key = "excluded") {
-                Panel(padding = 20.dp) {
+                Panel(padding = tokens.panelPadding) {
                     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).selectable(selected = showExcluded, role = Role.Button) { showExcluded = !showExcluded }
                         .semantics { stateDescription = if (showExcluded) "펼침" else "접힘" }, verticalAlignment = Alignment.CenterVertically) {
                         Eyebrow("제외 ${excluded.size}건 · 회사 비용 아님")
@@ -367,7 +377,7 @@ private class LauncherHolder { var launch: (() -> Unit)? = null }
                     }
                     if (showExcluded) excluded.forEach { charge ->
                         val trip = suggestedTrip(charge, data)
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .6f))
+                        HorizontalDivider(color = Scene.divider)
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text("${formatWon(charge.amountWon)} · ${charge.merchant}", style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -384,7 +394,7 @@ private class LauncherHolder { var launch: (() -> Unit)? = null }
             item(key = "statement") { StatementImportCard(statement, busy) }
             item(key = "card-link") { PhoneCardLinkCard(alertsGranted, queued, busy, openAlertSettings, importStatement, showImport = false) }
         }
-        if (paired) ExtendedFloatingActionButton(onClick = { showAdd = true }, modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp).heightIn(min = 56.dp)
+        if (paired) ExtendedFloatingActionButton(onClick = { showAdd = true }, modifier = Modifier.align(Alignment.BottomEnd).padding(tokens.gutter).heightIn(min = 56.dp)
             .semantics { contentDescription = "경비 추가" }, containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary) {
             Text("+ 경비", style = MaterialTheme.typography.labelLarge)
         }
@@ -447,13 +457,14 @@ private class LauncherHolder { var launch: (() -> Unit)? = null }
     var amount by rememberSaveable { mutableStateOf("") }
     var amountError by rememberSaveable { mutableStateOf<String?>(null) }
     val trip = candidates.firstOrNull { it.id == tripId } ?: fallback
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 24.dp, end = 24.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    val tokens = phoneTokens()
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetMaxWidth = phoneSheetMaxWidth(), containerColor = Scene.rail, contentColor = Scene.text) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = tokens.gutter).padding(bottom = 32.dp).navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("경비 추가", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
             Eyebrow("어느 운행이에요?")
             if (trip == null) Muted("끝난 운행이 없어요. 운행이 끝나면 경비를 붙일 수 있어요.")
             else {
-                Surface(shape = RoundedCornerShape(16.dp), color = LocalPleosColors.current.surfaceHigh) {
+                Surface(shape = RoundedCornerShape(16.dp), color = Scene.glass, contentColor = Scene.text, border = Scene.edge) {
                     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text("${dayLabel(localDate(trip.startAt))} ${expenseTripLabel(trip)}", style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -464,7 +475,9 @@ private class LauncherHolder { var launch: (() -> Unit)? = null }
                 }
                 if (choosing) Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     candidates.forEach { candidate ->
-                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).selectable(selected = candidate.id == trip.id, role = Role.RadioButton) { tripId = candidate.id; choosing = false }
+                        val press = remember(candidate.id) { MutableInteractionSource() }
+                        Row(Modifier.fillMaxWidth().pressable(press).clip(RoundedCornerShape(12.dp)).background(if (candidate.id == trip.id) Scene.selectionFill else Color.Transparent)
+                            .selectable(selected = candidate.id == trip.id, interactionSource = press, indication = LocalIndication.current, role = Role.RadioButton) { tripId = candidate.id; choosing = false }
                             .heightIn(min = 52.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             RadioButton(selected = candidate.id == trip.id, onClick = null)
                             Text("${dayLabel(localDate(candidate.startAt))} ${expenseTripLabel(candidate)}", style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -475,13 +488,14 @@ private class LauncherHolder { var launch: (() -> Unit)? = null }
             Eyebrow("종류")
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 ExpenseType.entries.forEach { candidate ->
-                    FilterChip(selected = type == candidate.name, onClick = { type = candidate.name }, label = { Text(candidate.label, style = MaterialTheme.typography.labelSmall, maxLines = 1) },
-                        modifier = Modifier.heightIn(min = 40.dp))
+                    val chosen = type == candidate.name
+                    FilterChip(selected = chosen, onClick = { type = candidate.name }, label = { Text(candidate.label, style = MaterialTheme.typography.labelSmall, maxLines = 1) },
+                        colors = sceneChipColors(), border = sceneChipBorder(chosen), modifier = Modifier.heightIn(min = 48.dp))
                 }
             }
             OutlinedTextField(amount, { if (it.length <= 8 && it.all(Char::isDigit)) { amount = it; amountError = null } }, Modifier.fillMaxWidth(), singleLine = true,
                 label = { Text("금액 (원)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), shape = RoundedCornerShape(14.dp),
-                isError = amountError != null, supportingText = amountError?.let { { Text(it) } })
+                isError = amountError != null, supportingText = amountError?.let { { Text(it) } }, colors = sceneTextFieldColors())
             Button(onClick = {
                 val won = amount.toLongOrNull() ?: 0
                 val target = trip
