@@ -1,6 +1,8 @@
 package ai.sharemate.app
 
+import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -96,5 +98,30 @@ class HomeDashboardTest {
         assertNull("자동 완성을 끄면 자동 줄도 없음", monthWidgetInfo(complete.copy(profile = complete.profile.copy(autopilot = false)), today, zone).auto)
         val first = monthWidgetInfo(TripLogData(open = Trip(id("o"), at(11, 20, 8), null, 100.0, 101.0)), today, zone)
         assertEquals("첫 운행 기록 중이면 대기가 아님", "기록 중", first.headline)
+    }
+
+    @Test fun homePlanFollowsTheWindowClassTheHeightAndTheFontScale() {
+        val full = homePlan(carLayout(1680.dp, 1200.dp), 1f, 1200.dp)
+        assertEquals(3, full.cardColumns)
+        assertTrue(full.widgetsSideBySide && full.showEyebrow && !full.compactWidgets && !full.clockInHeader)
+        assertEquals("히어로는 창의 70%, 420~600dp 사이", 600.dp, full.heroMin)
+        // The class comes from width ÷ font scale, so the full window at 1.3× lands in EXPANDED: cards go 2 + 1.
+        assertEquals(2, homePlan(carLayout(1292.dp, 1200.dp), 1.3f, 1200.dp).cardColumns)
+        assertEquals("FULL은 큰 글꼴에서도 3열", 3, homePlan(carLayout(1680.dp, 1200.dp), 1.3f, 1200.dp).cardColumns)
+        assertEquals("EXPANDED의 기본 글꼴은 3열", 3, homePlan(carLayout(1200.dp, 1200.dp), 1f, 1200.dp).cardColumns)
+        val medium = homePlan(carLayout(900.dp, 1000.dp), 1f, 1000.dp)
+        assertEquals("MEDIUM은 카드 한 줄씩", 1, medium.cardColumns)
+        assertFalse("위젯은 세로로", medium.widgetsSideBySide)
+        val short = homePlan(carLayout(1680.dp, 500.dp), 1f, 500.dp)
+        assertTrue("낮은 창: 위젯 한 줄, 시계는 헤더로, 브랜드 줄 숨김", short.compactWidgets && short.widgetsSideBySide && short.clockInHeader && !short.showEyebrow)
+        assertEquals(300.dp, short.heroMin)
+    }
+
+    @Test fun heroMinimumIsAFloorNotACeiling() {
+        assertEquals(600.dp, heroMinHeight(1200.dp, short = false))
+        assertEquals(420.dp, heroMinHeight(400.dp, short = false))
+        assertEquals(490f, heroMinHeight(700.dp, short = false).value, .01f)
+        assertEquals(300.dp, heroMinHeight(500.dp, short = true))
+        assertEquals(420.dp, heroMinHeight(900.dp, short = true))
     }
 }

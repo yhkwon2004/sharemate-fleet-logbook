@@ -1,15 +1,28 @@
 package ai.sharemate.app
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.VectorConverter
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.interaction.InteractionSource
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -28,29 +41,35 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -60,38 +79,106 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.toSize
+import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
 import java.util.Locale
-import kotlin.math.abs
-import kotlin.random.Random
 
 /**
- * The car home, 2.8: a night-city hero that greets the driver, a search-style entry to the assistant, three large
- * glass cards (차량 정보 · 운행일지 확인 · 정보 내보내기), and two widgets that say how today and this month stand.
- * Every number on it is read from the log or the vehicle; nothing is decorative except the skyline itself.
+ * The car home, 2.10: a city hero in the current scene's light that greets the driver, a search-style entry to the
+ * assistant, three glass cards (차량 정보 · 운행일지 확인 · 정보 내보내기), and two widgets that say how today and this month
+ * stand. Every number on it is read from the log or the vehicle; nothing is decorative except the skyline itself. The
+ * block keeps to the layout classes of [LocalLayout] (a 1200-dp column at FULL, cards 3 across, widgets 2 across) and
+ * the motion rules of Motion.kt: press feedback, a gliding selection pill, numbers that cross-fade instead of counting.
  */
+
+// ───────────────────────── selection pill (tabs and segments) ─────────────────────────
+
+/** The measured bounds of the items of a tab row or a segmented control, keyed by index, in the row's own pixels. */
+internal typealias ItemBounds = SnapshotStateMap<Int, Rect>
+
+@Composable internal fun rememberItemBounds(): ItemBounds = remember { mutableStateMapOf() }
+
+/** Reports this item's bounds to [bounds] under [index]; put it first in the item's modifier chain so it sees the whole item. */
+internal fun Modifier.reportBounds(bounds: ItemBounds, index: Int): Modifier = onPlaced { coordinates ->
+    val rect = Rect(coordinates.positionInParent(), coordinates.size.toSize())
+    if (bounds[index] != rect) bounds[index] = rect
+}
+
+/**
+ * The lit pill behind the selected item of a tab row or a segmented control: the selection fill and a 1.5 dp ring (never
+ * colour alone), drawn behind the row at the selected item's measured bounds. On a change it glides from the old item to the
+ * new one in [durationMs] (FastOutSlowIn); the first placement and reduced motion snap. Apply it after the row's padding,
+ * so the drawing and the reported bounds share one coordinate space.
+ */
+@Composable internal fun Modifier.selectionGlide(bounds: ItemBounds, selected: Int, durationMs: Int = MOTION_PAGE_MS, ringWidth: Dp = 1.5.dp, corner: Dp? = null): Modifier {
+    val reduce = LocalReduceMotion.current
+    val fill = Scene.selectionFill
+    val ring = Scene.selectionRing
+    val target = bounds[selected]
+    val rect = remember { Animatable(Rect.Zero, Rect.VectorConverter) }
+    var placed by remember { mutableStateOf(false) }
+    LaunchedEffect(target, reduce) {
+        val next = target ?: return@LaunchedEffect
+        if (!placed || reduce) { rect.snapTo(next); placed = true } else rect.animateTo(next, tween(durationMs, easing = FastOutSlowInEasing))
+    }
+    val density = LocalDensity.current
+    val stroke = with(density) { ringWidth.toPx() }
+    val radius = corner?.let { with(density) { it.toPx() } }
+    val visible = target != null
+    return drawBehind {
+        if (!placed || !visible) return@drawBehind
+        val r = rect.value
+        val round = radius ?: (r.height / 2f)
+        drawRoundRect(fill, r.topLeft, r.size, CornerRadius(round, round))
+        drawRoundRect(ring, Offset(r.left + stroke / 2, r.top + stroke / 2), Size(r.width - stroke, r.height - stroke),
+            CornerRadius(round - stroke / 2, round - stroke / 2), style = Stroke(stroke))
+    }
+}
+
+/**
+ * The press fill of the spec, [Scene.fill] (white by night, navy by day, both a few percent): it shows while the surface is
+ * held, 90 ms in and 160 ms out, and stays as the only feedback under reduced motion. Draws over the content, so apply it
+ * inside the clipping surface.
+ */
+@Composable internal fun Modifier.pressFill(interactionSource: InteractionSource): Modifier {
+    val pressed by interactionSource.collectIsPressedAsState()
+    val fill = Scene.fill
+    val reduce = LocalReduceMotion.current
+    val strength by animateFloatAsState(if (pressed) 1f else 0f,
+        if (reduce) snap() else if (pressed) tween(90, easing = LinearOutSlowInEasing) else tween(160, easing = FastOutSlowInEasing), label = "press-fill")
+    return drawWithContent { drawContent(); if (strength > 0f) drawRect(fill.copy(alpha = fill.alpha * strength)) }
+}
+
+/** True on the car, where tappable surfaces give no ripple (press feedback is the scale and the fill); the phone keeps Material's. */
+@Composable private fun carNoRipple(): Boolean = LocalLayout.current.startAnchored
+
 // ───────────────────────── header tabs (every pane but home) ─────────────────────────
 
 @Immutable
 internal data class NavTab(val label: String, val icon: Int, val badge: Int)
 
-/** The five destinations as one glass pill; the active tab is lit cyan. Counts sit inside the tab they belong to. */
-@Composable internal fun GlassTabs(tabs: List<NavTab>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
+/**
+ * The five destinations as one glass pill; the lit pill glides to the chosen tab on the page clock and the labels tint with
+ * it. Counts sit inside the tab they belong to. [compact] is the short-window header: 4 dp of pill padding instead of 6.
+ */
+@Composable internal fun GlassTabs(tabs: List<NavTab>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier, compact: Boolean = false) {
+    val bounds = rememberItemBounds()
+    val noRipple = carNoRipple()
     Surface(modifier, shape = RoundedCornerShape(50), color = Scene.glass.copy(alpha = .92f), border = Scene.edge) {
-        Row(Modifier.padding(6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(if (compact) 4.dp else 6.dp).selectionGlide(bounds, selected), horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically) {
             tabs.forEachIndexed { index, tab ->
                 val active = index == selected
-                // The lit state glides from the old tab to the new one on the page clock instead of jumping.
+                val interaction = remember { MutableInteractionSource() }
+                // The icon and the label tint on the same clock as the pill glides and the page changes.
                 val tint by animateColorAsState(if (active) Scene.glow else Scene.textSecondary, tabColorSpec(), label = "tab-tint")
-                val fill by animateColorAsState(if (active) Scene.glow.copy(alpha = .14f) else Color.Transparent, tabColorSpec(), label = "tab-fill")
-                val ring by animateColorAsState(if (active) Scene.glow.copy(alpha = .45f) else Color.Transparent, tabColorSpec(), label = "tab-ring")
                 val label by animateColorAsState(if (active) Scene.glow else Scene.text, tabColorSpec(), label = "tab-label")
-                Row(Modifier.clip(RoundedCornerShape(50)).background(fill)
-                    .border(1.dp, ring, RoundedCornerShape(50))
-                    .clickable { onSelect(index) }
+                Row(Modifier.reportBounds(bounds, index).pressable(interaction, .98f).clip(RoundedCornerShape(50))
+                    .clickable(interactionSource = interaction, indication = if (noRipple) null else LocalIndication.current) { onSelect(index) }
                     .clearAndSetSemantics {
                         this.selected = active; role = Role.Tab
                         contentDescription = if (tab.badge > 0) "${tab.label}, 확인 필요 ${tab.badge}건" else tab.label
@@ -106,7 +193,7 @@ internal data class NavTab(val label: String, val icon: Int, val badge: Int)
     }
 }
 
-// ───────────────────────── pure copy (unit-tested) ─────────────────────────
+// ───────────────────────── pure copy and layout (unit-tested) ─────────────────────────
 
 /** The hero headline: a recording trip first, otherwise a time-of-day line that names the current employee when one is set. */
 internal fun homeGreeting(hour: Int, name: String?, recording: Boolean): String {
@@ -129,6 +216,30 @@ internal fun homeSubtitle(signal: SignalStatus, demo: Boolean, open: Trip?): Str
     signal == SignalStatus.STARTING -> "차량과 연결하고 있어요."
     else -> "차량 데이터를 받을 수 없어요. 연결 상태를 확인해 주세요."
 }
+
+/**
+ * How the home lays itself out in one window ([LayoutTokens] plus the font scale and the window height):
+ * [cardColumns] 3 across on the wide classes, 2 + 1 below at a large font on the classes under FULL, one 96-dp row per card in
+ * narrow windows; the widgets sit side by side from EXPANDED up (and on one 120-dp row in a short window, [compactWidgets]);
+ * a short window hides the eyebrow, moves the clock into the header and keeps the hero to [heroMin].
+ */
+@Immutable
+internal data class HomePlan(val cardColumns: Int, val widgetsSideBySide: Boolean, val compactWidgets: Boolean, val showEyebrow: Boolean,
+    val clockInHeader: Boolean, val heroMin: Dp)
+
+internal fun homePlan(layout: LayoutTokens, fontScale: Float, windowHeight: Dp): HomePlan {
+    val columns = when {
+        !layout.expanded -> 1
+        layout.full || fontScale <= 1.25f -> 3
+        else -> 2
+    }
+    return HomePlan(cardColumns = columns, widgetsSideBySide = layout.expanded || layout.short, compactWidgets = layout.short,
+        showEyebrow = !layout.short, clockInHeader = layout.short, heroMin = heroMinHeight(windowHeight, layout.short))
+}
+
+/** The hero keeps 70 % of the window between 420 and 600 dp; a short window keeps 55 % from 300 dp. A minimum only: the column grows when a large font needs the room. */
+internal fun heroMinHeight(windowHeight: Dp, short: Boolean): Dp =
+    if (short) (windowHeight * .55f).coerceIn(300.dp, 420.dp) else (windowHeight * .70f).coerceIn(420.dp, 600.dp)
 
 @Immutable
 internal data class HomeCardLines(val vehicle: String, val log: String, val logPending: Int, val export: String)
@@ -205,52 +316,84 @@ internal fun monthWidgetInfo(data: TripLogData, today: LocalDate, zone: ZoneId):
 @Immutable
 internal class HomeCardSpec(val title: String, val subtitle: String, val icon: Int, val badge: Int, val onClick: () -> Unit)
 
+/** Set once the home has played its entrance, so the stagger runs once per process and never on a return to the tab or after a sync. */
+private var homeEntranceDone = false
+
+/** True the first time the home composes in this process: the hero block staggers in (clock → greeting → search → cards); false afterwards. */
+@Composable internal fun rememberHomeEntrance(): Boolean {
+    val animate = remember { !homeEntranceDone }
+    LaunchedEffect(Unit) { homeEntranceDone = true }
+    return animate
+}
+
 /**
- * The greeting hero: clock, brand line, greeting, the assistant entry and [cards], the three destinations.
- * Grows past [minHeight] when the font scale needs room instead of clipping.
+ * The greeting hero: clock, brand line, greeting, the assistant entry and [cards], the three destinations, laid out by
+ * [plan]. Grows past [HomePlan.heroMin] when the font scale needs room instead of clipping; the greeting block keeps to the
+ * reading width. [entrance] staggers the block in on the first composition of the session only.
  */
-@Composable internal fun HomeHero(state: TripLogState, now: Long, compact: Boolean, minHeight: Dp, onAssistant: () -> Unit, requestPermissions: () -> Unit,
-    demoControls: @Composable () -> Unit, cards: List<HomeCardSpec>) {
+@Composable internal fun HomeHero(state: TripLogState, now: Long, plan: HomePlan, onAssistant: () -> Unit, requestPermissions: () -> Unit,
+    demoControls: @Composable () -> Unit, cards: List<HomeCardSpec>, modifier: Modifier = Modifier, entrance: Boolean = false) {
     val data = state.data
     val demo = data.profile.demoMode
     val open = data.open?.takeIf { it.demo == demo }
     val driver = data.drivers.firstOrNull { it.id == data.currentDriverId }
     val hour = Instant.ofEpochMilli(now).atZone(zone).hour
+    val layout = LocalLayout.current
+    val compact = plan.cardColumns == 1
     // No frame and no chips of its own: the shared header above carries status, employee and tabs on every page, and the
-    // hero is laid straight onto the full-screen night backdrop ([HomeBackdrop]).
-    Box(Modifier.fillMaxWidth()) {
-        Column(Modifier.fillMaxWidth().heightIn(min = minHeight).padding(horizontal = if (compact) 4.dp else 8.dp, vertical = if (compact) 4.dp else 6.dp),
-            verticalArrangement = Arrangement.SpaceBetween) {
-            Row(Modifier.clearAndSetSemantics { contentDescription = "${hm(now)}, ${dayLabel(localDate(now))}" }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+    // hero is laid straight onto the full-screen backdrop ([HomeBackdrop]).
+    Column(modifier.fillMaxWidth().heightIn(min = plan.heroMin).padding(horizontal = if (compact) 4.dp else 8.dp, vertical = if (compact) 4.dp else 6.dp),
+        verticalArrangement = Arrangement.SpaceBetween) {
+        // The clock is plain text on a one-second tick: it never cross-fades (truth does not animate). A short window shows it in the header instead.
+        if (!plan.clockInHeader) Appear(index = 0, animate = entrance) {
+            Row(Modifier.clearAndSetSemantics { contentDescription = "${hm(now)}, ${dayLabel(localDate(now))}" }, verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text(hm(now), style = MaterialTheme.typography.headlineMedium.copy(fontFeatureSettings = "tnum"), color = Scene.text, fontWeight = FontWeight.Bold)
                 Box(Modifier.width(1.dp).height(24.dp).background(Scene.divider))
                 Text(dayLabel(localDate(now)), style = MaterialTheme.typography.titleMedium, color = Scene.textSecondary)
             }
-            Column(Modifier.padding(vertical = if (compact) 16.dp else 22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.clearAndSetSemantics {}) {
+        } else Spacer(Modifier.height(4.dp))
+        Appear(Modifier.readingWidth(), index = 1, animate = entrance) {
+            Column(Modifier.fillMaxWidth().padding(vertical = if (compact || plan.compactWidgets) 12.dp else 22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (plan.showEyebrow) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.clearAndSetSemantics {}) {
                     Icon(painterResource(R.drawable.ic_splash_logo), null, Modifier.size(30.dp), tint = Scene.brand)
                     Text("SHAREMATE  ·  FLEET JOURNAL", style = MaterialTheme.typography.labelLarge, color = Scene.brand, letterSpacing = 3.sp)
                 }
-                Text(homeGreeting(hour, driver?.name, open != null), style = if (compact) MaterialTheme.typography.headlineLarge else scaledDisplay(MaterialTheme.typography.displaySmall, MaterialTheme.typography.headlineLarge),
-                    color = Scene.text, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
-                Text(homeSubtitle(state.signal, demo, open), style = MaterialTheme.typography.bodyLarge, color = Scene.textSecondary)
+                // One headline, one supporting line. Both cross-fade with a small lift when the text changes (a new employee, a trip starting).
+                DigitChange(homeGreeting(hour, driver?.name, open != null), Modifier.semantics { heading() },
+                    style = if (compact) MaterialTheme.typography.headlineLarge else scaledDisplay(MaterialTheme.typography.displaySmall, MaterialTheme.typography.headlineLarge),
+                    color = Scene.text, fontWeight = FontWeight.Bold, maxLines = 2, lift = 4.dp)
+                DigitChange(homeSubtitle(state.signal, demo, open), style = MaterialTheme.typography.bodyLarge, color = Scene.textSecondary, maxLines = 2, lift = 4.dp)
                 if (state.signal == SignalStatus.DENIED) PrimaryAction("차량 정보 권한 허용", onClick = requestPermissions)
-                AssistantSearch(onAssistant, Modifier.padding(top = 10.dp))
             }
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                if (compact) cards.forEach { HomeActionCard(it, Modifier.fillMaxWidth(), horizontal = true) }
-                else Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) { cards.forEach { HomeActionCard(it, Modifier.weight(1f)) } }
+        }
+        Appear(Modifier.readingWidth(), index = 2, animate = entrance) { AssistantSearch(onAssistant) }
+        Appear(Modifier.fillMaxWidth().padding(top = if (compact) 16.dp else 24.dp), index = 3, animate = entrance) {
+            Column(verticalArrangement = Arrangement.spacedBy(layout.cardGap)) {
+                when (plan.cardColumns) {
+                    3 -> Row(horizontalArrangement = Arrangement.spacedBy(layout.cardGap)) { cards.forEach { HomeActionCard(it, Modifier.weight(1f)) } }
+                    2 -> {
+                        Row(horizontalArrangement = Arrangement.spacedBy(layout.cardGap)) { cards.take(2).forEach { HomeActionCard(it, Modifier.weight(1f)) } }
+                        cards.drop(2).forEach { HomeActionCard(it, Modifier.fillMaxWidth(), horizontal = true) }
+                    }
+                    else -> cards.forEach { HomeActionCard(it, Modifier.fillMaxWidth(), horizontal = true) }
+                }
                 demoControls()
             }
         }
     }
 }
 
-/** The search-bar entry to the assistant: it opens the sheet, where the driver picks a suggestion or types one line. */
+/** The search-bar entry to the assistant (640 × 68): it opens the sheet, where the driver picks a suggestion or types one line. */
 @Composable private fun AssistantSearch(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(onClick = onClick, shape = RoundedCornerShape(50), color = Scene.glass.copy(alpha = .80f), border = BorderStroke(1.dp, Scene.accent.copy(alpha = .40f)),
-        modifier = modifier.widthIn(max = 680.dp).fillMaxWidth().semantics { contentDescription = "운행 비서 열기. 예: 주차비 4,500원 추가해줘"; role = Role.Button }) {
-        Row(Modifier.heightIn(min = 68.dp).padding(horizontal = 26.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+    val interaction = remember { MutableInteractionSource() }
+    // Day glass that carries text stays at .88 or above, so the composite contrast holds; night keeps its lighter alpha.
+    val glass = Scene.glass.copy(alpha = if (Scene.isDay) .88f else .80f)
+    Surface(onClick = onClick, shape = RoundedCornerShape(50), color = glass, border = BorderStroke(1.dp, Scene.accent.copy(alpha = .40f)), interactionSource = interaction,
+        modifier = modifier.widthIn(max = 640.dp).fillMaxWidth().pressable(interaction, .98f)
+            .semantics { contentDescription = "운행 비서 열기. 예: 주차비 4,500원 추가해줘"; role = Role.Button }) {
+        Row(Modifier.pressFill(interaction).heightIn(min = 68.dp).padding(horizontal = 26.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Icon(painterResource(R.drawable.ic_search), null, Modifier.size(28.dp), tint = Scene.textSecondary)
             Text("운행 비서에게 물어보세요", style = MaterialTheme.typography.titleMedium, color = Scene.text, maxLines = 1)
             Text("예: 주차비 4,500원 추가해줘", style = MaterialTheme.typography.bodyMedium, color = Scene.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -259,18 +402,20 @@ internal class HomeCardSpec(val title: String, val subtitle: String, val icon: I
     }
 }
 
-/** One destination card. Vertical (icon over title) on the wide car screen; a row in narrow windows. */
+/** One destination card (184 dp tall on the wide car screen, a 96-dp row in narrow windows). Settles to .98 while held; no ripple on the car. */
 @Composable internal fun HomeActionCard(spec: HomeCardSpec, modifier: Modifier = Modifier, horizontal: Boolean = false) {
     val shape = RoundedCornerShape(26.dp)
     val description = "${spec.title}, ${spec.subtitle}" + if (spec.badge > 0) ", 확인 필요 ${spec.badge}건" else ""
-    Surface(onClick = spec.onClick, shape = shape, color = Scene.glass.copy(alpha = .78f), border = Scene.edge,
-        modifier = modifier.semantics(mergeDescendants = true) { contentDescription = description; role = Role.Button }) {
-        Box(Modifier.background(Brush.verticalGradient(listOf(Color.White.copy(alpha = .07f), Color.Transparent)))) {
+    val interaction = remember { MutableInteractionSource() }
+    val sheen = Scene.colors.edgeTop
+    Surface(onClick = spec.onClick, shape = shape, color = Scene.glass.copy(alpha = if (Scene.isDay) .88f else .78f), border = Scene.edge, interactionSource = interaction,
+        modifier = modifier.pressable(interaction, .98f).semantics(mergeDescendants = true) { contentDescription = description; role = Role.Button }) {
+        Box(Modifier.background(Brush.verticalGradient(listOf(sheen, Color.Transparent))).pressFill(interaction)) {
             if (horizontal) Row(Modifier.fillMaxWidth().heightIn(min = 96.dp).padding(horizontal = 20.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                IconTile(spec.icon)
+                IconTile(spec.icon, small = true)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(spec.title, style = MaterialTheme.typography.titleLarge, color = Scene.text, fontWeight = FontWeight.Bold)
+                    Text(spec.title, style = MaterialTheme.typography.titleLarge, color = Scene.text, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(spec.subtitle, style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
                 if (spec.badge > 0) CountBadge(spec.badge)
@@ -290,25 +435,38 @@ internal class HomeCardSpec(val title: String, val subtitle: String, val icon: I
     }
 }
 
-/** The card icon on a blue-to-cyan tile, with a soft cyan halo behind it so the three destinations read as lit buttons. */
-@Composable private fun IconTile(icon: Int) {
-    val shape = RoundedCornerShape(20.dp)
+/** The card icon on a blue-to-cyan tile, with a soft halo behind it so the three destinations read as lit buttons. [small] for the 96-dp row. */
+@Composable private fun IconTile(icon: Int, small: Boolean = false) {
+    val shape = RoundedCornerShape(if (small) 16.dp else 20.dp)
     val halo = Scene.glow.copy(alpha = .30f)
     val tile = Scene.tile
-    Box(Modifier.size(96.dp).drawBehind {
+    Box(Modifier.size(if (small) 72.dp else 96.dp).drawBehind {
         drawCircle(Brush.radialGradient(listOf(halo, Color.Transparent), center = center, radius = size.minDimension / 2), radius = size.minDimension / 2)
     }, contentAlignment = Alignment.Center) {
-        Box(Modifier.size(72.dp).clip(shape).background(tile).border(Scene.edge, shape),
+        Box(Modifier.size(if (small) 56.dp else 72.dp).clip(shape).background(tile).border(Scene.edge, shape),
             contentAlignment = Alignment.Center) {
-            Icon(painterResource(icon), null, Modifier.size(36.dp), tint = Scene.onTile)
+            Icon(painterResource(icon), null, Modifier.size(if (small) 28.dp else 36.dp), tint = Scene.onTile)
         }
     }
 }
 
+/**
+ * A count on its red disc. A changed count cross-fades its digits while the disc scales in from .85 (160 ms, no bounce);
+ * an instant swap under reduced motion. Decorative for TalkBack: the tab or card it sits in speaks the count.
+ */
 @Composable internal fun CountBadge(count: Int, modifier: Modifier = Modifier) {
-    Box(modifier.heightIn(min = 26.dp).widthIn(min = 26.dp).clip(RoundedCornerShape(50)).background(Scene.badge)
-        .padding(horizontal = 8.dp).clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
-        Text("${count.coerceAtMost(99)}", style = MaterialTheme.typography.labelMedium, color = Color.White, fontWeight = FontWeight.Bold)
+    val reduce = LocalReduceMotion.current
+    // White digits on the badge red clear 5.3:1 by day; the tile's foreground is the one white that is a scene token.
+    val digits = Scene.onTile
+    AnimatedContent(targetState = count.coerceAtMost(99), modifier = modifier.clearAndSetSemantics {}, label = "badge", transitionSpec = {
+        if (reduce) fadeIn(snap()) togetherWith fadeOut(snap())
+        else (fadeIn(tween(160, easing = FastOutSlowInEasing)) + scaleIn(tween(160, easing = FastOutSlowInEasing), initialScale = .85f)) togetherWith
+            fadeOut(tween(120, easing = FastOutSlowInEasing))
+    }) { value ->
+        Box(Modifier.heightIn(min = 26.dp).widthIn(min = 26.dp).clip(RoundedCornerShape(50)).background(Scene.badge).padding(horizontal = 8.dp),
+            contentAlignment = Alignment.Center) {
+            Text("$value", style = MaterialTheme.typography.labelMedium, color = digits, fontWeight = FontWeight.Bold)
+        }
     }
 }
 
@@ -317,19 +475,26 @@ internal class HomeCardSpec(val title: String, val subtitle: String, val icon: I
 
 // ───────────────────────── widgets under the hero ─────────────────────────
 
-@Composable private fun HomeWidget(modifier: Modifier, onClick: (() -> Unit)?, description: String, content: @Composable RowScope.() -> Unit) {
+/** One glass widget (150 dp, or the 120-dp [compact] row of a short window). A tappable one settles to .98 while held. */
+@Composable private fun HomeWidget(modifier: Modifier, onClick: (() -> Unit)?, description: String, compact: Boolean = false, content: @Composable RowScope.() -> Unit) {
     val shape = RoundedCornerShape(28.dp)
+    val interaction = remember { MutableInteractionSource() }
     val inner: @Composable () -> Unit = {
-        Row(Modifier.fillMaxWidth().heightIn(min = 150.dp).padding(horizontal = 30.dp, vertical = 24.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(28.dp), content = content)
+        Row(Modifier.then(if (onClick != null) Modifier.pressFill(interaction) else Modifier).fillMaxWidth().heightIn(min = if (compact) 120.dp else 150.dp)
+            .padding(horizontal = if (compact) 24.dp else 30.dp, vertical = if (compact) 16.dp else 24.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (compact) 20.dp else 28.dp), content = content)
     }
     val semantics = Modifier.semantics(mergeDescendants = true) { contentDescription = description }
-    if (onClick != null) Surface(onClick = onClick, shape = shape, color = Scene.glass, border = Scene.edge, modifier = modifier.then(semantics)) { inner() }
+    if (onClick != null) Surface(onClick = onClick, shape = shape, color = Scene.glass, border = Scene.edge, interactionSource = interaction,
+        modifier = modifier.pressable(interaction, .98f).then(semantics)) { inner() }
     else Surface(shape = shape, color = Scene.glass, border = Scene.edge, modifier = modifier.then(semantics)) { inner() }
 }
 
-/** Today at a glance: distance (the live trip included), finished trips, expenses, and the odometer when the signal is fresh. */
-@Composable internal fun TodayWidget(state: TripLogState, now: Long, modifier: Modifier = Modifier) {
+/**
+ * Today at a glance: distance (the live trip included), finished trips, expenses, and the odometer when the signal is fresh.
+ * The distance, the count and the expenses cross-fade when they change; the odometer is live telemetry and simply updates.
+ */
+@Composable internal fun TodayWidget(state: TripLogState, now: Long, modifier: Modifier = Modifier, compact: Boolean = false) {
     val data = state.data
     val overview = drivingOverviewInfo(state, now, true, zone)
     val today = localDate(now)
@@ -340,82 +505,109 @@ internal class HomeCardSpec(val title: String, val subtitle: String, val icon: I
     val kmLabel = km?.let { String.format(Locale.KOREA, "%,.1f", it) } ?: "—"
     val spoken = "오늘 운행 ${km?.let(::kmText) ?: "정보 없음"}, 완료 ${finished.size}건, 등록 경비 ${formatWon(finished.sumOf { it.expenseWon })}, " +
         "계기판 ${odometer?.let(::kmText) ?: "확인 필요"}"
-    HomeWidget(modifier, null, spoken) {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    HomeWidget(modifier, null, spoken, compact) {
+        Column(verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 6.dp)) {
             Text("오늘 운행", style = MaterialTheme.typography.labelLarge, color = Scene.textMuted)
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(kmLabel, style = scaledDisplay(MaterialTheme.typography.displayMedium, MaterialTheme.typography.displaySmall).copy(fontFeatureSettings = "tnum"),
-                    color = Scene.text, maxLines = 1)
-                Text("km", style = MaterialTheme.typography.titleMedium, color = Scene.textMuted, modifier = Modifier.padding(bottom = 10.dp))
+                DigitChange(kmLabel, style = (if (compact) scaledDisplay(MaterialTheme.typography.displaySmall, MaterialTheme.typography.headlineLarge)
+                    else scaledDisplay(MaterialTheme.typography.displayMedium, MaterialTheme.typography.displaySmall)).copy(fontFeatureSettings = "tnum"), color = Scene.text)
+                Text("km", style = MaterialTheme.typography.titleMedium, color = Scene.textMuted, modifier = Modifier.padding(bottom = if (compact) 6.dp else 10.dp))
             }
         }
-        Box(Modifier.width(1.dp).height(84.dp).background(Scene.divider))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.width(1.dp).height(if (compact) 64.dp else 84.dp).background(Scene.divider))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 8.dp)) {
             WidgetLine("완료 운행", "${finished.size}건")
             WidgetLine("등록 경비", formatWon(finished.sumOf { it.expenseWon }))
-            WidgetLine("계기판", odometer?.let(::kmText) ?: "확인 필요")
+            WidgetLine("계기판", odometer?.let(::kmText) ?: "확인 필요", live = true)
         }
     }
 }
 
 /** This month in one word, like a traffic widget: 대기 · 완성 · 마감됨 · 확인 N건, and where the month stands. Opens 월간·Excel. */
-@Composable internal fun MonthWidget(data: TripLogData, now: Long, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+@Composable internal fun MonthWidget(data: TripLogData, now: Long, onOpen: () -> Unit, modifier: Modifier = Modifier, compact: Boolean = false) {
     val info = monthWidgetInfo(data, localDate(now), zone)
     val color = when (info.tone) { 1 -> Scene.glow; 2 -> Scene.warn; else -> Scene.text }
-    HomeWidget(modifier, onOpen, "${info.title} ${info.headline}, ${info.detail}${info.auto?.let { ", $it" }.orEmpty()}, 월간 현황 열기") {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    HomeWidget(modifier, onOpen, "${info.title} ${info.headline}, ${info.detail}${info.auto?.let { ", $it" }.orEmpty()}, 월간 현황 열기", compact) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Icon(painterResource(R.drawable.ic_report), null, Modifier.size(26.dp), tint = Scene.textSecondary)
-                Text(info.title, style = MaterialTheme.typography.titleMedium, color = Scene.text)
+                Text(info.title, style = MaterialTheme.typography.titleMedium, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                Text(info.headline, style = MaterialTheme.typography.displaySmall, color = color, fontWeight = FontWeight.Bold, maxLines = 1)
-                Text(info.detail, style = MaterialTheme.typography.bodyLarge, color = Scene.textMuted, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(bottom = 6.dp).weight(1f, fill = false))
+                DigitChange(info.headline, style = if (compact) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.displaySmall, color = color, fontWeight = FontWeight.Bold)
+                DigitChange(info.detail, Modifier.padding(bottom = 6.dp).weight(1f, fill = false), style = MaterialTheme.typography.bodyLarge, color = Scene.textMuted, maxLines = 2)
             }
-            info.auto?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            if (!compact) info.auto?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }
-        CompletionRing(info.percent, color)
+        CompletionRing(info.percent, color, diameter = if (compact) 44.dp else 104.dp, thickness = if (compact) 5.dp else 10.dp)
         Chevron()
     }
 }
 
-/** How much of the month is confirmed, as a ring lit in the widget's tone; a dash when the month has no trips yet. Decorative for TalkBack (the widget speaks the numbers). */
+/**
+ * The ring's fill as a fraction of the circle: it sweeps up from 0 in 600 ms the first time (120 ms after the card lands)
+ * and from the previous value in 320 ms after that; the exact value, at once, under reduced motion. Read `.value` in the
+ * draw lambda so only the drawing invalidates per frame.
+ */
+@Composable internal fun rememberRingSweep(target: Float): Animatable<Float, *> {
+    val reduce = LocalReduceMotion.current
+    val sweep = remember { Animatable(0f) }
+    var first by remember { mutableStateOf(true) }
+    LaunchedEffect(target, reduce) {
+        if (reduce) { sweep.snapTo(target); first = false; return@LaunchedEffect }
+        if (first) { delay(120); first = false; sweep.animateTo(target, tween(600, easing = FastOutSlowInEasing)) }
+        else sweep.animateTo(target, tween(320, easing = FastOutSlowInEasing))
+    }
+    return sweep
+}
+
+/**
+ * How much of the month is confirmed, as a ring lit in the widget's tone; a dash when the month has no trips yet. The arc
+ * sweeps to its value ([rememberRingSweep]) and the label cross-fades. Decorative for TalkBack (the widget speaks the numbers).
+ */
 @Composable internal fun CompletionRing(percent: Int?, color: Color, diameter: Dp = 104.dp, thickness: Dp = 10.dp) {
     val track = Scene.ringTrack
     val accent = Scene.accent
+    val sweep = rememberRingSweep((percent ?: 0).coerceIn(0, 100) / 100f)
     Box(Modifier.size(diameter).clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
         Spacer(Modifier.matchParentSize().drawBehind {
             val stroke = thickness.toPx()
             val inset = stroke / 2
             val arc = Size(size.width - stroke, size.height - stroke)
-            drawArc(track, -90f, 360f, false, Offset(inset, inset), arc, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
-            if (percent != null && percent > 0) drawArc(Brush.sweepGradient(listOf(accent, color, accent)), -90f, 360f * percent / 100f, false,
-                Offset(inset, inset), arc, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke, cap = StrokeCap.Round))
+            drawArc(track, -90f, 360f, false, Offset(inset, inset), arc, style = Stroke(stroke))
+            val fraction = sweep.value
+            if (fraction > 0f) drawArc(Brush.sweepGradient(listOf(accent, color, accent)), -90f, 360f * fraction, false,
+                Offset(inset, inset), arc, style = Stroke(stroke, cap = StrokeCap.Round))
         })
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(percent?.let { "$it%" } ?: "—", style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum"), color = Scene.text, fontWeight = FontWeight.Bold)
-            Text("완성률", style = MaterialTheme.typography.labelSmall, color = Scene.textMuted)
+            val style = when {
+                diameter >= 96.dp -> MaterialTheme.typography.titleLarge
+                diameter >= 64.dp -> MaterialTheme.typography.labelLarge
+                else -> MaterialTheme.typography.labelMedium
+            }
+            DigitChange(percent?.let { "$it%" } ?: "—", style = style.copy(fontFeatureSettings = "tnum"), color = Scene.text, fontWeight = FontWeight.Bold)
+            if (diameter >= 96.dp) Text("완성률", style = MaterialTheme.typography.labelSmall, color = Scene.textMuted)
         }
     }
 }
 
-@Composable private fun WidgetLine(label: String, value: String) {
+/** One label-and-value line of a widget. A [live] value (telemetry) updates in place; the others cross-fade. */
+@Composable private fun WidgetLine(label: String, value: String, live: Boolean = false) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, style = MaterialTheme.typography.bodyMedium, color = Scene.textMuted, modifier = Modifier.weight(1f))
-        Text(value, style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"), color = Scene.text, maxLines = 1)
+        val style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum")
+        if (live) Text(value, style = style, color = Scene.text, maxLines = 1) else DigitChange(value, style = style, color = Scene.text)
     }
 }
 
-/** Two widgets side by side on the wide screen, stacked in a narrow window. */
-@Composable internal fun HomeWidgets(state: TripLogState, now: Long, onOpenMonth: () -> Unit) {
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
-        if (maxWidth >= 760.dp) Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-            TodayWidget(state, now, Modifier.weight(1f))
-            MonthWidget(state.data, now, onOpenMonth, Modifier.weight(1f))
-        } else Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            TodayWidget(state, now, Modifier.fillMaxWidth())
-            MonthWidget(state.data, now, onOpenMonth, Modifier.fillMaxWidth())
-        }
+/** Two widgets side by side on the wide classes (2 × 588 at FULL), stacked in a narrow window; one 120-dp row when [compact]. */
+@Composable internal fun HomeWidgets(state: TripLogState, now: Long, sideBySide: Boolean = LocalLayout.current.expanded, compact: Boolean = false, onOpenMonth: () -> Unit) {
+    val layout = LocalLayout.current
+    if (sideBySide) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(layout.cardGap)) {
+        TodayWidget(state, now, Modifier.weight(1f), compact)
+        MonthWidget(state.data, now, onOpenMonth, Modifier.weight(1f), compact)
+    } else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(layout.cardGap)) {
+        TodayWidget(state, now, Modifier.fillMaxWidth(), compact)
+        MonthWidget(state.data, now, onOpenMonth, Modifier.fillMaxWidth(), compact)
     }
 }
