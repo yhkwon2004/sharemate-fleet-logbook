@@ -1,6 +1,15 @@
 package ai.sharemate.app
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -136,14 +145,15 @@ private fun String.toIdSet() = split(',').filter { it.isNotBlank() }.toSet()
 
 /**
  * A 36 dp line over the task card: "정차 후 정리 1/3 · 충전 비용 → 목적 확인 → 카드 확인" with one dot per step. The current
- * step is onSurface, the rest onSurfaceVariant; a narrow column keeps only "1/3 · 충전 비용". Hidden when there was never
- * more than one thing to do, so a single question is just a question.
+ * step is the scene's text, the rest its secondary text; a narrow column keeps only "1/3 · 충전 비용". Hidden when there
+ * was never more than one thing to do, so a single question is just a question.
  */
 @Composable internal fun TaskStepper(tasks: List<ParkedTask>, modifier: Modifier = Modifier) {
     val total = rememberStepTotal(tasks)
     if (tasks.isEmpty() || total <= 1) return
     val step = (total - tasks.size + 1).coerceIn(1, total)
-    val colors = MaterialTheme.colorScheme
+    val text = Scene.text
+    val secondary = Scene.textSecondary
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val narrow = maxWidth < 520.dp
         val description = stepperLabel(tasks, step, total, narrow = false) + " · " + tasks.joinToString(", ") { "${it.kind.label} ${it.count}건" }
@@ -154,16 +164,16 @@ private fun String.toIdSet() = split(',').filter { it.isNotBlank() }.toSet()
                 repeat(total) { index ->
                     val dot = Modifier.size(10.dp).clip(CircleShape)
                     Box(when {
-                        index == step - 1 -> dot.background(colors.onSurface)
-                        index < step - 1 -> dot.background(colors.onSurfaceVariant)
-                        else -> dot.border(1.5.dp, colors.onSurfaceVariant, CircleShape)
+                        index == step - 1 -> dot.background(text)
+                        index < step - 1 -> dot.background(secondary)
+                        else -> dot.border(1.5.dp, secondary, CircleShape)
                     })
                 }
             }
             Text(buildAnnotatedString {
-                withStyle(SpanStyle(color = colors.onSurfaceVariant)) { append(if (narrow) "$step/$total · " else "정차 후 정리 $step/$total · ") }
-                withStyle(SpanStyle(color = colors.onSurface)) { append(tasks.first().kind.label) }
-                if (!narrow) withStyle(SpanStyle(color = colors.onSurfaceVariant)) { tasks.drop(1).forEach { append(" → ${it.kind.label}") } }
+                withStyle(SpanStyle(color = secondary)) { append(if (narrow) "$step/$total · " else "정차 후 정리 $step/$total · ") }
+                withStyle(SpanStyle(color = text)) { append(tasks.first().kind.label) }
+                if (!narrow) withStyle(SpanStyle(color = secondary)) { tasks.drop(1).forEach { append(" → ${it.kind.label}") } }
             }, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).clearAndSetSemantics {})
         }
     }
@@ -174,21 +184,21 @@ private fun String.toIdSet() = split(',').filter { it.isNotBlank() }.toSet()
     val driver = data.drivers.firstOrNull { it.id == data.currentDriverId }
     Panel(modifier) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Box(Modifier.size(60.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
-                Text(driver?.name?.take(1) ?: "–", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.clearAndSetSemantics {})
+            Box(Modifier.size(60.dp).clip(CircleShape).background(Scene.rail), contentAlignment = Alignment.Center) {
+                Text(driver?.name?.take(1) ?: "–", style = MaterialTheme.typography.headlineSmall, color = Scene.text, modifier = Modifier.clearAndSetSemantics {})
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Eyebrow("현재 이용 직원")
                 Text(driver?.label ?: "직원을 선택해 주세요", style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        HorizontalDivider(color = Scene.divider)
         val mine = data.trips.filter { it.driverId == data.currentDriverId && !it.open && localDate(it.startAt) == localDate(now) }
         Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
             Stat("오늘 직원 운행", "${mine.size}건", Modifier.weight(1f))
             Stat("오늘 등록 경비", formatWon(mine.sumOf { it.expenseWon }), Modifier.weight(1f))
         }
-        Text(allDoneText(signal), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Text(allDoneText(signal), style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary,
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
     }
 }
@@ -201,10 +211,9 @@ private fun String.toIdSet() = split(',').filter { it.isNotBlank() }.toSet()
  * earlier answers the label rests on. Nothing here carries a "확인 필요" badge, because nothing needs confirming.
  */
 @Composable internal fun FinishedTripCard(trip: Trip, charge: CardCharge?, onConfirm: () -> Unit, onChangePurpose: () -> Unit, note: String? = null) {
-    val pleos = LocalPleosColors.current
     Panel {
         Column(Modifier.semantics { liveRegion = LiveRegionMode.Polite }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Eyebrow("방금 운행 · ${hm(trip.startAt)} – ${hm(trip.endAt ?: trip.updatedAt)}", pleos.chartActive)
+            Eyebrow("방금 운행 · ${hm(trip.startAt)} – ${hm(trip.endAt ?: trip.updatedAt)}", Scene.positive)
             Text("${withRo(trip.purpose.label)} 자동 분류했어요", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
         }
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -230,7 +239,6 @@ private fun String.toIdSet() = split(',').filter { it.isNotBlank() }.toSet()
  */
 @Composable internal fun PendingPurposeCard(trip: Trip, count: Int, data: TripLogData, act: Act, repository: TripLogRepository, openDriver: (String?) -> Unit,
     classify: (Trip, TripPurpose, EditSource) -> Unit = rememberClassifier(data, act, repository), reclassifying: Boolean = false, onClose: (() -> Unit)? = null) {
-    val pleos = LocalPleosColors.current
     val suggestion = remember(trip.id, data.trips.size) { suggestPurpose(trip, data.trips)?.takeIf { !reclassifying || it.purpose != trip.purpose } }
     val sameCount = suggestion?.let { sameDestinationCount(trip, data.trips, it.purpose) } ?: 0
     val driver = data.drivers.firstOrNull { it.id == trip.driverId }
@@ -242,10 +250,10 @@ private fun String.toIdSet() = split(',').filter { it.isNotBlank() }.toSet()
                 reclassifying -> "목적 바꾸기 · ${trip.purpose.label}에서"
                 count > 1 -> "분류가 필요한 운행 ${count}건 · 가장 최근"
                 else -> "방금 끝난 운행"
-            }, place).joinToString(" · "), if (reclassifying) MaterialTheme.colorScheme.onSurfaceVariant else pleos.negative)
+            }, place).joinToString(" · "), if (reclassifying) Scene.textSecondary else Scene.negative)
             if (onClose != null) {
                 Spacer(Modifier.weight(1f))
-                TextButton(onClick = onClose, modifier = Modifier.heightIn(min = 48.dp)) { Text("그대로 두기") }
+                TextButton(onClick = onClose, modifier = Modifier.heightIn(min = 56.dp)) { Text("그대로 두기") }
             }
         }
         Text(if (reclassifying) "어떤 목적이었나요?" else "운행 목적만 확인해 주세요", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
@@ -278,9 +286,9 @@ private fun String.toIdSet() = split(',').filter { it.isNotBlank() }.toSet()
  */
 @Composable internal fun MatchedBanner(charges: List<CardCharge>, onShow: () -> Unit, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
     if (charges.isEmpty()) return
-    val pleos = LocalPleosColors.current
     val message = "카드 결제 ${charges.size}건 ${formatWon(charges.sumOf { it.amountWon })}을 운행에 자동 반영했어요"
-    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = pleos.surfaceHigh, border = BorderStroke(1.dp, pleos.active.copy(alpha = .45f))) {
+    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = Scene.glass, contentColor = Scene.text,
+        border = BorderStroke(1.dp, Scene.positive.copy(alpha = .45f))) {
         BoxWithConstraints(Modifier.padding(start = 18.dp, end = 8.dp, top = 8.dp, bottom = 8.dp)) {
             val text: @Composable (Modifier) -> Unit = { place ->
                 Text(message, style = MaterialTheme.typography.bodyLarge, modifier = place.semantics { liveRegion = LiveRegionMode.Polite })
@@ -343,6 +351,9 @@ private fun String.toIdSet() = split(',').filter { it.isNotBlank() }.toSet()
 
 // ───────────────────────── 오늘의 운전자 ─────────────────────────
 
+/** The driver row folds away in 200 ms once it is answered (spec C); nothing is composed once it has gone. */
+private const val MOTION_FOLD_MS = 200
+
 /**
  * One question a day under the employee chip: "오늘도 영업1팀 김서연 님이 운전하나요?" with the current driver as the default.
  * "네" writes nothing and remembers today; "다른 직원" opens the picker. Both count as an answer, so the row does not
@@ -352,25 +363,38 @@ private fun String.toIdSet() = split(',').filter { it.isNotBlank() }.toSet()
 @Composable internal fun DriverConfirmRow(state: TripLogState, now: Long, openDriver: (String?) -> Unit, confirmed: String, onConfirmed: (String) -> Unit,
     modifier: Modifier = Modifier) {
     val dates = confirmed.toIdSet()
-    val driver = driverConfirmDue(state.data, now, zone, dates) ?: return
-    val answer = { onConfirmed((dates + dateKey(now, zone)).joined()) }
-    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))) {
-        BoxWithConstraints(Modifier.padding(start = 18.dp, end = 10.dp, top = 8.dp, bottom = 8.dp)) {
-            val question: @Composable (Modifier) -> Unit = { place ->
-                Text("오늘도 ${driver.label} 님이 운전하나요?", style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                    modifier = place.semantics { heading() })
-            }
-            val buttons: @Composable () -> Unit = {
-                PrimaryAction("네", Modifier.heightIn(min = 56.dp), onClick = answer)
-                QuietAction("다른 직원", Modifier.heightIn(min = 56.dp)) { answer(); openDriver(null) }
-            }
-            if (maxWidth < 560.dp) Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                question(Modifier.padding(top = 6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { buttons() }
-            } else Row(Modifier.heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                question(Modifier.weight(1f))
-                buttons()
+    val due = driverConfirmDue(state.data, now, zone, dates)
+    // The answered row shrinks and fades showing the question it just asked, then leaves the composition altogether.
+    var shown by remember { mutableStateOf(due) }
+    if (due != null) shown = due
+    val visible = remember { MutableTransitionState(due != null) }
+    visible.targetState = due != null
+    val driver = shown
+    if (driver == null || (!visible.currentState && !visible.targetState)) return
+    val reduce = LocalReduceMotion.current
+    val ease = FastOutSlowInEasing
+    AnimatedVisibility(visibleState = visible, modifier = modifier,
+        enter = if (reduce) fadeIn(snap()) else fadeIn(tween(MOTION_FOLD_MS, easing = ease)) + expandVertically(tween(MOTION_FOLD_MS, easing = ease)),
+        exit = if (reduce) fadeOut(snap()) else fadeOut(tween(MOTION_FOLD_MS, easing = ease)) + shrinkVertically(tween(MOTION_FOLD_MS, easing = ease)),
+        label = "driver-confirm") {
+        val answer = { onConfirmed((dates + dateKey(now, zone)).joined()) }
+        Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = Scene.glass, contentColor = Scene.text, border = Scene.edge) {
+            BoxWithConstraints(Modifier.padding(start = 18.dp, end = 10.dp, top = 8.dp, bottom = 8.dp)) {
+                val question: @Composable (Modifier) -> Unit = { place ->
+                    Text("오늘도 ${driver.label} 님이 운전하나요?", style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        modifier = place.semantics { heading() })
+                }
+                val buttons: @Composable () -> Unit = {
+                    PrimaryAction("네", Modifier.heightIn(min = 56.dp), onClick = answer)
+                    QuietAction("다른 직원", Modifier.heightIn(min = 56.dp)) { answer(); openDriver(null) }
+                }
+                if (maxWidth < 560.dp) Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    question(Modifier.padding(top = 6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { buttons() }
+                } else Row(Modifier.heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    question(Modifier.weight(1f))
+                    buttons()
+                }
             }
         }
     }

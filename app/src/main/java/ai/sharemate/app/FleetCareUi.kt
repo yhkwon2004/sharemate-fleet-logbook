@@ -2,7 +2,9 @@ package ai.sharemate.app
 
 import androidx.core.content.edit
 import android.content.Context
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -16,7 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
@@ -37,10 +39,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
@@ -173,21 +177,40 @@ internal fun careDoneExplanation(kind: CareKind) = when (kind) {
     CareKind.LEASE -> "완료를 누르면 등록된 만기일을 지워요. 새 계약은 설정 › 법인·차량에 적어 주세요."
 }
 
+/** Settings forms put their fields in two columns at EXPANDED and FULL, one below that, and always one at a 1.3× font scale (spec B). */
+internal fun careFieldColumns(tokens: LayoutTokens, fontScale: Float): Int = if (tokens.expanded && fontScale <= 1.25f) 2 else 1
+
 private fun kmLabel(value: Double) = String.format(Locale.KOREA, "%,.0f km", value)
 private fun shortDate(at: Long) = SimpleDateFormat("M/d", Locale.KOREA).format(Date(at))
 
-@Composable internal fun careLevelColor(level: CareLevel): Color {
-    val pleos = LocalPleosColors.current
-    return when (level) { CareLevel.OVERDUE -> pleos.negative; CareLevel.SOON -> MaterialTheme.colorScheme.secondary; CareLevel.INFO -> pleos.chartActive }
+/** Overdue is the scene's negative, soon its warn (점검 필요), room to spare its positive: the same three tones on day glass and at night. */
+@Composable internal fun careLevelColor(level: CareLevel): Color = when (level) {
+    CareLevel.OVERDUE -> Scene.negative
+    CareLevel.SOON -> Scene.warn
+    CareLevel.INFO -> Scene.positive
 }
 
 internal fun careLevelState(level: CareLevel) = when (level) { CareLevel.OVERDUE -> "기한 지남"; CareLevel.SOON -> "곧 만기"; CareLevel.INFO -> "여유 있음" }
 
 // ───────────────────────── 설정 › 법인·차량 ─────────────────────────
 
+/** Fields in [columns] columns of equal width, 16 dp apart; a short last row keeps the column widths. */
+@Composable private fun FieldGrid(fields: List<@Composable (Modifier) -> Unit>, columns: Int) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        fields.chunked(columns.coerceAtLeast(1)).forEach { row ->
+            if (columns <= 1) row.forEach { it(Modifier) }
+            else Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                row.forEach { it(Modifier.weight(1f)) }
+                repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+    }
+}
+
 /**
  * Where the manager types the deadlines. Dates are yyyy-MM-dd with the error under the field while typing; the odometer
- * button fills the last-service field from the live sample so nobody copies a seven-digit number by hand.
+ * button fills the last-service field from the live sample so nobody copies a seven-digit number by hand. The form keeps
+ * to 720 dp at the start of its column (spec B).
  */
 @Composable internal fun CareSettingsCard(state: TripLogState, act: Act, repository: TripLogRepository, now: Long = System.currentTimeMillis()) {
     val saved = state.data.care
@@ -204,30 +227,25 @@ internal fun careLevelState(level: CareLevel) = when (level) { CareLevel.OVERDUE
     val updated = VehicleCare(inspection.trim().ifBlank { null }, insurance.trim().ifBlank { null }, lease.trim().ifBlank { null },
         interval.toIntOrNull(), lastKm.toDoubleOrNull(), lastServiceAt = if (lastChanged) (if (lastKm.isBlank()) null else now) else saved.lastServiceAt)
     val changed = updated.copy(lastServiceAt = saved.lastServiceAt) != saved
-    Panel {
+    val tokens = LocalLayout.current
+    val columns = careFieldColumns(tokens, LocalDensity.current.fontScale)
+    Panel(Modifier.widthIn(max = 720.dp), padding = tokens.panelPadding) {
         Eyebrow("차량 관리 기한")
         Text("검사·보험·리스·정비 알림", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
         Muted("등록된 날짜 기준으로만 알려요 · 자동 조회는 하지 않아요. 30일 전부터 홈과 차량 탭에 알림이 떠요.")
-        BoxWithConstraints(Modifier.fillMaxWidth()) {
-            val fields: List<@Composable (Modifier) -> Unit> = listOf(
-                { m -> Field("정기검사 만료일", inspection, { inspection = typeIsoDate(it) }, m, number = true, hint = careDateHint(inspection, today) ?: "예: 2026-11-24", error = careDateError(inspection)) },
-                { m -> Field("보험 만기일", insurance, { insurance = typeIsoDate(it) }, m, number = true, hint = careDateHint(insurance, today) ?: "예: 2027-01-31", error = careDateError(insurance)) },
-                { m -> Field("리스·렌트 만기일", lease, { lease = typeIsoDate(it) }, m, number = true, hint = careDateHint(lease, today) ?: "소유 차량이면 비워 두세요", error = careDateError(lease)) },
-            )
-            if (maxWidth >= 900.dp) Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) { fields.forEach { it(Modifier.weight(1f)) } }
-            else Column(verticalArrangement = Arrangement.spacedBy(16.dp)) { fields.forEach { it(Modifier) } }
-        }
-        BoxWithConstraints(Modifier.fillMaxWidth()) {
-            val intervalField: @Composable (Modifier) -> Unit = { m -> Field("정비 주기", interval, { if (it.length <= 6 && it.all(Char::isDigit)) interval = it }, m,
-                number = true, suffix = "km", hint = "예: 10000 · 제조사 권장 주기", error = careIntervalError(interval)) }
-            val lastField: @Composable (Modifier) -> Unit = { m -> Field("마지막 정비 계기판", lastKm, { if (it.length <= 9 && it.all { c -> c.isDigit() || c == '.' }) lastKm = it }, m,
-                number = true, suffix = "km", done = true, hint = saved.lastServiceAt?.let { "마지막 정비 ${shortDate(it)}" } ?: "정비받은 날의 계기판 값", error = careKmError(lastKm)) }
-            val fill: @Composable (Modifier) -> Unit = { m -> QuietAction("지금 계기판 값 넣기", m, enabled = odometer != null,
-                description = odometer?.let { "지금 계기판 값 ${kmLabel(it)} 넣기" }) { odometer?.let { lastKm = String.format(Locale.US, "%.0f", it) } } }
-            if (maxWidth >= 900.dp) Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                intervalField(Modifier.weight(1f)); lastField(Modifier.weight(1f)); fill(Modifier)
-            } else Column(verticalArrangement = Arrangement.spacedBy(16.dp)) { intervalField(Modifier); lastField(Modifier); fill(Modifier.fillMaxWidth()) }
-        }
+        FieldGrid(listOf(
+            { m -> Field("정기검사 만료일", inspection, { inspection = typeIsoDate(it) }, m, number = true, hint = careDateHint(inspection, today) ?: "예: 2026-11-24", error = careDateError(inspection)) },
+            { m -> Field("보험 만기일", insurance, { insurance = typeIsoDate(it) }, m, number = true, hint = careDateHint(insurance, today) ?: "예: 2027-01-31", error = careDateError(insurance)) },
+            { m -> Field("리스·렌트 만기일", lease, { lease = typeIsoDate(it) }, m, number = true, hint = careDateHint(lease, today) ?: "소유 차량이면 비워 두세요", error = careDateError(lease)) },
+        ), columns)
+        FieldGrid(listOf(
+            { m -> Field("정비 주기", interval, { if (it.length <= 6 && it.all(Char::isDigit)) interval = it }, m,
+                number = true, suffix = "km", hint = "예: 10000 · 제조사 권장 주기", error = careIntervalError(interval)) },
+            { m -> Field("마지막 정비 계기판", lastKm, { if (it.length <= 9 && it.all { c -> c.isDigit() || c == '.' }) lastKm = it }, m,
+                number = true, suffix = "km", done = true, hint = saved.lastServiceAt?.let { "마지막 정비 ${shortDate(it)}" } ?: "정비받은 날의 계기판 값", error = careKmError(lastKm)) },
+        ), columns)
+        QuietAction("지금 계기판 값 넣기", if (columns == 1) Modifier.fillMaxWidth() else Modifier, enabled = odometer != null,
+            description = odometer?.let { "지금 계기판 값 ${kmLabel(it)} 넣기" }) { odometer?.let { lastKm = String.format(Locale.US, "%.0f", it) } }
         Muted(when {
             odometer == null -> "계기판 값은 차량 신호를 받으면 넣을 수 있어요. 엔진오일 정비 기록을 추가하면 마지막 정비 값이 저절로 바뀌어요."
             fresh -> "지금 계기판 ${kmLabel(odometer)} · 엔진오일 정비 기록을 추가하면 마지막 정비 값이 저절로 바뀌어요."
@@ -259,13 +277,12 @@ internal fun careLevelState(level: CareLevel) = when (level) { CareLevel.OVERDUE
     val all = data.maintenance.filter { it.demo == data.profile.demoMode }
     val records = all.sortedByDescending { it.at }.take(5)
     var adding by rememberSaveable { mutableStateOf(false) }
-    val colors = MaterialTheme.colorScheme
-    Panel(modifier, padding = 22.dp) {
+    Panel(modifier, padding = LocalLayout.current.panelPadding) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Eyebrow("차량 관리")
             Spacer(Modifier.weight(1f))
             Text(when { odometer == null -> "계기판 수신 전"; fresh -> "계기판 ${kmLabel(odometer)}"; else -> "계기판 ${kmLabel(odometer)} · 마지막 수신값" },
-                style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (alerts.isEmpty()) {
             Text(if (care.serviceIntervalKm != null && care.lastServiceKm != null && odometer == null) "정비 주기는 계기판 값을 받으면 계산해요" else "등록된 기한이 없어요", style = MaterialTheme.typography.titleSmall)
@@ -273,7 +290,7 @@ internal fun careLevelState(level: CareLevel) = when (level) { CareLevel.OVERDUE
             goSettings?.let { QuietAction("기한 입력하기", onClick = it) }
         }
         alerts.forEach { alert -> CareAlertRow(alert, care, odometer) }
-        HorizontalDivider(color = colors.outlineVariant)
+        HorizontalDivider(color = Scene.divider)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Eyebrow("정비 기록 · ${all.size}건")
             Spacer(Modifier.weight(1f))
@@ -302,30 +319,43 @@ internal fun careLevelState(level: CareLevel) = when (level) { CareLevel.OVERDUE
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         Box(Modifier.size(12.dp).clip(CircleShape).background(color))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(alert.title, style = MaterialTheme.typography.titleSmall, color = if (alert.level == CareLevel.OVERDUE) color else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(alert.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(alert.title, style = MaterialTheme.typography.titleSmall, color = if (alert.level == CareLevel.OVERDUE) color else Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(alert.detail, style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (progress != null) {
                 val percent = (progress * 100).roundToInt()
-                LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(8.dp).padding(top = 2.dp)
+                // The bar sweeps from the previous value to the new one (spec C); the figure TalkBack hears is the real one.
+                val shown = sweepProgress(progress)
+                LinearProgressIndicator(progress = { shown.value }, modifier = Modifier.fillMaxWidth().height(8.dp).padding(top = 2.dp)
                     .semantics { contentDescription = "정비 주기 ${percent}퍼센트 사용" },
-                    color = if (alert.level == CareLevel.INFO) LocalPleosColors.current.chartActive else color, trackColor = LocalPleosColors.current.surfaceHigh, drawStopIndicator = {})
+                    color = color, trackColor = Scene.ringTrack, drawStopIndicator = {})
             }
         }
     }
 }
 
 @Composable private fun MaintenanceRow(record: MaintenanceRecord, onDelete: () -> Unit) {
-    val colors = MaterialTheme.colorScheme
     val detail = listOfNotNull(record.odometerKm?.let(::kmLabel), record.merchant, record.note.ifBlank { null },
         if (record.source == EditSource.CARD) "카드 자동 매칭" else if (record.source == EditSource.PHONE) "휴대폰" else null).joinToString(" · ")
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text("${shortDate(record.at)} · ${record.kind.label} · ${if (record.amountWon == 0L) "금액 없음" else formatWon(record.amountWon)}",
                 style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (detail.isNotBlank()) Text(detail, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (detail.isNotBlank()) Text(detail, style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        TextButton(onClick = onDelete, modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "${shortDate(record.at)} ${record.kind.label} 기록 삭제" }) {
-            Text("삭제", color = LocalPleosColors.current.negative)
+        TextButton(onClick = onDelete, modifier = Modifier.heightIn(min = 56.dp).semantics { contentDescription = "${shortDate(record.at)} ${record.kind.label} 기록 삭제" }) {
+            Text("삭제", color = Scene.negative)
+        }
+    }
+}
+
+/** A 56-dp choice chip: the chosen one carries the scene's selection fill, its 1.5 dp ring and the glow label, never colour alone. */
+@Composable private fun ChoiceChip(label: String, active: Boolean, onClick: () -> Unit) {
+    val source = remember { MutableInteractionSource() }
+    Surface(Modifier.heightIn(min = 56.dp).carTap(source, role = Role.RadioButton, onClick = onClick).semantics { selected = active },
+        shape = RoundedCornerShape(16.dp), color = if (active) Scene.selectionFill else Scene.fill, contentColor = if (active) Scene.glow else Scene.text,
+        border = if (active) BorderStroke(1.5.dp, Scene.selectionRing) else Scene.edge) {
+        Box(Modifier.heightIn(min = 56.dp).padding(horizontal = 18.dp), contentAlignment = Alignment.Center) {
+            Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
         }
     }
 }
@@ -341,20 +371,11 @@ internal fun careLevelState(level: CareLevel) = when (level) { CareLevel.OVERDUE
     var km by rememberSaveable(odometer) { mutableStateOf(odometer?.let { String.format(Locale.US, "%.0f", it) }.orEmpty()) }
     val amountError = amount.toLongOrNull()?.takeIf { it > 10_000_000 }?.let { "1,000만 원까지 입력할 수 있어요" }
     val kmError = careKmError(km)
-    val colors = MaterialTheme.colorScheme
-    Surface(shape = RoundedCornerShape(20.dp), color = colors.surfaceContainerLow) {
+    Surface(shape = RoundedCornerShape(20.dp), color = Scene.rail, contentColor = Scene.text, border = Scene.edge) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("어떤 정비였나요?", style = MaterialTheme.typography.titleSmall)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                MaintenanceKind.values().forEach { option ->
-                    val active = option == kind
-                    Surface(shape = RoundedCornerShape(16.dp), color = if (active) colors.primary else LocalPleosColors.current.surfaceHigh,
-                        modifier = Modifier.heightIn(min = 56.dp).selectable(selected = active, role = Role.RadioButton) { kind = option }) {
-                        Box(Modifier.heightIn(min = 56.dp).padding(horizontal = 18.dp), contentAlignment = Alignment.Center) {
-                            Text(option.label, style = MaterialTheme.typography.labelLarge, color = if (active) colors.onPrimary else colors.onSurface, maxLines = 1)
-                        }
-                    }
-                }
+                MaintenanceKind.values().forEach { option -> ChoiceChip(option.label, option == kind) { kind = option } }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Field("금액", amount, { if (it.length <= 8 && it.all(Char::isDigit)) amount = it }, Modifier.weight(1f), number = true, suffix = "원",
@@ -394,7 +415,7 @@ internal fun careLevelState(level: CareLevel) = when (level) { CareLevel.OVERDUE
 @Composable internal fun CareDueCard(alert: CareAlert, onSnooze: () -> Unit, onDone: () -> Unit, modifier: Modifier = Modifier) {
     val color = careLevelColor(alert.level)
     Panel(modifier) {
-        Eyebrow("차량 관리 · ${careLevelState(alert.level)}", if (alert.level == CareLevel.OVERDUE) color else MaterialTheme.colorScheme.onSurfaceVariant)
+        Eyebrow("차량 관리 · ${careLevelState(alert.level)}", if (alert.level == CareLevel.OVERDUE) color else Scene.textSecondary)
         Text(alert.title, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() }, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Muted(alert.detail)
         Text(careGuidance(alert.kind), style = MaterialTheme.typography.bodyLarge)
@@ -407,7 +428,7 @@ internal fun careLevelState(level: CareLevel) = when (level) { CareLevel.OVERDUE
                 QuietAction("7일 뒤 다시", Modifier.fillMaxWidth(), onClick = onSnooze)
             }
         }
-        Text(careDoneExplanation(alert.kind), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(careDoneExplanation(alert.kind), style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary)
     }
 }
 

@@ -3,12 +3,15 @@ package ai.sharemate.app
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
 import kotlinx.coroutines.Dispatchers
@@ -55,7 +58,8 @@ import java.util.Locale
 
 /*
  * Cards that give the car app its reason to exist: things only the vehicle can do at the moment they happen.
- * Each card captures vehicle data by itself and asks the driver for one decision at most.
+ * Each card captures vehicle data by itself and asks the driver for one decision at most. 2.10: every colour here is a
+ * scene token, so the same cards read on the day glass and in the night palette.
  */
 
 private fun clock(at: Long) = SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(at))
@@ -73,6 +77,28 @@ internal fun pairingDisplay(code: String) = code.chunked(3).joinToString(" ")
 internal fun pairingRemaining(info: SyncInfo, now: Long): String? =
     info.pairingCode?.let { ((info.pairingExpiresAt - now) / 1000).coerceAtLeast(0) }?.let { "%d:%02d".format(it / 60, it % 60) }
 
+/** The car caps a staggered entrance at five rows (spec C); later rows are simply there. */
+internal const val CAR_APPEAR_CAP = 5
+
+/**
+ * Press feedback for a surface the driver taps on the car (spec C): the surface settles to .98 while held and no ripple
+ * draws. The same [source] goes nowhere else. [label] is the click label TalkBack reads.
+ */
+@Composable internal fun Modifier.carTap(source: MutableInteractionSource, enabled: Boolean = true, role: Role = Role.Button, label: String? = null,
+    onClick: () -> Unit): Modifier =
+    pressable(source, .98f).clickable(interactionSource = source, indication = null, enabled = enabled, onClickLabel = label, role = role, onClick = onClick)
+
+/**
+ * [Stat] for a count that changes in place (a sync revision, a month total): the digits cross-fade ([DigitChange]) instead
+ * of jumping, and never count up. Not for live telemetry, which simply updates.
+ */
+@Composable private fun DigitStat(label: String, value: String, modifier: Modifier = Modifier, maxLines: Int = 1) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary)
+        DigitChange(value, style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum"), color = Scene.text, maxLines = maxLines)
+    }
+}
+
 // ───────────────────────── 사고·특이사항 ─────────────────────────
 
 private fun incidentCaption(kind: IncidentKind) = when (kind) {
@@ -82,7 +108,7 @@ private fun incidentCaption(kind: IncidentKind) = when (kind) {
     IncidentKind.OTHER -> "메모로 남기기"
 }
 
-/** One tap at the scene. The car fills time, odometer, place, trip and driver; the driver only chooses what happened. */
+/** One tap at the scene. The car fills time, odometer, place, trip and driver; the driver only chooses what happened. One panel, four 72-dp buttons. */
 @Composable internal fun IncidentQuickRow(data: TripLogData, act: Act, repository: TripLogRepository) {
     val followUp = LocalFollowUp.current
     val haptic = LocalHapticFeedback.current
@@ -98,7 +124,7 @@ private fun incidentCaption(kind: IncidentKind) = when (kind) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Eyebrow("사고·특이사항 · 한 번 누르면 차량 정보가 바로 기록돼요")
             Spacer(Modifier.weight(1f))
-            if (data.profile.phoneSync) Text("휴대폰에도 공유", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (data.profile.phoneSync) Text("휴대폰에도 공유", style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary)
         }
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val kinds = IncidentKind.entries
@@ -113,16 +139,17 @@ private fun incidentCaption(kind: IncidentKind) = when (kind) {
     }
 }
 
-@Composable private fun IncidentTile(kind: IncidentKind, modifier: Modifier, onClick: () -> Unit) {
-    val pleos = LocalPleosColors.current
+@Composable private fun IncidentTile(kind: IncidentKind, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val urgent = kind == IncidentKind.ACCIDENT
-    Surface(onClick = onClick, modifier = modifier.heightIn(min = 88.dp).semantics { role = Role.Button; contentDescription = "${kind.label} 기록, ${incidentCaption(kind)}" },
-        shape = RoundedCornerShape(22.dp), color = if (urgent) pleos.negative.copy(alpha = .16f) else pleos.surfaceHigh,
-        border = if (urgent) BorderStroke(1.dp, pleos.negative.copy(alpha = .5f)) else null) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
+    val negative = Scene.negative
+    val source = remember { MutableInteractionSource() }
+    Surface(modifier.heightIn(min = 72.dp).carTap(source, onClick = onClick).semantics { contentDescription = "${kind.label} 기록, ${incidentCaption(kind)}" },
+        shape = RoundedCornerShape(20.dp), color = if (urgent) negative.copy(alpha = if (Scene.isDay) .10f else .16f) else Scene.fill,
+        contentColor = Scene.text, border = if (urgent) BorderStroke(1.dp, negative.copy(alpha = .5f)) else Scene.edge) {
+        Column(Modifier.heightIn(min = 72.dp).padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
             horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(kind.label, style = MaterialTheme.typography.titleMedium, color = if (urgent) pleos.negative else MaterialTheme.colorScheme.onSurface, maxLines = 1)
-            Text(incidentCaption(kind), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            Text(kind.label, style = MaterialTheme.typography.titleMedium, color = if (urgent) negative else Scene.text, maxLines = 1)
+            Text(incidentCaption(kind), style = MaterialTheme.typography.labelSmall, color = Scene.textSecondary, maxLines = 1)
         }
     }
 }
@@ -150,7 +177,6 @@ private fun deleteIncident(incident: Incident, act: Act, repository: TripLogRepo
 
 /** Guidance for an open report: numbered steps first, captured facts second, one closing action. */
 @Composable internal fun IncidentCard(incident: Incident, data: TripLogData, act: Act, repository: TripLogRepository) {
-    val pleos = LocalPleosColors.current
     val followUp = LocalFollowUp.current
     val driver = data.drivers.firstOrNull { it.id == incident.driverId }
     val steps = incidentSteps(incident.kind)
@@ -159,29 +185,33 @@ private fun deleteIncident(incident: Incident, act: Act, repository: TripLogRepo
     val stagger = remember(incident.id) { !introduced }
     LaunchedEffect(incident.id) { introduced = true }
     var confirmDelete by remember(incident.id) { mutableStateOf(false) }
-    Panel(color = if (incident.kind == IncidentKind.ACCIDENT) pleos.negative.copy(alpha = .08f) else MaterialTheme.colorScheme.surface) {
+    val negative = Scene.negative
+    val surface = MaterialTheme.colorScheme.surface
+    // An accident card is tinted, not translucent: the tint is composited onto the panel surface of the scene in effect.
+    val tint = if (incident.kind == IncidentKind.ACCIDENT) negative.copy(alpha = .08f).compositeOver(surface) else surface
+    Panel(color = tint) {
         Column(Modifier.semantics { liveRegion = LiveRegionMode.Polite }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Eyebrow("${incident.kind.label} · ${incident.status.label} · ${clock(incident.at)}", pleos.negative)
+            Eyebrow("${incident.kind.label} · ${incident.status.label} · ${clock(incident.at)}", negative)
             Text("지금 할 일", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
         }
         steps.forEachIndexed { index, step ->
             Appear(index = index.coerceAtMost(3), animate = stagger) {
                 Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Box(Modifier.size(32.dp).clip(CircleShape).background(pleos.surfaceHigh), contentAlignment = Alignment.Center) {
-                        Text("${index + 1}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.clearAndSetSemantics {})
+                    Box(Modifier.size(32.dp).clip(CircleShape).background(Scene.fill), contentAlignment = Alignment.Center) {
+                        Text("${index + 1}", style = MaterialTheme.typography.labelLarge, color = Scene.text, modifier = Modifier.clearAndSetSemantics {})
                     }
                     Text(step, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f).padding(top = 4.dp))
                 }
             }
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        HorizontalDivider(color = Scene.divider)
         Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
             Stat("계기판", km(incident.odometerKm), Modifier.weight(1f))
             Stat("사용자", driver?.name ?: "미지정", Modifier.weight(1f))
         }
         Muted(incident.address?.let { "위치 · $it" } ?: "위치 · 내비 주소 미수신")
         if (incident.note.isNotBlank()) Text(incident.note, style = MaterialTheme.typography.bodyMedium)
-        PhotoStrip(incident.photos, repository.photos, size = 112.dp, onRemove = { photo -> act { repository.removePhoto(incident.id, photo.id) } })
+        PhotoStrip(incident.photos, repository.photos, size = 112.dp, onRemove = { photo -> act { repository.removePhoto(incident.id, photo.id) } }, tapTarget = 56.dp)
         Muted(when {
             incident.photos.isNotEmpty() -> "사진 ${incident.photos.size}장 · 휴대폰에서 촬영해 차량에 저장됐어요."
             data.profile.phoneSync -> "휴대폰 SHAREMATE에 같은 기록이 떠 있어요. 현장 사진과 메모는 휴대폰에서 덧붙이세요."
@@ -190,7 +220,7 @@ private fun deleteIncident(incident: Incident, act: Act, repository: TripLogRepo
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             PrimaryAction("처리 완료", Modifier.weight(1f)) { closeIncident(incident, act, repository, followUp) }
             // Only a record with photos asks first: the record can come back, the pictures cannot.
-            QuietAction("기록 삭제", Modifier.weight(1f), color = pleos.negative) {
+            QuietAction("기록 삭제", Modifier.weight(1f), color = negative) {
                 if (incident.photos.isEmpty()) deleteIncident(incident, act, repository, followUp) else confirmDelete = true
             }
         }
@@ -198,62 +228,74 @@ private fun deleteIncident(incident: Incident, act: Act, repository: TripLogRepo
     if (confirmDelete) AlertDialog(onDismissRequest = { confirmDelete = false },
         title = { Text("사진 ${incident.photos.size}장도 함께 지워져요") },
         text = { Text("기록은 하단 바에서 되돌릴 수 있지만 사진은 복구되지 않아요.") },
-        confirmButton = { TextButton(onClick = { confirmDelete = false; deleteIncident(incident, act, repository, followUp) }, modifier = Modifier.heightIn(min = 56.dp)) { Text("삭제", color = pleos.negative) } },
+        confirmButton = { TextButton(onClick = { confirmDelete = false; deleteIncident(incident, act, repository, followUp) }, modifier = Modifier.heightIn(min = 56.dp)) { Text("삭제", color = negative) } },
         dismissButton = { TextButton(onClick = { confirmDelete = false }, modifier = Modifier.heightIn(min = 56.dp)) { Text("취소") } })
 }
 
 /**
  * Thumbnails for a report's photos. A photo whose file is not on this device yet shows a placeholder and asks [missing]
- * to fetch it; [version] bumps when a fetch lands so the strip re-reads the files.
+ * to fetch it; [version] bumps when a fetch lands so the strip re-reads the files. The remove mark is a 28-dp disc whose
+ * touch area is [tapTarget] square (48 on the phone, 56 on the car); the scrim under it stays black on purpose: it sits
+ * on a photograph, not on the scene.
  */
 @Composable internal fun PhotoStrip(photos: List<IncidentPhoto>, store: PhotoStore, version: Int = 0, size: Dp = 96.dp,
-    missing: ((String) -> Unit)? = null, onRemove: ((IncidentPhoto) -> Unit)? = null) {
+    missing: ((String) -> Unit)? = null, onRemove: ((IncidentPhoto) -> Unit)? = null, tapTarget: Dp = 48.dp) {
     if (photos.isEmpty()) return
-    val pleos = LocalPleosColors.current
+    val placeholder = Scene.rail
     Row(Modifier.horizontalScroll(rememberScrollState()).semantics { contentDescription = "첨부 사진 ${photos.size}장" }, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         photos.forEach { photo ->
             val file = store.file(photo.id)
             val bitmap by produceState<android.graphics.Bitmap?>(null, photo.id, version) { value = withContext(Dispatchers.IO) { thumbnail(file) } }
             LaunchedEffect(photo.id, version) { if (!file.exists()) missing?.invoke(photo.id) }
-            Box(Modifier.size(size).clip(RoundedCornerShape(14.dp)).background(pleos.surfaceHigh)) {
+            Box(Modifier.size(size).clip(RoundedCornerShape(14.dp)).background(placeholder)) {
                 bitmap?.let { Image(it.asImageBitmap(), "사진 ${clock(photo.at)} · ${photo.source.label}", Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-                    ?: Text(if (missing != null) "받는 중" else "사진 없음", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    ?: Text(if (missing != null) "받는 중" else "사진 없음", style = MaterialTheme.typography.labelSmall, color = Scene.textSecondary,
                         modifier = Modifier.align(Alignment.Center))
-                if (onRemove != null) Surface(onClick = { onRemove(photo) }, shape = CircleShape, color = Color.Black.copy(alpha = .55f), contentColor = Color.White,
-                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(28.dp).semantics { role = Role.Button; contentDescription = "사진 삭제" }) {
-                    Text("×", textAlign = TextAlign.Center, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 2.dp))
+                if (onRemove != null) Box(Modifier.align(Alignment.TopEnd).size(tapTarget.coerceAtMost(size))
+                        .clickable(role = Role.Button, onClickLabel = "사진 삭제") { onRemove(photo) }.semantics { contentDescription = "사진 삭제" },
+                        contentAlignment = Alignment.TopEnd) {
+                    Surface(shape = CircleShape, color = Color.Black.copy(alpha = .55f), contentColor = Color.White, modifier = Modifier.padding(4.dp).size(28.dp)) {
+                        Text("×", textAlign = TextAlign.Center, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 2.dp).clearAndSetSemantics {})
+                    }
                 }
             }
         }
     }
 }
 
-/** History for the vehicle page; status can be flipped back if a report was closed too early. */
+/** History for the vehicle page; status can be flipped back if a report was closed too early. Rows arrive staggered the first time only. */
 @Composable internal fun IncidentHistory(data: TripLogData, act: Act, repository: TripLogRepository, modifier: Modifier = Modifier) {
     val items = recentIncidents(data)
-    val pleos = LocalPleosColors.current
     val followUp = LocalFollowUp.current
-    Panel(modifier, padding = 22.dp) {
+    // First composition only: rows a sync adds later, and the list on a return to this tab, are simply there.
+    var introduced by rememberSaveable { mutableStateOf(false) }
+    val stagger = remember { !introduced }
+    val initial = remember { items.map { it.id }.toSet() }
+    LaunchedEffect(Unit) { introduced = true }
+    Panel(modifier, padding = LocalLayout.current.panelPadding) {
         Eyebrow("사고·특이사항 기록 · ${data.incidents.count { it.demo == data.profile.demoMode }}건")
         if (items.isEmpty()) Muted("기록이 없어요. 홈의 사고·특이사항 버튼을 누르면 그 순간의 차량 정보가 저장돼요.")
-        items.forEach { incident ->
+        items.forEachIndexed { index, incident ->
             val open = incident.status == IncidentStatus.OPEN
-            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).semantics(mergeDescendants = true) { stateDescription = incident.status.label },
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Box(Modifier.size(10.dp).clip(CircleShape).background(if (open) pleos.negative else pleos.chartActive))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("${incident.kind.label} · ${SimpleDateFormat("M/d HH:mm", Locale.KOREA).format(Date(incident.at))}", style = MaterialTheme.typography.titleSmall)
-                    Text(listOfNotNull(incident.odometerKm?.let(::km), incident.address, incident.photos.size.takeIf { it > 0 }?.let { "사진 ${it}장" }, incident.note.ifBlank { null }).joinToString(" · ").ifBlank { "상세 없음" },
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                TextButton(onClick = {
-                    if (open) closeIncident(incident, act, repository, followUp)
-                    else act {
-                        repository.updateIncident(incident.id, status = IncidentStatus.OPEN)
-                        followUp(FollowUp("${incident.kind.label} 기록을 다시 열었어요 · 홈에 대처 안내가 떠요", "되돌리기") { repository.updateIncident(incident.id, status = IncidentStatus.CLOSED) })
+            val stamp = SimpleDateFormat("M/d HH:mm", Locale.KOREA).format(Date(incident.at))
+            Appear(index = index.coerceAtMost(CAR_APPEAR_CAP - 1), animate = stagger && incident.id in initial) {
+                Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).semantics(mergeDescendants = true) { stateDescription = incident.status.label },
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(Modifier.size(10.dp).clip(CircleShape).background(if (open) Scene.negative else Scene.positive))
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("${incident.kind.label} · $stamp", style = MaterialTheme.typography.titleSmall)
+                        Text(listOfNotNull(incident.odometerKm?.let(::km), incident.address, incident.photos.size.takeIf { it > 0 }?.let { "사진 ${it}장" }, incident.note.ifBlank { null }).joinToString(" · ").ifBlank { "상세 없음" },
+                            style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                }, modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "${incident.kind.label} ${SimpleDateFormat("M/d HH:mm", Locale.KOREA).format(Date(incident.at))} ${if (open) "처리 완료" else "다시 열기"}" }) {
-                    Text(if (open) "완료" else "다시 열기", modifier = Modifier.clearAndSetSemantics {})
+                    TextButton(onClick = {
+                        if (open) closeIncident(incident, act, repository, followUp)
+                        else act {
+                            repository.updateIncident(incident.id, status = IncidentStatus.OPEN)
+                            followUp(FollowUp("${incident.kind.label} 기록을 다시 열었어요 · 홈에 대처 안내가 떠요", "되돌리기") { repository.updateIncident(incident.id, status = IncidentStatus.CLOSED) })
+                        }
+                    }, modifier = Modifier.heightIn(min = 56.dp).semantics { contentDescription = "${incident.kind.label} $stamp ${if (open) "처리 완료" else "다시 열기"}" }) {
+                        Text(if (open) "완료" else "다시 열기", modifier = Modifier.clearAndSetSemantics {})
+                    }
                 }
             }
         }
@@ -264,13 +306,25 @@ private fun deleteIncident(incident: Incident, act: Act, repository: TripLogRepo
 
 private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
 
+/** A 64-dp amount choice on the charge card: the scene's row fill with a hairline, or the positive ring for an amount this car paid before. */
+@Composable private fun AmountChip(label: String, modifier: Modifier = Modifier, description: String? = null, known: Boolean = false, onClick: () -> Unit) {
+    val source = remember { MutableInteractionSource() }
+    val positive = Scene.positive
+    Surface(modifier.heightIn(min = 64.dp).carTap(source, onClick = onClick).then(if (description != null) Modifier.semantics { contentDescription = description } else Modifier),
+        shape = RoundedCornerShape(18.dp), color = Scene.fill, contentColor = Scene.text, border = if (known) BorderStroke(1.dp, positive.copy(alpha = .45f)) else Scene.edge) {
+        Box(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 12.dp, vertical = 12.dp), contentAlignment = Alignment.Center) {
+            Text(label, style = if (known) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
 /**
  * The car saw the charge end; the amount is the only thing left, and even that can be skipped. [data] supplies what this
  * car paid before (same place, similar level change) as the first row of chips, so the likely answer is one tap and
  * never a guess. [onWait] appears only when a company card is registered: the approval may still settle this by itself.
  */
 @Composable internal fun ChargeCard(session: ChargeSession, act: Act, repository: TripLogRepository, data: TripLogData? = null, onWait: (() -> Unit)? = null) {
-    val pleos = LocalPleosColors.current
     val followUp = LocalFollowUp.current
     var custom by rememberSaveable(session.endAt) { mutableStateOf("") }
     val minutes = ((session.endAt - session.startAt) / 60_000).coerceAtLeast(1)
@@ -294,7 +348,7 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
         }
     }
     Panel {
-        Eyebrow("$word 감지 · ${clock(session.startAt)}–${clock(session.endAt)}", pleos.active)
+        Eyebrow("$word 감지 · ${clock(session.startAt)}–${clock(session.endAt)}", Scene.positive)
         Text("$word 비용만 알려 주세요", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
         Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
             Stat(if (session.fuel) "연료" else "배터리", soc, Modifier.weight(1.2f))
@@ -304,14 +358,7 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
         if (anchors.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Eyebrow("이 차가 지난번에 낸 금액")
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                anchors.forEach { anchor ->
-                    Surface(onClick = { register(anchor.amountWon) }, shape = RoundedCornerShape(18.dp), color = pleos.surfaceHigh,
-                        border = BorderStroke(1.dp, pleos.active.copy(alpha = .45f)),
-                        modifier = Modifier.weight(1f).heightIn(min = 64.dp).semantics { role = Role.Button; contentDescription = "${anchor.label}, 이 금액으로 등록" }) {
-                        Text(anchor.label, style = MaterialTheme.typography.titleSmall, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp))
-                    }
-                }
+                anchors.forEach { anchor -> AmountChip(anchor.label, Modifier.weight(1f), description = "${anchor.label}, 이 금액으로 등록", known = true) { register(anchor.amountWon) } }
             }
         }
         BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -319,12 +366,7 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 chargeQuickAmounts.chunked(columns).forEach { row ->
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        row.forEach { amount ->
-                            Surface(onClick = { register(amount) }, modifier = Modifier.weight(1f).heightIn(min = 64.dp),
-                                shape = RoundedCornerShape(18.dp), color = pleos.surfaceHigh) {
-                                Text(formatWon(amount), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, modifier = Modifier.padding(16.dp))
-                            }
-                        }
+                        row.forEach { amount -> AmountChip(formatWon(amount), Modifier.weight(1f)) { register(amount) } }
                     }
                 }
             }
@@ -360,7 +402,8 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
     if (chips.isEmpty()) return
     Row(modifier.semantics(mergeDescendants = true) { contentDescription = "차량 정보 " + chips.joinToString(", ") }, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         chips.forEach { chip ->
-            Surface(shape = RoundedCornerShape(50), color = if (chip == "충전 중") LocalPleosColors.current.active.copy(alpha = .22f) else Color.White.copy(alpha = .08f)) {
+            val charge = chip == "충전 중"
+            Surface(shape = RoundedCornerShape(50), color = if (charge) Scene.positive.copy(alpha = .18f) else Scene.fill, contentColor = if (charge) Scene.positive else Scene.text, border = Scene.edge) {
                 Text(chip, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), maxLines = 1)
             }
         }
@@ -369,10 +412,9 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
 
 /** Phone pairing from the driver's seat: a six-digit code, the car's address, and nothing to type on the car. */
 @Composable internal fun PairingCard(info: SyncInfo, now: Long, compact: Boolean = false) {
-    val pleos = LocalPleosColors.current
     val code = info.pairingCode
     val remaining = pairingRemaining(info, now)
-    Panel(padding = if (compact) 22.dp else 28.dp) {
+    Panel(padding = if (compact) 22.dp else LocalLayout.current.panelPadding) {
         Eyebrow(if (info.pairedPhones == 0) "휴대폰 연결 · 처음 한 번만" else "휴대폰 추가 연결")
         if (!info.running) {
             Text(info.error ?: "휴대폰 연결 서버를 준비하고 있어요", style = MaterialTheme.typography.titleMedium)
@@ -387,27 +429,27 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
             Text("차량 인증키 · 처음 연결할 때 입력", style = MaterialTheme.typography.labelLarge)
             Text(info.fingerprint.chunked(8).joinToString(" "), style = MaterialTheme.typography.bodyMedium)
             Text((info.addresses.ifEmpty { listOf("네트워크 주소 확인 중") }).joinToString("  ·  ") { "$it:${info.port}" },
-                style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"), color = Scene.textSecondary, maxLines = 2)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 QuietAction(if (code == null) "새 연결 번호" else "번호 다시 만들기", Modifier.weight(1f)) { SyncServer.active?.refreshPairingCode() }
-                Text("연결된 휴대폰 ${info.pairedPhones}대", style = MaterialTheme.typography.labelLarge, color = pleos.textTertiary)
+                Text("연결된 휴대폰 ${info.pairedPhones}대", style = MaterialTheme.typography.labelLarge, color = Scene.textMuted)
             }
         }
         Muted("같은 Wi-Fi·핫스팟에서 연결하세요. 휴대폰은 이 인증키로 차량을 확인한 뒤 연결 번호를 전송해요.")
     }
 }
 
-/** Live-sync status for the vehicle page. */
+/** Live-sync status for the vehicle page: the dot is the scene's positive while a phone is on the line, its negative when the server is down. */
 @Composable internal fun PhoneSyncCard(state: TripLogState, now: Long, modifier: Modifier = Modifier) {
     val info = state.sync
-    val pleos = LocalPleosColors.current
     val enabled = state.data.profile.phoneSync
     val seen = info.lastPhoneSeenAt.takeIf { it > 0 }?.let { (now - it) / 1000 }
     // A long-poll is held for up to 20 s, so anything under 45 s means the phone is sitting on the line right now.
     val online = seen != null && seen < 45
-    Panel(modifier, padding = 22.dp) {
+    val dot = when { !enabled -> Scene.textMuted; online -> Scene.positive; info.running -> Scene.glow; else -> Scene.negative }
+    Panel(modifier, padding = LocalLayout.current.panelPadding) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Box(Modifier.size(12.dp).clip(CircleShape).background(when { !enabled -> pleos.textTertiary; online -> pleos.chartActive; info.running -> pleos.active; else -> pleos.negative }))
+            Box(Modifier.size(12.dp).clip(CircleShape).background(dot))
             Text(when {
                 !enabled -> "휴대폰 실시간 연동 꺼짐"
                 !info.running -> info.error ?: "연결 서버 준비 중"
@@ -417,7 +459,8 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
             }, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite })
         }
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Stat("기록 버전", "#${state.dataRevision}", Modifier.weight(1f))
+            // The revision is a count that steps on every sync; the seconds-ago figure beside it is live and simply updates.
+            DigitStat("기록 버전", "#${state.dataRevision}", Modifier.weight(1f))
             Stat("휴대폰 최근 수신", seen?.let { if (it < 60) "${it}초 전" else "${it / 60}분 전" } ?: "없음", Modifier.weight(1f))
         }
         Muted(if (enabled) "차량이 원본이고 휴대폰은 거울이에요. 휴대폰에서 바꾼 목적·경비·특이사항은 차량 기록에 ‘휴대폰’ 출처로 남아요."
@@ -437,18 +480,18 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
     if (!data.profile.autopilot) return
     val today = java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
     val summary = autopilotSummary(data, today.withDayOfMonth(1), today, java.time.ZoneId.systemDefault())
-    val pleos = LocalPleosColors.current
     val headline: @Composable (Modifier) -> Unit = { place ->
         Column(place, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text("이달 운행일지 ${summary.percent?.let { "$it%" } ?: "—"} 완성", style = MaterialTheme.typography.titleMedium, maxLines = 1)
-            Text(autopilotSubline(summary), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // A month figure that changes in place cross-fades (spec C); it never counts up.
+            DigitChange("이달 운행일지 ${summary.percent?.let { "$it%" } ?: "—"} 완성", style = MaterialTheme.typography.titleMedium, color = Scene.text)
+            Text(autopilotSubline(summary), style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary)
         }
     }
     val numbers: @Composable RowScope.() -> Unit = {
-        Stat("목적 자동 분류", "${summary.autoPurpose}건", Modifier.weight(1f))
-        Stat("카드 자동 반영", "${summary.cardMatched}건 · ${formatWon(summary.cardWon)}", Modifier.weight(1.5f))
+        DigitStat("목적 자동 분류", "${summary.autoPurpose}건", Modifier.weight(1f))
+        DigitStat("카드 자동 반영", "${summary.cardMatched}건 · ${formatWon(summary.cardWon)}", Modifier.weight(1.5f), maxLines = 2)
     }
-    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = pleos.surfaceHigh) {
+    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = Scene.glass, contentColor = Scene.text, border = Scene.edge) {
         Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             BoxWithConstraints(Modifier.semantics(mergeDescendants = true) {}) {
                 if (maxWidth < 560.dp) Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -460,9 +503,9 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
                 }
             }
             if (waiting != null) {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                HorizontalDivider(color = Scene.divider)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(chargeWaitingLine(waiting, waitingPrompt), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    Text(chargeWaitingLine(waiting, waitingPrompt), style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary,
                         modifier = Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite })
                     if (onEnterNow != null) QuietAction("지금 입력", onClick = onEnterNow)
                 }
@@ -473,11 +516,10 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
 
 /** The only card question the car ever asks: one payment, the trip it probably belongs to, yes or no. */
 @Composable internal fun ChargeReviewCard(charge: CardCharge, remaining: Int, data: TripLogData, act: Act, repository: TripLogRepository) {
-    val pleos = LocalPleosColors.current
     val trip = suggestedTrip(charge, data)
     val moment = SimpleDateFormat(if (charge.timeKnown) "M/d HH:mm" else "M/d", Locale.KOREA).format(Date(charge.at))
     Panel {
-        Eyebrow(if (remaining > 1) "카드 결제 확인 ${remaining}건 · 한 건씩" else "카드 결제 확인", pleos.active)
+        Eyebrow(if (remaining > 1) "카드 결제 확인 ${remaining}건 · 한 건씩" else "카드 결제 확인", Scene.positive)
         Text(trip?.let { "이 운행의 비용이 맞나요?" } ?: "어느 운행의 비용인지 찾지 못했어요", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Text(formatWon(charge.amountWon), style = MaterialTheme.typography.displaySmall.copy(fontFeatureSettings = "tnum"))
@@ -502,7 +544,7 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
         Eyebrow("자동 완성")
         Muted("반복 도착지는 목적을 스스로 채우고, 휴대폰이 받은 카드 승인을 차량 기록과 맞춰 비용에 넣습니다. 자동으로 들어간 항목은 ‘자동 분류’·‘카드 자동 매칭’으로 표시되고 언제든 고칠 수 있어요.")
         field(cards) { value -> if (value.length <= 60 && value.all { it.isDigit() || it == ',' || it == ' ' }) cards = value }
-        if (!valid) Text("끝 4자리 숫자를 쉼표로 구분해 입력해 주세요.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+        if (!valid) Text("끝 4자리 숫자를 쉼표로 구분해 입력해 주세요.", color = Scene.negative, style = MaterialTheme.typography.bodyMedium)
         Muted("등록하면 다른 카드의 알림은 무시하고, 가맹점 이름만으로 알 수 없는 결제도 차량 기록과 맞춰 봅니다. 등록하지 않으면 주유·충전·통행료·주차로 확인되는 결제만 받습니다.")
         PrimaryAction("카드 저장", Modifier.fillMaxWidth(), enabled = valid && parsed != saved.cards) { act { repository.updateProfile(saved.copy(cards = parsed)) } }
     }

@@ -60,7 +60,7 @@ fun FareSummary(state: AppState, editRates: () -> Unit) {
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (forecast != null) Text(forecastNote(forecast), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (session.rates == null) Button(onClick = editRates, modifier = Modifier.heightIn(min = 56.dp)) { Text("카셰어 요금 입력") }
-        else TextButton(onClick = editRates, modifier = Modifier.heightIn(min = 48.dp)) { Text("요금 수정") }
+        else TextButton(onClick = editRates, modifier = Modifier.heightIn(min = 56.dp)) { Text("요금 수정") }
     }
 }
 
@@ -93,7 +93,7 @@ fun FareDetails(state: AppState, model: MainViewModel, editRates: () -> Unit) {
                 HorizontalDivider()
                 FareRow("합계", costText(session, cost.totalWon), costText(session, forecast.totalWon), emphasis = true)
                 Text(forecastNote(forecast), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                TextButton(onClick = editRates, modifier = Modifier.heightIn(min = 48.dp)) { Text("요금 수정") }
+                TextButton(onClick = editRates, modifier = Modifier.heightIn(min = 56.dp)) { Text("요금 수정") }
             }
             if (state.snapshot.odometerKm.isFresh(state.now)) Text("차량 누적 주행거리 ${km(state.snapshot.odometerKm.value!!.toDouble())}", style = MaterialTheme.typography.bodyMedium)
             if (session.startingOdometerKm == null && session.phase == Phase.CHECK_IN) OutlinedButton(onClick = model::captureStartingDistance, modifier = Modifier.heightIn(min = 56.dp)) { Text("출발 전 거리 기준 설정") }
@@ -260,7 +260,7 @@ fun RateEditor(session: RentalSession, save: (RentalRates) -> Unit) {
             Text("내 차량 · 실시간 이용", style = MaterialTheme.typography.titleLarge)
             Text(status.message, color = MaterialTheme.colorScheme.primary)
             if (config == null) {
-                if (!enteringLink) OutlinedButton(onClick = { enteringLink = true }) { Text("차량과 연결하기") }
+                if (!enteringLink) OutlinedButton(onClick = { enteringLink = true }, modifier = Modifier.heightIn(min = 48.dp)) { Text("차량과 연결하기") }
                 else LinkEntry("휴대폰용 연결 정보") { value -> scope.launch { try { withContext(Dispatchers.IO) { link.save(value) }; config = parseLink(value); enteringLink = false } catch (_: Exception) { status = LinkStatus(message = "연결 정보를 저장하지 못했습니다.") } } }
             }
             else {
@@ -276,7 +276,7 @@ fun RateEditor(session: RentalSession, save: (RentalRates) -> Unit) {
                     Text("차량 전송 ${time(vehicle.optLong("sentAt"))} · 입력한 카셰어 요금 기준이며 확정 청구액이 아닙니다", style = MaterialTheme.typography.bodySmall)
                 }
                 Text("촬영 요약·사고 메모만 연결된 차량에 공유합니다. 원본은 이 휴대폰에 보관합니다.", style = MaterialTheme.typography.bodySmall)
-                TextButton(onClick = { scope.launch { withContext(Dispatchers.IO) { link.clear() }; config = null; status = LinkStatus(message = "차량 연결 해제됨"); callback(null) } }) { Text("휴대폰 연결 해제") }
+                TextButton(onClick = { scope.launch { withContext(Dispatchers.IO) { link.clear() }; config = null; status = LinkStatus(message = "차량 연결 해제됨"); callback(null) } }, modifier = Modifier.heightIn(min = 48.dp)) { Text("휴대폰 연결 해제") }
             }
         }
     }

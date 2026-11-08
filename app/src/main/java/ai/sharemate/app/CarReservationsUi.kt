@@ -19,7 +19,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -86,7 +91,7 @@ internal fun carReservationsEmptyText(autopilot: Boolean): String =
 
 // ───────────────────────── 차량 tab card ─────────────────────────
 
-/** The car's bookings: the one in use first, then the upcoming ones, each cancellable with undo. */
+/** The car's bookings: the one in use first, then the upcoming ones, each cancellable with undo. Rows arrive staggered the first time only. */
 @Composable internal fun CarReservationsCard(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, modifier: Modifier = Modifier) {
     val data = state.data
     val tz = remember { ZoneId.systemDefault() }
@@ -99,37 +104,46 @@ internal fun carReservationsEmptyText(autopilot: Boolean): String =
             followUp(FollowUp("예약을 취소했어요", "실행 취소") { repository.restoreReservation(reservation.id) })
         }
     }
-    Panel(modifier, padding = 22.dp) {
+    // First composition only (spec C): a booking a phone adds later, and the list on a return to this tab, are simply there.
+    var introduced by rememberSaveable { mutableStateOf(false) }
+    val stagger = remember { !introduced }
+    val initial = remember { (listOfNotNull(active) + upcoming).map { it.id }.toSet() }
+    LaunchedEffect(Unit) { introduced = true }
+    Panel(modifier, padding = LocalLayout.current.panelPadding) {
         Eyebrow("차량 예약 · 다가오는 ${upcoming.size}건")
         if (active == null && upcoming.isEmpty()) {
             Text("예정된 예약이 없어요", style = MaterialTheme.typography.titleMedium)
             Muted(carReservationsEmptyText(data.profile.autopilot))
         }
         active?.let { r ->
-            CarReservationRow(carActiveTitle(r, now, tz), reservationDetailText(data, r), highlighted = true,
-                cancelDescription = "사용 중인 ${bookerLabel(data, r.driverId)} 예약 취소") { cancel(r) }
-            if (upcoming.isNotEmpty()) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Appear(index = 0, animate = stagger && r.id in initial) {
+                CarReservationRow(carActiveTitle(r, now, tz), reservationDetailText(data, r), highlighted = true,
+                    cancelDescription = "사용 중인 ${bookerLabel(data, r.driverId)} 예약 취소") { cancel(r) }
+            }
+            if (upcoming.isNotEmpty()) HorizontalDivider(color = Scene.divider)
         }
-        upcoming.take(CAR_RESERVATION_ROWS).forEach { r ->
+        upcoming.take(CAR_RESERVATION_ROWS).forEachIndexed { index, r ->
             val window = reservationWindowText(r, tz)
-            CarReservationRow(window, reservationDetailText(data, r), highlighted = false,
-                cancelDescription = "$window ${bookerLabel(data, r.driverId)} 예약 취소") { cancel(r) }
+            val order = index + if (active != null) 1 else 0
+            Appear(index = order.coerceAtMost(CAR_APPEAR_CAP - 1), animate = stagger && r.id in initial) {
+                CarReservationRow(window, reservationDetailText(data, r), highlighted = false,
+                    cancelDescription = "$window ${bookerLabel(data, r.driverId)} 예약 취소") { cancel(r) }
+            }
         }
         if (upcoming.size > CAR_RESERVATION_ROWS) Muted("외 ${upcoming.size - CAR_RESERVATION_ROWS}건은 휴대폰 SHAREMATE의 예약 탭에서 볼 수 있어요.")
     }
 }
 
 @Composable private fun CarReservationRow(title: String, detail: String, highlighted: Boolean, cancelDescription: String, onCancel: () -> Unit) {
-    val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         Box(Modifier.size(12.dp).clip(CircleShape).background(if (highlighted) Scene.glow else Scene.brand.copy(alpha = .7f)))
         Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, color = if (highlighted) Scene.glow else colors.onSurface,
+            Text(title, style = MaterialTheme.typography.titleMedium, color = if (highlighted) Scene.glow else Scene.text,
                 fontWeight = if (highlighted) FontWeight.Bold else null, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(detail, style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(detail, style = MaterialTheme.typography.bodyLarge, color = Scene.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         TextButton(onClick = onCancel, modifier = Modifier.heightIn(min = 56.dp).widthIn(min = 88.dp).semantics { contentDescription = cancelDescription }) {
-            Text("취소", style = MaterialTheme.typography.labelLarge, color = LocalPleosColors.current.negative)
+            Text("취소", style = MaterialTheme.typography.labelLarge, color = Scene.negative)
         }
     }
 }
@@ -140,7 +154,7 @@ internal fun carReservationsEmptyText(autopilot: Boolean): String =
 @Composable internal fun NextReservationLine(data: TripLogData, now: Long, modifier: Modifier = Modifier) {
     val tz = remember { ZoneId.systemDefault() }
     val line = remember(data, now) { nextReservationLine(data, now, tz) } ?: return
-    Surface(shape = RoundedCornerShape(20.dp), color = Scene.glass.copy(alpha = .84f), border = Scene.edge,
+    Surface(shape = RoundedCornerShape(20.dp), color = Scene.glass.copy(alpha = if (Scene.isDay) .88f else .84f), contentColor = Scene.text, border = Scene.edge,
         modifier = modifier.fillMaxWidth().heightIn(min = 56.dp).semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }) {
         Row(Modifier.heightIn(min = 56.dp).padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
