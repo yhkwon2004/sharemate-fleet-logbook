@@ -48,6 +48,8 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -111,7 +113,8 @@ internal fun phoneRun(scope: kotlinx.coroutines.CoroutineScope, onError: (String
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.semantics { if (loading) stateDescription = loadingLabel }) {
             if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = LocalContentColor.current)
-            Text(if (loading) loadingLabel else label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+            // A long label at a 1.3x font wraps to a second line rather than clipping.
+            Text(if (loading) loadingLabel else label, style = MaterialTheme.typography.labelLarge, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
         }
     }
     if (outlined) OutlinedButton(onClick = onClick, enabled = enabled && !loading, modifier = modifier.heightIn(min = 52.dp), shape = RoundedCornerShape(14.dp),

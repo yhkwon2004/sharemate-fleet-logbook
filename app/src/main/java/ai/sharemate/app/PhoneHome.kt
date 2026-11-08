@@ -10,7 +10,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,7 +23,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -37,7 +38,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
@@ -49,12 +49,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.time.YearMonth
 import java.time.ZoneId
-import java.util.Locale
 
 /*
- * 홈 tab: the trip in progress, then "지금 할 일" in the car's order (safety → money the car measured → paperwork), one
- * unclassified trip at a time, then this month's logbook with its completion ring, then the incident buttons. Every
- * number is a real count; when the stack empties once in a session the bar says so and points at 현황.
+ * 홈 tab: the greeting and the four destinations over the city, today and this month as widgets, then the trip in progress and
+ * "지금 할 일" in the car's order (safety → money the car measured → paperwork), one unclassified trip at a time, then the incident
+ * buttons. Every number is a real count; a task card appears only when there is a task, and when the stack empties once in a
+ * session the bar says so and points at 현황. In landscape the greeting sits beside the cards and widgets (40/60).
  */
 
 /** Trips the home stack still asks about: closed, unclassified, and not already answered in flight. */
@@ -69,15 +69,18 @@ internal fun phoneSameDestinationCount(trip: Trip, history: List<Trip>, purpose:
         it.purposeSource != EditSource.AUTO && it.purposeSource != EditSource.SUGGESTED && (it.destination ?: it.endAddress) == key }
 }
 
-/** The all-done line, honest about the signal: automatic recording is promised only while the car is actually listening. */
-internal fun homeAllDoneText(signal: SignalStatus?): String = when (signal) {
-    SignalStatus.READY, SignalStatus.RECORDING, SignalStatus.DEMO -> "지금 할 일이 없어요 · 다음 운행도 자동 기록해요"
-    else -> "지금 할 일이 없어요 · 차량 신호를 받으면 자동 기록해요"
+/** What the car does next, honest about the signal: automatic recording is promised only while the car is actually listening. */
+internal fun autoRecordText(signal: SignalStatus?): String = when (signal) {
+    SignalStatus.READY, SignalStatus.RECORDING, SignalStatus.DEMO -> "다음 운행도 자동 기록해요"
+    else -> "차량 신호를 받으면 자동 기록해요"
 }
+
+/** The all-done line (now spoken by the settings' link card rather than an empty band on the home). */
+internal fun homeAllDoneText(signal: SignalStatus?): String = "지금 할 일이 없어요 · ${autoRecordText(signal)}"
 
 private val shownKeysSaver = listSaver<MutableState<Set<String>>, String>(save = { it.value.toList() }, restore = { mutableStateOf(it.toSet()) })
 
-/** Fades and lifts a card 12dp on its first appearance only; later recompositions and reduced motion show it at once. */
+/** Fades and lifts a card 12dp on its first appearance only (staggered, at most eight items); later recompositions and reduced motion show it at once. */
 @Composable private fun HomeAppear(key: String, index: Int, shown: MutableState<Set<String>>, content: @Composable () -> Unit) {
     val reduce = LocalReduceMotion.current
     val first = remember(key) { key !in shown.value }
@@ -85,14 +88,14 @@ private val shownKeysSaver = listSaver<MutableState<Set<String>>, String>(save =
     if (reduce || !first) { content(); return }
     val state = remember(key) { MutableTransitionState(false).apply { targetState = true } }
     val lift = with(LocalDensity.current) { 12.dp.roundToPx() }
-    val delay = (index * MOTION_STAGGER_MS).coerceAtMost(240)
+    val delay = (index * MOTION_STAGGER_MS).coerceAtMost(7 * MOTION_STAGGER_MS)
     AnimatedVisibility(visibleState = state, enter = fadeIn(tween(MOTION_ENTER_MS, delayMillis = delay, easing = FastOutSlowInEasing)) +
         slideInVertically(tween(MOTION_ENTER_MS, delayMillis = delay, easing = FastOutSlowInEasing)) { lift }, exit = fadeOut(tween(120))) { content() }
 }
 
 @Composable internal fun PhoneHomeTab(data: TripLogData, link: PhoneLink, paired: Boolean, busy: Boolean, now: Long, photos: PhotoStore, photoVersion: Int,
     capture: (String) -> Unit, fetchPhoto: (String) -> Unit, commands: PhoneCommands, pending: Map<String, PendingEdit>, modifier: Modifier = Modifier,
-    onVehicle: () -> Unit = {}) {
+    onVehicle: () -> Unit = {}, onGreetingBottom: (Float) -> Unit = {}) {
     val zone = remember { ZoneId.systemDefault() }
     val followUp = LocalFollowUp.current
     val demo = data.profile.demoMode
@@ -111,51 +114,69 @@ private val shownKeysSaver = listSaver<MutableState<Set<String>>, String>(save =
         if (taskCount > 0) sawTasks = true
         else if (paired && sawTasks && !celebrated) { celebrated = true; followUp(FollowUp("이달 정리가 끝났어요", "현황 보기") { commands.openTab(PhoneTab.REPORT.ordinal) }) }
     }
+    val layout = LocalLayout.current
+    val fontScale = LocalDensity.current.fontScale
+    val scroll = rememberScrollState()
+    // The haze under the greeting follows its resting position only; a scrolled hero does not drag the scrim with it.
+    val greetingBottom: (Float) -> Unit = { if (scroll.value == 0) onGreetingBottom(it) }
+    val onBook = { commands.openTab(PhoneTab.BOOK.ordinal) }
+    val onLog = { commands.openTab(PhoneTab.TRIPS.ordinal) }
+    val onMonth = { commands.openReport(YearMonth.now()) }
     var index = 0
-    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        // The car's home in phone size: greeting and the three destinations over the night city, then today and this month.
-        PhoneHomeHero(data, link, paired, now, onVehicle = onVehicle, onBook = { commands.openTab(PhoneTab.BOOK.ordinal) },
-            onLog = { commands.openTab(PhoneTab.TRIPS.ordinal) }, onExport = commands.openReport)
-        PhoneWidgets(data, now) { commands.openReport(YearMonth.now()) }
-        if (open != null) HomeAppear("open", index++, shown) { PhoneOpenTripCard(open, link) }
-        if (paired) {
-            if (taskCount > 0) {
-                HomeAppear("tasks-title", index++, shown) { PhoneSectionTitle("지금 할 일", trailing = "${taskCount}건") }
-                incidents.forEach { incident ->
-                    HomeAppear("incident:${incident.id}", index++, shown) { PhoneIncidentCard(incident, data, busy, commands.send, photos, photoVersion, capture, fetchPhoto) }
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        val split = phoneHomeSplit(maxWidth, maxHeight, fontScale)
+        val contentWidth = maxWidth - layout.gutter * 2
+        val cardsWidth = if (split) (contentWidth - layout.cardGap * 2) * .6f else contentWidth
+        val columns = phoneHeroColumns(cardsWidth, fontScale)
+        Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = layout.gutter).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            // The car's home in phone size: greeting and the four destinations over the city, then today and this month.
+            // Landscape phone: the greeting takes the left 40 % (three headline lines in the narrower column), cards and widgets the right 60 %.
+            if (split) Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(layout.cardGap * 2)) {
+                PhoneHomeGreeting(data, link, paired, now, Modifier.weight(2f).padding(top = 8.dp), onBottom = greetingBottom, headlineLines = 3)
+                Column(Modifier.weight(3f), verticalArrangement = Arrangement.spacedBy(layout.cardGap)) {
+                    PhoneHomeCards(data, link, now, columns, onVehicle, onBook, onLog, commands.openReport)
+                    PhoneWidgets(data, now, onMonth, onToday = onLog)
                 }
-                if (reviews.size == 1) HomeAppear("review:${reviews[0].id}", index++, shown) { PhoneChargeReviewCard(reviews[0], data, busy, commands.send) }
-                else if (reviews.size > 1) HomeAppear("reviews", index++, shown) {
-                    ReviewStack(reviews, reviewsOpen, onToggle = { reviewsOpen = !reviewsOpen }) { PhoneChargeReviewCard(it, data, busy, commands.send) }
-                }
-                if (charge != null) HomeAppear("charge:${charge.endAt}", index++, shown) { PhoneChargeCard(charge, busy, commands.send) }
-                if (unclassified.isNotEmpty()) HomeAppear("purpose", index++, shown) {
-                    // The next trip slides up into the same slot after each answer.
-                    val reduce = LocalReduceMotion.current
-                    AnimatedContent(targetState = unclassified.first().id, label = "home-purpose", transitionSpec = {
-                        if (reduce) fadeIn(snap()) togetherWith fadeOut(snap())
-                        else fadeIn(tween(MOTION_ENTER_MS, easing = FastOutSlowInEasing)) + slideInVertically(tween(MOTION_ENTER_MS, easing = FastOutSlowInEasing)) { it / 6 } togetherWith fadeOut(tween(120))
-                    }) { id ->
-                        val trip = unclassified.firstOrNull { it.id == id } ?: unclassified.first()
-                        PhoneUnclassifiedCard(trip, unclassified.size, data, enabled = !busy, onClassify = { commands.classify(trip, it) }, onOpen = { commands.openTrip(trip.id) },
-                            onDriver = { commands.pickDriver(listOf(trip.id)) })
+            } else {
+                PhoneHomeHero(data, link, paired, now, onVehicle = onVehicle, onBook = onBook, onLog = onLog, onExport = commands.openReport,
+                    columns = columns, onGreetingBottom = greetingBottom)
+                PhoneWidgets(data, now, onMonth, onToday = onLog, stacked = columns == 1)
+            }
+            if (open != null) HomeAppear("open", index++, shown) { PhoneOpenTripCard(open, link) }
+            if (paired) {
+                if (taskCount > 0) {
+                    HomeAppear("tasks-title", index++, shown) { PhoneSectionTitle("지금 할 일", trailing = "${taskCount}건") }
+                    incidents.forEach { incident ->
+                        HomeAppear("incident:${incident.id}", index++, shown) { PhoneIncidentCard(incident, data, busy, commands.send, photos, photoVersion, capture, fetchPhoto) }
+                    }
+                    if (reviews.size == 1) HomeAppear("review:${reviews[0].id}", index++, shown) { PhoneChargeReviewCard(reviews[0], data, busy, commands.send) }
+                    else if (reviews.size > 1) HomeAppear("reviews", index++, shown) {
+                        ReviewStack(reviews, reviewsOpen, onToggle = { reviewsOpen = !reviewsOpen }) { PhoneChargeReviewCard(it, data, busy, commands.send) }
+                    }
+                    if (charge != null) HomeAppear("charge:${charge.endAt}", index++, shown) { PhoneChargeCard(charge, busy, commands.send) }
+                    if (unclassified.isNotEmpty()) HomeAppear("purpose", index++, shown) {
+                        // The next trip slides up into the same slot after each answer.
+                        val reduce = LocalReduceMotion.current
+                        AnimatedContent(targetState = unclassified.first().id, label = "home-purpose", transitionSpec = {
+                            if (reduce) fadeIn(snap()) togetherWith fadeOut(snap())
+                            else fadeIn(tween(MOTION_ENTER_MS, easing = FastOutSlowInEasing)) + slideInVertically(tween(MOTION_ENTER_MS, easing = FastOutSlowInEasing)) { it / 6 } togetherWith fadeOut(tween(120))
+                        }) { id ->
+                            val trip = unclassified.firstOrNull { it.id == id } ?: unclassified.first()
+                            PhoneUnclassifiedCard(trip, unclassified.size, data, enabled = !busy, onClassify = { commands.classify(trip, it) }, onOpen = { commands.openTrip(trip.id) },
+                                onDriver = { commands.pickDriver(listOf(trip.id)) })
+                        }
                     }
                 }
-            } else HomeAppear("done", index++, shown) {
-                Surface(shape = RoundedCornerShape(16.dp), color = LocalPleosColors.current.surfaceHigh, modifier = Modifier.fillMaxWidth()) {
-                    Text(homeAllDoneText(link.signal), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp))
+            } else HomeAppear("unpaired", index++, shown) {
+                Panel(padding = 20.dp) {
+                    Eyebrow("파일 사본")
+                    Text(if (unclassified.isNotEmpty()) "목적을 정하지 않은 운행 ${unclassified.size}건" else "보고 있는 사본은 가져온 파일 기준이에요", style = MaterialTheme.typography.titleSmall)
+                    Muted("차량과 연결하면 여기서 바로 목적을 정하고 경비·특이사항을 입력할 수 있어요. 지금은 보기만 가능해요.")
+                    TextButton(onClick = commands.openSettings, modifier = Modifier.heightIn(min = 48.dp)) { Text("설정에서 연결") }
                 }
             }
-        } else HomeAppear("unpaired", index++, shown) {
-            Panel(padding = 20.dp) {
-                Eyebrow("파일 사본")
-                Text(if (unclassified.isNotEmpty()) "목적을 정하지 않은 운행 ${unclassified.size}건" else "보고 있는 사본은 가져온 파일 기준이에요", style = MaterialTheme.typography.titleSmall)
-                Muted("차량과 연결하면 여기서 바로 목적을 정하고 경비·특이사항을 입력할 수 있어요. 지금은 보기만 가능해요.")
-                TextButton(onClick = commands.openSettings, modifier = Modifier.heightIn(min = 48.dp)) { Text("설정에서 연결") }
-            }
+            if (paired) HomeAppear("incident-buttons", index++, shown) { PhoneIncidentButtons(busy, commands.send, data, paired) }
         }
-        if (paired) HomeAppear("incident-buttons", index++, shown) { PhoneIncidentButtons(busy, commands.send, data, paired) }
-        if (paired) Muted("차량이 원본이에요. 여기서 바꾼 것은 차량에 ‘휴대폰’ 출처로 기록되고 다시 내려와요.", Modifier.padding(horizontal = 4.dp))
     }
 }
 
@@ -184,7 +205,7 @@ private val shownKeysSaver = listSaver<MutableState<Set<String>>, String>(save =
     val zone = remember { ZoneId.systemDefault() }
     val date = localDate(trip.startAt, zone)
     Panel(padding = 20.dp) {
-        Eyebrow(if (count > 1) "운행 목적 확인 · ${count}건 중 가장 최근" else "운행 목적 확인", LocalPleosColors.current.negative)
+        Eyebrow(if (count > 1) "운행 목적 확인 · ${count}건 중 가장 최근" else "운행 목적 확인", Scene.negative)
         Text("${date.monthValue}월 ${date.dayOfMonth}일 ${hm(trip.startAt)} · ${kmText(trip.distanceKm)} · ${trip.destination ?: trip.endAddress ?: "주소 미기록"}",
             style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() }, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Muted(listOfNotNull(trip.startAddress?.let { "$it 출발" }, durationText(trip.durationMillis)).joinToString(" · ").ifBlank { "계기판 거리로 기록" })
@@ -207,13 +228,14 @@ private val shownKeysSaver = listSaver<MutableState<Set<String>>, String>(save =
     }
 }
 
-/** Three equal purpose tiles with radio semantics, 56dp tall, coloured by purpose when selected. */
+/** Three equal purpose tiles with radio semantics, 56dp tall; the chosen one carries its purpose colour as fill plus a ring, never colour alone. */
 @Composable internal fun PhonePurposeButtons(current: TripPurpose?, enabled: Boolean, onSelect: (TripPurpose) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         purposeChoices.forEach { purpose ->
             val selected = purpose == current
             val tint = purposeColor(purpose)
             Surface(shape = RoundedCornerShape(14.dp), color = if (selected) tint.copy(alpha = .2f) else LocalPleosColors.current.surfaceHigh,
+                border = if (selected) BorderStroke(1.5.dp, tint) else null,
                 modifier = Modifier.weight(1f).heightIn(min = 56.dp).selectable(selected = selected, enabled = enabled, role = Role.RadioButton) { onSelect(purpose) }
                     .semantics { this.selected = selected; role = Role.RadioButton }) {
                 Column(Modifier.padding(horizontal = 6.dp, vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -225,4 +247,3 @@ private val shownKeysSaver = listSaver<MutableState<Set<String>>, String>(save =
         }
     }
 }
-
