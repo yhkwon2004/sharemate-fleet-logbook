@@ -22,18 +22,13 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.URI
-import java.security.MessageDigest
-import java.security.cert.X509Certificate
-import javax.net.ssl.HttpsURLConnection
-import javax.net.ssl.SSLContext
-import javax.net.ssl.TrustManager
-import javax.net.ssl.X509TrustManager
 
 /**
  * Phone side of live sync. Keeps a long-poll open to the car, mirrors each new revision into the phone's local copy,
  * and sends edits back as commands. The car remains the only writer of the log file that matters.
  */
 class PhoneSyncClient private constructor(context: Context) {
+    private val accounts = AccountStore.get(context)
     private val repository = TripLogRepository.get(context)
     private val store = DeviceLink(context, "fleet-phone")
     // The company vehicles on this phone; the selected one is the car this client talks to (see PhoneFleet.kt).
@@ -93,52 +88,17 @@ class PhoneSyncClient private constructor(context: Context) {
         }
     }
 
-    /** Pairs with the car at [endpoint] using the six-digit code on the vehicle screen; the certificate seen then is pinned. */
-    suspend fun pair(endpoint: String, code: String) {
+    /** The certificate pin comes from the vehicle screen, before any pairing secret is transmitted. */
+    suspend fun pair(endpoint: String, code: String, vehicleFingerprint: String) {
+        require(accounts.account.value != null) { "먼저 로그인해 주세요." }
         val base = endpoint.trim().trimEnd('/').let { if (it.startsWith("https://")) it else "https://$it" }
         require(URI(base).host?.isNotBlank() == true) { "차량 주소를 확인해 주세요." }
         require(code.matches(Regex("\\d{6}"))) { "6자리 연결 번호를 입력해 주세요." }
-        var seen: String? = null
-        // Trust-on-first-use, gated by the six-digit code the driver reads off the car screen: this manager only records
-        // the presented certificate, and pairing succeeds only if the car's signed reply names that same fingerprint.
-        // Every later request goes through DeviceLink, which pins exactly that certificate.
-        @Suppress("CustomX509TrustManager")
-        val trust = object : X509TrustManager {
-            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
-            override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) { throw java.security.cert.CertificateException() }
-            override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
-                require(chain.isNotEmpty()); chain[0].checkValidity()
-                seen = MessageDigest.getInstance("SHA-256").digest(chain[0].encoded).joinToString("") { "%02x".format(it) }
-            }
-        }
-        val response = withContext(Dispatchers.IO) {
-            val ssl = SSLContext.getInstance("TLS").apply { init(null, arrayOf<TrustManager>(trust), null) }
-            val connection = URI("$base/pair").toURL().openConnection() as HttpsURLConnection
-            try {
-                connection.sslSocketFactory = ssl.socketFactory
-                connection.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
-                connection.connectTimeout = 5_000; connection.readTimeout = 5_000
-                connection.requestMethod = "POST"; connection.doOutput = true
-                connection.setRequestProperty("Content-Type", "application/json")
-                val status = try {
-                    connection.outputStream.use { it.write(JSONObject().put("code", code).toString().toByteArray()) }
-                    connection.responseCode
-                } catch (e: java.io.IOException) {
-                    throw IllegalArgumentException("차량에 닿지 않아요. 주소와 포트, 같은 Wi-Fi·핫스팟인지 확인해 주세요. (${e.javaClass.simpleName})")
-                }
-                val text = (if (status in 200..299) connection.inputStream else connection.errorStream)?.use { it.readBytes().toString(Charsets.UTF_8) } ?: "{}"
-                val json = JSONObject(text)
-                require(status == 200) { when (json.optString("error")) {
-                    "wrong_code" -> "연결 번호가 달라요. 차량 화면의 번호를 다시 확인해 주세요."
-                    "pairing_closed" -> "연결 번호가 만료됐어요. 차량에서 새 번호를 만들어 주세요."
-                    else -> "차량이 연결을 거절했어요 ($status)."
-                } }
-                json
-            } finally { connection.disconnect() }
-        }
-        val fingerprint = response.getString("fingerprint")
-        // The certificate the car presented must be the one it claims; otherwise someone sat between us during pairing.
-        require(seen != null && MessageDigest.isEqual(seen!!.toByteArray(), fingerprint.toByteArray())) { "차량 인증서를 확인하지 못했어요. 다시 연결해 주세요." }
+        val fingerprint = pairingFingerprint(vehicleFingerprint)
+        val pairingConfig = parseLink("$base|${"0".repeat(64)}|$fingerprint").copy(token = "")
+        val response = try { store.request(pairingConfig, "/pair", JSONObject().put("code", code)) }
+        catch (e: javax.net.ssl.SSLException) { throw IllegalArgumentException("차량 인증키를 확인하지 못했어요. 차량 화면의 인증키와 날짜 설정을 확인해 주세요.", e) }
+        require(response.getString("fingerprint") == fingerprint) { "차량 인증키가 달라요. 차량 화면에서 다시 확인해 주세요." }
         val text = "$base|${response.getString("token")}|$fingerprint"
         withContext(Dispatchers.IO) { store.save(text) }
         config = parseLink(text)
@@ -165,18 +125,19 @@ class PhoneSyncClient private constructor(context: Context) {
     }
 
     fun start() {
+        if (accounts.account.value == null) return
         val current = config ?: return
         if (job?.isActive == true) return
         job = scope.launch {
             var since = -1L
             var dataSince = -1L
             var failures = 0
-            while (isActive) {
+            while (isActive && accounts.account.value != null) {
                 try {
                     val remote = store.request(current, "/v2/state?since=$since&data=$dataSince&wait=1", timeoutMillis = SYNC_LONG_POLL_MILLIS + 8_000)
                     val revision = remote.getLong("revision")
                     if (remote.optBoolean("changed")) {
-                        val data = TripLogCodec.decode(remote.getJSONObject("data").toString().toByteArray(Charsets.UTF_8))
+                        val data = withContext(Dispatchers.Default) { TripLogCodec.decode(remote.getJSONObject("data").toString().toByteArray(Charsets.UTF_8)) }
                         // The car's trip in progress rides along so the phone can show it; it is never closed on the phone.
                         val before = repository.state.value.data.incidents.flatMap { it.photos }.map { it.id }.toSet()
                         repository.importPhoneCopy(data, live = true)
@@ -207,14 +168,17 @@ class PhoneSyncClient private constructor(context: Context) {
         }
     }
 
-    fun stop() { job?.cancel(); job = null }
+    fun stop() { job?.cancel(); job = null; mutableLink.update { it.copy(connected = false, live = null) } }
 
     /** Pull-to-refresh: one immediate state fetch, independent of the long-poll loop, so the gesture ends with a real answer. */
     suspend fun refreshNow(): Boolean {
+        if (accounts.account.value == null) return false
         val current = config ?: return false
         return try {
             val remote = store.request(current, "/v2/state?since=-1&data=-1&wait=0", timeoutMillis = 8_000)
-            if (remote.optBoolean("changed")) repository.importPhoneCopy(TripLogCodec.decode(remote.getJSONObject("data").toString().toByteArray(Charsets.UTF_8)), live = true)
+            if (remote.optBoolean("changed")) repository.importPhoneCopy(withContext(Dispatchers.Default) {
+                TripLogCodec.decode(remote.getJSONObject("data").toString().toByteArray(Charsets.UTF_8))
+            }, live = true)
             mutableLink.update { it.copy(connected = true, revision = remote.getLong("revision"), lastSeenAt = System.currentTimeMillis(),
                 signal = runCatching { SignalStatus.valueOf(remote.getString("signal")) }.getOrNull(), live = decodeLive(remote.optJSONObject("live")), message = "차량 연결됨") }
             if (mutableQueued.value > 0) flushCards()
@@ -238,7 +202,7 @@ class PhoneSyncClient private constructor(context: Context) {
 
     /** Takes card records from any source and hands them to the car as soon as it can be reached. */
     suspend fun enqueue(events: List<CardApproval>) {
-        if (events.isEmpty()) return
+        if (events.isEmpty() || accounts.account.value == null) return
         queueLock.withLock {
             withContext(Dispatchers.IO) { writeQueue((readQueue() + events).distinctBy { it.id }.takeLast(CARD_QUEUE_LIMIT)) }
         }
@@ -247,11 +211,12 @@ class PhoneSyncClient private constructor(context: Context) {
 
     /** Sends the queue in order; whatever the car did not accept stays queued for the next attempt. */
     suspend fun flushCards() {
+        if (accounts.account.value == null) return
         val current = config ?: return
         queueLock.withLock {
             var pending = withContext(Dispatchers.IO) { readQueue() }
             mutableQueued.value = pending.size
-            while (pending.isNotEmpty()) {
+            while (pending.isNotEmpty() && accounts.account.value != null) {
                 val batch = pending.take(SYNC_MAX_CARD_EVENTS)
                 val sent = runCatching { store.request(current, "/v2/command", encodeSyncCommand(SyncCommand.CardEvents(batch))).optBoolean("ok") }.getOrDefault(false)
                 if (!sent) break
@@ -263,6 +228,7 @@ class PhoneSyncClient private constructor(context: Context) {
 
     /** Uploads a JPEG the phone already stored under [photoId]; the car records it and the entry comes back through the mirror. */
     suspend fun uploadPhoto(incidentId: String, photoId: String, jpeg: ByteArray) {
+        require(accounts.account.value != null) { "먼저 로그인해 주세요." }
         val current = config ?: throw IllegalArgumentException("차량과 먼저 연결해 주세요.")
         val payload = JSONObject().put("incidentId", incidentId).put("photoId", photoId).put("jpeg", java.util.Base64.getEncoder().encodeToString(jpeg))
         val result = store.request(current, "/v2/photo", payload, timeoutMillis = 20_000)
@@ -271,6 +237,7 @@ class PhoneSyncClient private constructor(context: Context) {
 
     /** Pulls a photo another device attached, so every paired phone can see the whole report. */
     suspend fun fetchPhoto(photoId: String): ByteArray? {
+        if (accounts.account.value == null) return null
         val current = config ?: return null
         return runCatching { store.download(current, "/v2/photo?id=$photoId") }.getOrNull()?.takeIf(::looksLikeJpeg)
             ?.also { bytes -> withContext(Dispatchers.IO) { repository.photos.save(photoId, bytes) }; photoVersion.update { it + 1 } }
@@ -278,6 +245,7 @@ class PhoneSyncClient private constructor(context: Context) {
 
     /** Sends one edit to the car and waits for the next revision so the phone screen updates right away. */
     suspend fun send(command: SyncCommand) {
+        require(accounts.account.value != null) { "먼저 로그인해 주세요." }
         val current = config ?: throw IllegalArgumentException("차량과 먼저 연결해 주세요.")
         val result = store.request(current, "/v2/command", encodeSyncCommand(command))
         require(result.optBoolean("ok")) { result.optString("message").ifBlank { "차량이 변경을 받지 않았어요." } }

@@ -6,6 +6,29 @@ import java.time.LocalDate
 import java.time.ZoneOffset
 
 class TripLogTest {
+    @Test fun parkedDriverAndVehicleUpdatesAreSavedWithoutWritingEveryHeartbeat() {
+        val before = TripLogData(currentDriverId = "a", vehicle = VehicleCard(socPercent = 70, capturedAt = 1))
+        assertFalse(sampleNeedsSave(before, before, false))
+        for (after in listOf(before.copy(currentDriverId = "b"), before.copy(vehicle = before.vehicle.copy(socPercent = 60, capturedAt = 300_001)))) {
+            assertTrue(sampleNeedsSave(before, after, false))
+        }
+        val open = Trip("moving", 1, startOdometerKm = 100.0, endOdometerKm = 100.0)
+        val moving = before.copy(open = open)
+        val progress = moving.copy(open = open.copy(endOdometerKm = 100.1, updatedAt = 2))
+        assertTrue(sampleNeedsSave(before, moving, false))
+        assertFalse(sampleNeedsSave(moving, progress, false))
+        assertTrue(sampleNeedsSave(moving, progress, true))
+    }
+
+    @Test fun chargeLocationRespectsPrivacyAndDoesNotReuseDemoLocations() {
+        val sample = DriveSample(300_000, GearState.PARK, 100.0)
+        val trip = Trip("previous", 1, 60_000, 90.0, 100.0, destination = "회사")
+        val data = TripLogData(trips = listOf(trip))
+        assertEquals("회사", chargeSessionPlace(data, sample))
+        assertNull(chargeSessionPlace(data.copy(profile = FleetProfile(storeAddresses = false)), sample.copy(address = "현재 위치")))
+        assertNull(chargeSessionPlace(data.copy(trips = listOf(trip.copy(demo = true))), sample))
+    }
+
     private val zone = ZoneOffset.UTC
     private var ids = 0
     private val newId = { "t${++ids}" }

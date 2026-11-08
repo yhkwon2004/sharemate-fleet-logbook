@@ -22,6 +22,19 @@ class ReservationTest {
     private fun request(seed: String, driver: Driver, from: Long, to: Long, purpose: TripPurpose? = TripPurpose.BUSINESS) =
         Reservation(id(seed), driver.id, from, to, purpose, "본사 → 수원", "")
 
+    @Test fun purposeUsesTheSameBookingAsAutomaticDriverSelectionRegardlessOfListOrder() {
+        val current = request("current", kim, at(10, 10), at(10, 11), TripPurpose.BUSINESS)
+        val upcoming = request("next", lee, at(10, 11), at(10, 12))
+        val data = base.copy(reservations = listOf(upcoming, current))
+        val start = at(10, 10, 50)
+        val trip = Trip("trip", start, start + 60_000, 100.0, 101.0)
+        assertEquals(current.id, activeReservation(data, start)?.id)
+        assertEquals(current.id, reservationForTrip(data, trip)?.id)
+        // A different manually selected driver must not inherit the next booking's purpose early.
+        assertNull(reservationForTrip(data, trip.copy(driverId = lee.id)))
+        assertEquals(upcoming.id, reservationForTrip(data, trip.copy(startAt = at(10, 11), driverId = lee.id))?.id)
+    }
+
     @Test fun aFreeSlotIsConfirmedAndAnOverlapIsRefusedWithWhoHasIt() {
         val booked = reserveIn(base, request("a", kim, at(10, 14), at(10, 17)), now, zone)
         assertEquals(1, booked.reservations.size); assertEquals(ReservationStatus.CONFIRMED, booked.reservations[0].status)

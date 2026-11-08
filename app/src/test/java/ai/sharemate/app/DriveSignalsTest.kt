@@ -7,6 +7,14 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class DriveSignalsTest {
+    @Test fun energyReceptionExpiresIndependentlyOfOtherVehicleUpdates() {
+        assertTrue(energySignalFresh(1_000, 46_000))
+        assertFalse(energySignalFresh(1_000, 46_001))
+        assertFalse(energySignalFresh(-1, 46_001))
+        assertFalse(energySignalFresh(46_002, 46_001))
+        assertTrue(energySignalFresh(46_001, 46_001))
+    }
+
     @Test fun knownGearAndOdometerStayFreshThroughInclusiveAgeBoundary() {
         assertTrue(driveSignalsFresh(GearState.PARK, 0.0, 0, 0))
         assertTrue(driveSignalsFresh(GearState.MOVING, 10_000_000.0, 45_000, 45_000))

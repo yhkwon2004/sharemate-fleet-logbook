@@ -74,7 +74,7 @@ internal fun phoneCardLines(data: TripLogData, today: LocalDate, zone: ZoneId, n
     socPercent: Int? = null): PhoneCardLines {
     val mirror = data.copy(trips = phoneTrips(data))
     val care = careDueAlerts(data.care, data.vehicle.odometerKm, today, emptySet()).firstOrNull()?.title
-    val vehicle = care ?: (socPercent ?: data.vehicle.socPercent)?.let { "배터리 $it%" } ?: data.vehicle.odometerKm?.takeIf { it > 0 }?.let { "마지막 ${kmText(it)}" } ?: "차량 상태"
+    val vehicle = care ?: socPercent?.let { "배터리 $it%" } ?: data.vehicle.socPercent?.takeUnless { data.profile.demoMode }?.let { "마지막 저장 잔량 $it%" } ?: data.vehicle.odometerKm?.takeIf { it > 0 }?.let { "마지막 ${kmText(it)}" } ?: "차량 상태"
     val month = YearMonth.from(today)
     val monthTrips = tripsIn(mirror.trips, month.atDay(1), month.atEndOfMonth(), zone)
     val pending = mirror.trips.count { it.purpose == TripPurpose.UNCLASSIFIED && !it.open }
@@ -259,10 +259,10 @@ internal fun phoneToday(data: TripLogData, today: LocalDate, zone: ZoneId): Phon
                     Text((vehicle.model ?: profile.carModel).ifBlank { "차종 미등록" } + validVin(vehicle.vin)?.let { " · VIN …${it.takeLast(6)}" }.orEmpty(),
                         style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary)
                     VehicleDrawing(Modifier.fillMaxWidth().height(150.dp))
-                    val live = link.live?.takeIf { it.demo == demo }
+                    val live = link.live?.takeIf { it.demo == demo && link.connected && now - it.at in 0..45_000 }
                     val streaming = live != null && link.connected
                     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        Stat("배터리", (live?.socPercent ?: vehicle.socPercent)?.let { "$it%" } ?: "—", Modifier.weight(1f))
+                        Stat(if (live?.socPercent != null) "배터리" else "마지막 저장 잔량", (live?.socPercent ?: vehicle.socPercent?.takeUnless { demo })?.let { "$it%" } ?: "확인 불가", Modifier.weight(1f))
                         Stat(if (streaming) "계기판 · 실시간" else "계기판 · 마지막 수신", (live?.odometerKm ?: vehicle.odometerKm)?.takeIf { it > 0 }?.let(::kmText) ?: "—", Modifier.weight(1.4f))
                     }
                     Text(if (streaming) "차량에서 실시간으로 받고 있어요." else "차량이 보낸 마지막 값이에요. 연결되면 실시간으로 바뀌어요.", style = MaterialTheme.typography.labelMedium, color = Scene.textMuted)

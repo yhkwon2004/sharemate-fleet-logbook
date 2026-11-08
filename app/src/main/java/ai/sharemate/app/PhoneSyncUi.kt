@@ -112,9 +112,10 @@ internal fun reasonSteps(reason: String): List<String> = reason.split(" · ").ma
  * The one-time handshake: the car shows a six-digit code and its address, the phone types both.
  * [error] is the last pairing failure, shown under the field it concerns instead of a dialog.
  */
-@Composable internal fun PhoneConnectCard(busy: Boolean, error: String? = null, pair: (String, String) -> Unit) {
+@Composable internal fun PhoneConnectCard(busy: Boolean, error: String? = null, pair: (String, String, String) -> Unit) {
     var endpoint by rememberSaveable { mutableStateOf("") }
     var code by rememberSaveable { mutableStateOf("") }
+    var fingerprint by rememberSaveable { mutableStateOf("") }
     val endpointFocus = remember { FocusRequester() }
     val codeFocus = remember { FocusRequester() }
     val addressError = error != null && pairingErrorIsAddress(error)
@@ -132,7 +133,12 @@ internal fun reasonSteps(reason: String): List<String> = reason.split(" · ").ma
         OutlinedTextField(code, { if (it.length <= 6 && it.all(Char::isDigit)) code = it }, Modifier.fillMaxWidth().focusRequester(codeFocus), singleLine = true,
             label = { Text("연결 번호 6자리") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword), shape = RoundedCornerShape(16.dp),
             isError = codeError, supportingText = if (codeError) { { Text(error!!, style = MaterialTheme.typography.bodySmall, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) } } else null)
-        Button(onClick = { pair(endpoint, code) }, enabled = !busy && endpoint.isNotBlank() && code.length == 6,
+        OutlinedTextField(fingerprint, { value ->
+            val compact = value.filterNot(Char::isWhitespace).lowercase()
+            if (compact.length <= 64 && compact.all { it in '0'..'9' || it in 'a'..'f' }) fingerprint = compact
+        }, Modifier.fillMaxWidth(), label = { Text("차량 인증키 64자리") }, minLines = 2,
+            supportingText = { Text("차량 화면의 인증키를 입력하세요. 첫 연결 전에 차량을 확인합니다.") })
+        Button(onClick = { pair(endpoint, code, fingerprint) }, enabled = !busy && endpoint.isNotBlank() && code.length == 6 && validToken(fingerprint),
             modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), shape = RoundedCornerShape(18.dp)) { LoadingLabel("차량과 연결", busy, "연결하는 중…") }
         Muted("차량 앱 › 차량 탭 › 휴대폰 연결에서 번호를 볼 수 있어요. 번호는 5분 뒤 만료돼요. 차량과 같은 Wi-Fi·핫스팟이어야 해요.")
     }

@@ -7,6 +7,16 @@ import java.security.KeyPairGenerator
 import java.security.spec.ECGenParameterSpec
 
 class TlsIdentityTest {
+    @Test fun firstConnectionRequiresTheCertificateReadFromTheVehicle() {
+        val pair = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+        val cert = TlsIdentity.selfSigned(pair, System.currentTimeMillis() - 60_000)
+        val fingerprint = java.security.MessageDigest.getInstance("SHA-256").digest(cert.encoded).joinToString("") { "%02x".format(it) }
+        assertEquals(fingerprint, pairingFingerprint(fingerprint.uppercase().chunked(8).joinToString(" ")))
+        verifyPinnedCertificate(cert, fingerprint)
+        assertThrows(java.security.cert.CertificateException::class.java) { verifyPinnedCertificate(cert, "0".repeat(64)) }
+        assertThrows(IllegalArgumentException::class.java) { pairingFingerprint("123456") }
+    }
+
     @Test fun selfSignedCertificateParsesAndVerifiesWithItsOwnKey() {
         val pair = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
         val now = 1_800_000_000_000L

@@ -21,6 +21,7 @@ class CardNotificationService : NotificationListenerService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        if (AccountStore.get(this).account.value == null) return
         val notification = sbn.notification ?: return
         if (sbn.packageName == packageName || sbn.isOngoing || notification.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
         if (packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) return

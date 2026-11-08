@@ -136,8 +136,10 @@ private fun VehicleDetails(state: TripLogState, fresh: Boolean, now: Long, modif
                 VehicleInfoRow("현재 직원", driver?.label ?: "직원 미지정")
                 VehicleInfoRow(if (sdkModel != null) "차량 수신 차종" else "등록 차종", sdkModel ?: state.data.vehicle.model ?: profile.carModel.ifBlank { "미등록" })
                 validVin(state.data.vehicle.vin)?.let { VehicleInfoRow("차대번호(VIN)", it) }
-                (state.live?.takeIf { it.demo == profile.demoMode }?.socPercent ?: state.data.vehicle.socPercent)?.let { soc ->
-                    VehicleInfoRow("배터리", "$soc%" + if (state.live?.charging == true) " · 충전 중" else "")
+                val energy = state.live?.takeIf { it.demo == profile.demoMode && now - it.at in 0..45_000 }
+                VehicleInfoRow("배터리", energy?.socPercent?.let { "$it%" + if (energy.charging == true) " · 충전 중" else "" } ?: "현재 확인 불가")
+                if (energy?.socPercent == null && !profile.demoMode) state.data.vehicle.socPercent?.let {
+                    VehicleInfoRow("마지막 저장 잔량", "$it% · 현재 상태와 다를 수 있음")
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {

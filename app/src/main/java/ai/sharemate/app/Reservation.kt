@@ -110,8 +110,8 @@ internal fun reservationsOn(data: TripLogData, date: LocalDate, zone: ZoneId): L
 
 /** The booking a closed trip was driven under: same driver (or none recorded), and the trip started inside the window. */
 internal fun reservationForTrip(data: TripLogData, trip: Trip): Reservation? =
-    data.reservations.firstOrNull { it.status == ReservationStatus.CONFIRMED && it.demo == trip.demo &&
-        it.startAt - RESERVATION_LEAD_MILLIS <= trip.startAt && trip.startAt < it.endAt && (trip.driverId == null || trip.driverId == it.driverId) }
+    activeReservation(data.copy(profile = data.profile.copy(demoMode = trip.demo)), trip.startAt)
+        ?.takeIf { trip.driverId == null || trip.driverId == it.driverId }
 
 /** What a phone shows for a vehicle at a glance. */
 internal sealed interface VehicleAvailability {

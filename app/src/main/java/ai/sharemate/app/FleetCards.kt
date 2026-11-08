@@ -349,11 +349,11 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
 /** Identity chips read from the car itself; shows nothing until the vehicle has reported something. */
 @Composable internal fun VehicleChips(state: TripLogState, modifier: Modifier = Modifier) {
     val card = state.data.vehicle
-    val live = state.live?.takeIf { it.demo == state.data.profile.demoMode }
+    val live = state.live?.takeIf { it.demo == state.data.profile.demoMode && System.currentTimeMillis() - it.at in 0..45_000 }
     val charging = live?.charging == true
     val chips = listOfNotNull(
         (state.vehicleModel ?: card.model)?.takeIf { it.isNotBlank() },
-        (live?.socPercent ?: card.socPercent)?.let { "배터리 $it%" },
+        live?.socPercent?.let { "배터리 $it%" } ?: card.socPercent?.takeUnless { state.data.profile.demoMode }?.let { "마지막 저장 잔량 $it%" },
         if (charging) "충전 중" else null,
         validVin(live?.vin ?: card.vin)?.takeLast(6)?.let { "VIN …$it" },
     )
@@ -384,6 +384,8 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
             Text(if (info.pairedPhones > 0) "다른 휴대폰을 더 연결하려면 새 번호를 만드세요" else "연결 번호가 만료됐어요", style = MaterialTheme.typography.titleMedium)
         }
         if (info.running) {
+            Text("차량 인증키 · 처음 연결할 때 입력", style = MaterialTheme.typography.labelLarge)
+            Text(info.fingerprint.chunked(8).joinToString(" "), style = MaterialTheme.typography.bodyMedium)
             Text((info.addresses.ifEmpty { listOf("네트워크 주소 확인 중") }).joinToString("  ·  ") { "$it:${info.port}" },
                 style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -391,7 +393,7 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
                 Text("연결된 휴대폰 ${info.pairedPhones}대", style = MaterialTheme.typography.labelLarge, color = pleos.textTertiary)
             }
         }
-        Muted("같은 Wi-Fi·핫스팟 안에서만 연결되고, 차량 인증서를 휴대폰이 기억해 다른 기기는 끼어들 수 없어요.")
+        Muted("같은 Wi-Fi·핫스팟에서 연결하세요. 휴대폰은 이 인증키로 차량을 확인한 뒤 연결 번호를 전송해요.")
     }
 }
 

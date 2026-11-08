@@ -137,7 +137,7 @@ data class FleetProfile(
  * higher level at the next start. Requires the car to be stopped so regeneration on a downhill cannot look like a charge.
  */
 internal fun refillAcrossGap(card: VehicleCard, sample: DriveSample): ChargeSession? {
-    if (sample.gear == GearState.MOVING || sample.charging == true || sample.at - card.capturedAt < MIN_CHARGE_MILLIS || card.capturedAt <= 0) return null
+    if (sample.gear != GearState.PARK || sample.charging == true || sample.at - card.capturedAt < MIN_CHARGE_MILLIS || card.capturedAt <= 0) return null
     fun rose(before: Int?, after: Int?) = before != null && after != null && after - before >= MIN_REFILL_PERCENT
     return when {
         rose(card.socPercent, sample.socPercent) -> ChargeSession(card.capturedAt, sample.at, card.socPercent, sample.socPercent, sample.odometerKm, sample.demo)

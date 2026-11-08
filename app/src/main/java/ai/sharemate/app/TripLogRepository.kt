@@ -35,6 +35,7 @@ data class TripLogData(
     val closedMonths: List<MonthClose> = emptyList(),
     // Vehicle bookings made from phones or the car; see Reservation.kt.
     val reservations: List<Reservation> = emptyList(),
+    val handledCardCancels: List<String> = emptyList(),
 )
 
 /** Live-sync status published by the car's sync server for the vehicle screens. */
@@ -47,6 +48,7 @@ data class SyncInfo(
     val pairedPhones: Int = 0,
     val lastPhoneSeenAt: Long = 0,
     val error: String? = null,
+    val fingerprint: String = "",
 )
 
 enum class SignalStatus(val label: String) {
@@ -156,7 +158,7 @@ class TripLogRepository private constructor(context: Context) {
         val card = next.vehicle
         val detected = observed ?: if (chargingSince == null && next.open == null && !sample.demo) refillAcrossGap(card, sample) else null
         val session = detected?.let { stop ->
-            val place = (stored.destination ?: stored.address ?: next.trips.lastOrNull()?.let { it.destination ?: it.endAddress })?.take(120)
+            val place = chargeSessionPlace(next, stored)
             // A signal-less charge shows up in steps; steps close together are one stop.
             next.stops.lastOrNull { it.demo == stop.demo && it.fuel == stop.fuel && it.chargeId == null && stop.startAt - it.endAt <= 600_000 }
                 ?.copy(endAt = stop.endAt, socTo = stop.socTo, odometerKm = stop.odometerKm) ?: stop.copy(id = UUID.randomUUID().toString(), place = place)
@@ -178,7 +180,7 @@ class TripLogRepository private constructor(context: Context) {
         val open = next.open
         // Checkpoint a recording trip every minute or kilometre so an interruption loses little.
         val checkpoint = open != null && data.open != null && (sample.at - persistedAt >= 60_000 || open.endOdometerKm - persistedOdometer >= 1.0)
-        if (next.open?.id != data.open?.id || next.trips.size != data.trips.size || checkpoint || session != null || cardChanged || settled) {
+        if (sampleNeedsSave(data, next, checkpoint) || session != null || settled) {
             save(next)
             persistedAt = sample.at
             persistedOdometer = open?.endOdometerKm ?: 0.0
@@ -480,6 +482,14 @@ class TripLogRepository private constructor(context: Context) {
     }
 }
 
+internal fun sampleNeedsSave(before: TripLogData, after: TripLogData, checkpoint: Boolean): Boolean =
+    checkpoint || before.open?.id != after.open?.id || before.trips.size != after.trips.size ||
+        before.currentDriverId != after.currentDriverId || before.vehicle != after.vehicle
+
+internal fun chargeSessionPlace(data: TripLogData, sample: DriveSample): String? =
+    if (data.profile.storeAddresses) (sample.destination ?: sample.address ?: data.trips.lastOrNull { it.demo == sample.demo }
+        ?.let { it.destination ?: it.endAddress })?.take(120) else null
+
 internal val BUSINESS_NUMBER = Regex("^\\d{3}-\\d{2}-\\d{5}$")
 
 internal fun validateProfile(profile: FleetProfile) {
@@ -567,7 +577,8 @@ internal object TripLogCodec {
                 EditSource.valueOf(r.getString("source")), if (r.isNull("cancelledAt")) null else r.getLong("cancelledAt"), r.optBoolean("demo"))
         }.orEmpty()
         val data = TripLogData(profile, drivers, json.optString("currentDriverId").takeIf { it.isNotEmpty() && drivers.any { d -> d.id == it } },
-            trips, if (json.isNull("open")) null else readTrip(json.getJSONObject("open")), vehicle, incidents, charge, stops, charges, care, maintenance, closedMonths, reservations)
+            trips, if (json.isNull("open")) null else readTrip(json.getJSONObject("open")), vehicle, incidents, charge, stops, charges, care, maintenance, closedMonths, reservations,
+            json.optJSONArray("handledCardCancels")?.let { a -> (0 until a.length()).map { a.getString(it) } }.orEmpty())
         validate(data)
         return data
     }
@@ -575,6 +586,7 @@ internal object TripLogCodec {
     fun encode(data: TripLogData): ByteArray {
         val json = JSONObject()
             .put("version", 1)
+            .put("handledCardCancels", JSONArray(data.handledCardCancels))
             .put("profile", JSONObject().put("companyName", data.profile.companyName).put("businessNumber", data.profile.businessNumber)
                 .put("carModel", data.profile.carModel).put("plateNumber", data.profile.plateNumber)
                 .put("annualCostWon", data.profile.annualCostWon ?: JSONObject.NULL).put("reimbursePerKmWon", data.profile.reimbursePerKmWon)
@@ -654,6 +666,7 @@ internal object TripLogCodec {
         require(data.vehicle.model.orEmpty().length <= 60 && data.vehicle.vin.orEmpty().length <= 40)
         require(data.stops.size <= MAX_ENERGY_STOPS && data.stops.all { validUuid(it.id) && it.endAt >= it.startAt && it.place.orEmpty().length <= 120 })
         require(data.charges.size <= MAX_CARD_CHARGES && data.charges.map { it.id }.distinct().size == data.charges.size)
+        require(data.handledCardCancels.size <= MAX_CARD_CHARGES && data.handledCardCancels.all(::validUuid))
         require(data.charges.all { validUuid(it.id) && it.at > 0 && it.amountWon in 1..10_000_000 && it.merchant.length <= 60 && it.reason.length <= 200 })
         validateCare(data.care)
         require(data.maintenance.size <= MAX_MAINTENANCE && data.maintenance.map { it.id }.distinct().size == data.maintenance.size)

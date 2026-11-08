@@ -100,7 +100,7 @@ class SyncServer(context: Context, private val repository: TripLogRepository) {
     private fun publish() {
         repository.setSync(SyncInfo(running = socket?.isClosed == false, port = SYNC_PORT, addresses = localAddresses(),
             pairingCode = pairingCode?.takeIf { System.currentTimeMillis() < pairingExpiresAt }, pairingExpiresAt = pairingExpiresAt,
-            pairedPhones = tokens.size, lastPhoneSeenAt = lastPhoneSeenAt))
+            pairedPhones = tokens.size, lastPhoneSeenAt = lastPhoneSeenAt, fingerprint = fingerprint))
     }
 
     private fun localAddresses(): List<String> = runCatching {
@@ -137,23 +137,23 @@ class SyncServer(context: Context, private val repository: TripLogRepository) {
         val start = line() ?: return null
         val parts = start.split(' ')
         if (parts.size < 2) throw IOException("Bad request line")
-        val headers = mutableMapOf<String, String>()
+        val headers = mutableListOf<Pair<String, String>>()
         while (true) {
-            val h = line() ?: break
+            val h = line() ?: throw IOException("Truncated headers")
             if (h.isEmpty()) break
             val idx = h.indexOf(':')
-            if (idx > 0) headers[h.substring(0, idx).trim().lowercase()] = h.substring(idx + 1).trim()
+            if (idx <= 0) throw IOException("Invalid header")
+            headers.add(h.substring(0, idx).trim().lowercase() to h.substring(idx + 1).trim())
             if (headers.size > 64) throw IOException("Too many headers")
         }
         val target = parts[1]
         val path = target.substringBefore('?')
         val query = target.substringAfter('?', "").split('&').filter { it.isNotEmpty() }.associate { it.substringBefore('=') to it.substringAfter('=', "") }
-        val length = headers["content-length"]?.toIntOrNull() ?: 0
-        if (length > (if (path == "/v2/photo") SYNC_MAX_PHOTO_BODY else SYNC_MAX_BODY)) throw IOException("Body too large")
+        val length = syncContentLength(headers, path)
         val body = ByteArray(length)
         var read = 0
         while (read < length) { val n = input.read(body, read, length - read); if (n < 0) throw IOException("Truncated body"); read += n }
-        return Request(parts[0], path, query, headers, body)
+        return Request(parts[0], path, query, headers.toMap(), body)
     }
 
     private fun respond(socket: Socket, status: Int, json: JSONObject) = respondBytes(socket, status, json.toString().toByteArray(Charsets.UTF_8), "application/json; charset=utf-8")

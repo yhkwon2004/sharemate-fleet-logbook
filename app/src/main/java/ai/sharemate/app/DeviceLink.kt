@@ -7,7 +7,6 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
 import java.net.URI
-import java.security.MessageDigest
 import java.security.cert.X509Certificate
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
@@ -61,9 +60,7 @@ internal class DeviceLink(context: Context, role: String) {
             override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) { throw java.security.cert.CertificateException() }
             override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
                 require(chain.isNotEmpty())
-                chain[0].checkValidity()
-                val pin = MessageDigest.getInstance("SHA-256").digest(chain[0].encoded).joinToString("") { "%02x".format(it) }
-                if (!MessageDigest.isEqual(pin.toByteArray(), config.fingerprint.toByteArray())) throw java.security.cert.CertificateException("Certificate pin mismatch")
+                verifyPinnedCertificate(chain[0], config.fingerprint)
             }
         }
         val ssl = SSLContext.getInstance("TLS").apply { init(null, arrayOf<TrustManager>(trust), null) }
@@ -78,7 +75,7 @@ internal class DeviceLink(context: Context, role: String) {
         val connection = open(config, path)
         try {
             connection.connectTimeout = 4_000; connection.readTimeout = timeoutMillis?.toInt() ?: if (path == "/v1/analyze") 75_000 else 4_000
-            connection.setRequestProperty("Authorization", "Bearer ${config.token}")
+            if (config.token.isNotEmpty()) connection.setRequestProperty("Authorization", "Bearer ${config.token}")
             if (payload != null) {
                 val bytes = payload.toString().toByteArray(Charsets.UTF_8)
                 require(bytes.size <= when (path) { "/v1/analyze" -> 4_200_000; "/v2/photo" -> SYNC_MAX_PHOTO_BODY; else -> 262_144 })
@@ -104,6 +101,7 @@ internal class DeviceLink(context: Context, role: String) {
                 "ai_invalid_image", "ai_invalid_request" -> "분석할 사진을 확인하지 못했습니다. 원본을 확인하고 다시 촬영해 주세요."
                 "ai_busy" -> "다른 AI 판독이 진행 중입니다. 완료 후 다시 요청해 주세요."
                 "session_mismatch", "evidence_mismatch", "pairing_closed" -> "현재 차량 이용과 촬영 기록의 연결을 다시 확인해 주세요."
+                "wrong_code" -> "연결 번호가 달라요. 차량 화면의 번호를 다시 확인해 주세요."
                 else -> "연결 응답을 확인해 주세요 ($status)."
             } }
             result
