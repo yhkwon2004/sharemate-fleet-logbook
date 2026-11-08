@@ -9,6 +9,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -327,7 +328,7 @@ private class SkyLedger { var changes = 0 }
     val entering = remember(phase) { ledger.changes++ > 0 }
     Box(modifier) {
         Crossfade(phase, Modifier.matchParentSize(), animationSpec = if (reduce) snap() else tween(crossfadeMs, easing = LinearEasing), label = "sky-phase") { shown ->
-            Skyline(shown, Modifier.matchParentSize(), horizonAt, heightScale, moonAt, entering = entering && shown == phase, leaving = shown != phase)
+            Skyline(shown, Modifier.fillMaxSize(), horizonAt, heightScale, moonAt, entering = entering && shown == phase, leaving = shown != phase)
         }
         Spacer(Modifier.matchParentSize().drawWithCache {
             // The hero column ends 720 dp past the gutter on the car (never past 60 % of the window); the phone greeting ends about half-way to the horizon.
