@@ -236,7 +236,7 @@ private fun entries(groups: List<TripMonthGroup>, shown: Int, firstMonth: YearMo
 /** The sticky line for one month, with the month picker folded underneath it. */
 @Composable private fun MonthHeader(group: TripMonthGroup, groups: List<TripMonthGroup>, open: Boolean, onToggle: () -> Unit, onPick: (YearMonth) -> Unit) {
     // Near-opaque glass, not flat black: the header stays readable over rows scrolling under it and matches every other surface.
-    Surface(color = Midnight.glass.copy(alpha = .96f), shape = RoundedCornerShape(18.dp), border = Midnight.edge, modifier = Modifier.fillMaxWidth()) {
+    Surface(color = Scene.glass.copy(alpha = .96f), shape = RoundedCornerShape(18.dp), border = Scene.edge, modifier = Modifier.fillMaxWidth()) {
         Column {
             Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(monthHeaderText(group), style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f).semantics { heading() }, maxLines = 1, overflow = TextOverflow.Ellipsis)

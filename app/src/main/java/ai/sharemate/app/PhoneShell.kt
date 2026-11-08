@@ -362,7 +362,7 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
 
     CompositionLocalProvider(LocalFollowUp provides followUp) {
         // 2.8: the phone shares the car's Midnight backdrop; the scaffold is transparent so the glow and the city show through.
-        Box(Modifier.fillMaxSize().midnightBackdrop()) {
+        Box(Modifier.fillMaxSize().sceneBackdrop()) {
             // One background layer for every screen: the night city at full strength behind home, dimmed behind the other
             // tabs and full-screen routes, moving on the page clock so header, nav and backdrop never jump between screens.
             val skyLevel = if (!hasLog) .34f else if (ui.route == PhoneRoute.Tab && ui.tab == 0) 1f else .30f
@@ -444,7 +444,7 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
 @Composable private fun PhoneHeader(data: TripLogData, link: PhoneLink, paired: Boolean, hasAssistant: Boolean, onAssistant: () -> Unit, onSettings: () -> Unit,
     vehicleSwitcher: (@Composable () -> Unit)? = null) {
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 6.dp, top = 10.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = "SHAREMATE", tint = Midnight.brand, modifier = Modifier.size(30.dp))
+        Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = "SHAREMATE", tint = Scene.brand, modifier = Modifier.size(30.dp))
         if (vehicleSwitcher != null) Box(Modifier.weight(1f)) { vehicleSwitcher() }
         else {
             Column(Modifier.weight(1f).semantics(mergeDescendants = true) { heading() }) {

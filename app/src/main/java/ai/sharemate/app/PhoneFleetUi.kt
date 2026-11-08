@@ -141,12 +141,10 @@ internal const val FLEET_PLATE_MAX = 12
 internal const val FLEET_MODEL_MAX = 40
 internal const val FLEET_COMPANY_MAX = 60
 
-private val fleetLive = Color(0xFF45E0A8)
-
-private fun FleetLinkTone.dot(): Color = when (this) {
-    FleetLinkTone.LIVE -> fleetLive
-    FleetLinkTone.WAITING -> Midnight.warn
-    FleetLinkTone.MANUAL, FleetLinkTone.NONE -> Midnight.textMuted
+@Composable private fun FleetLinkTone.dot(): Color = when (this) {
+    FleetLinkTone.LIVE -> LocalPleosColors.current.chartActive
+    FleetLinkTone.WAITING -> Scene.warn
+    FleetLinkTone.MANUAL, FleetLinkTone.NONE -> Scene.textMuted
 }
 
 // ───────────────────────── header chip ─────────────────────────
@@ -160,15 +158,15 @@ private fun FleetLinkTone.dot(): Color = when (this) {
     val vehicle = fleet.selected
     val tone = fleetLinkTone(vehicle, link.connected)
     val description = fleetSwitcherDescription(fleet, data, link.connected, now, zone)
-    Surface(onClick = onClick, shape = RoundedCornerShape(50), color = Midnight.glass, contentColor = Midnight.text, border = Midnight.edge,
+    Surface(onClick = onClick, shape = RoundedCornerShape(50), color = Scene.glass, contentColor = Scene.text, border = Scene.edge,
         modifier = modifier.heightIn(min = 48.dp).widthIn(max = 168.dp).semantics(mergeDescendants = true) { contentDescription = description; role = Role.Button }) {
         Row(Modifier.heightIn(min = 48.dp).padding(start = 12.dp, end = 10.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Icon(painterResource(R.drawable.ic_vehicle), null, Modifier.size(18.dp), tint = Midnight.textSecondary)
-            Text(vehicle?.title ?: "차량 선택", style = MaterialTheme.typography.labelLarge, color = Midnight.text, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            Icon(painterResource(R.drawable.ic_vehicle), null, Modifier.size(18.dp), tint = Scene.textSecondary)
+            Text(vehicle?.title ?: "차량 선택", style = MaterialTheme.typography.labelLarge, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false).clearAndSetSemantics {})
             Box(Modifier.size(8.dp).background(tone.dot(), CircleShape))
-            Text("▾", style = MaterialTheme.typography.labelMedium, color = Midnight.textMuted, modifier = Modifier.clearAndSetSemantics {})
+            Text("▾", style = MaterialTheme.typography.labelMedium, color = Scene.textMuted, modifier = Modifier.clearAndSetSemantics {})
         }
     }
 }
@@ -185,12 +183,12 @@ private fun FleetLinkTone.dot(): Color = when (this) {
     val zone = remember { ZoneId.systemDefault() }
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var removing by remember { mutableStateOf<FleetVehicle?>(null) }
-    ModalBottomSheet(onDismissRequest = onDismiss, modifier = modifier, sheetState = sheet, containerColor = Midnight.rail, contentColor = Midnight.text) {
+    ModalBottomSheet(onDismissRequest = onDismiss, modifier = modifier, sheetState = sheet, containerColor = Scene.rail, contentColor = Scene.text) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 20.dp).navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) { heading() }, verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("회사 차량", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Midnight.text)
-                Text("${fleet.vehicles.size}대", style = MaterialTheme.typography.labelLarge, color = Midnight.brand, modifier = Modifier.padding(bottom = 3.dp))
+                Text("회사 차량", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Scene.text)
+                Text("${fleet.vehicles.size}대", style = MaterialTheme.typography.labelLarge, color = Scene.brand, modifier = Modifier.padding(bottom = 3.dp))
             }
             if (fleet.vehicles.isEmpty()) {
                 PhoneEmpty("등록된 회사 차량이 없어요", detail = "차량과 연결하거나 차량번호를 직접 등록해 주세요.")
@@ -220,8 +218,8 @@ private fun FleetLinkTone.dot(): Color = when (this) {
 
 @Composable private fun FleetVehicleRow(vehicle: FleetVehicle, selected: Boolean, status: String, busy: Boolean, onSelect: () -> Unit, onRemove: () -> Unit) {
     val shape = RoundedCornerShape(20.dp)
-    Surface(shape = shape, color = if (selected) Midnight.glow.copy(alpha = .08f) else Midnight.glass, contentColor = Midnight.text,
-        border = if (selected) BorderStroke(1.dp, Midnight.glow.copy(alpha = .7f)) else Midnight.edge, modifier = Modifier.fillMaxWidth()) {
+    Surface(shape = shape, color = if (selected) Scene.glow.copy(alpha = .08f) else Scene.glass, contentColor = Scene.text,
+        border = if (selected) BorderStroke(1.dp, Scene.glow.copy(alpha = .7f)) else Scene.edge, modifier = Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Row(Modifier.weight(1f).heightIn(min = 72.dp)
                 .clickable(enabled = !busy, role = Role.Button, onClickLabel = if (selected) "닫기" else "이 차량 선택", onClick = onSelect)
@@ -231,20 +229,20 @@ private fun FleetLinkTone.dot(): Color = when (this) {
                 }
                 .padding(start = 14.dp, top = 12.dp, bottom = 12.dp, end = 6.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Box(Modifier.size(40.dp).background(if (selected) Midnight.glow.copy(alpha = .16f) else Color.White.copy(alpha = .06f), RoundedCornerShape(12.dp)),
+                Box(Modifier.size(40.dp).background(if (selected) Scene.glow.copy(alpha = .16f) else Scene.fill, RoundedCornerShape(12.dp)),
                     contentAlignment = Alignment.Center) {
-                    Icon(painterResource(R.drawable.ic_vehicle), null, Modifier.size(22.dp), tint = if (selected) Midnight.glow else Midnight.textSecondary)
+                    Icon(painterResource(R.drawable.ic_vehicle), null, Modifier.size(22.dp), tint = if (selected) Scene.glow else Scene.textSecondary)
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(vehicle.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Midnight.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(fleetVehicleSubtitle(vehicle), style = MaterialTheme.typography.labelMedium, color = Midnight.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(status, style = MaterialTheme.typography.labelMedium, color = if (selected) Midnight.glow else Midnight.textMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(vehicle.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(fleetVehicleSubtitle(vehicle), style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(status, style = MaterialTheme.typography.labelMedium, color = if (selected) Scene.glow else Scene.textMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
-                if (selected) Icon(Icons.Default.Check, null, Modifier.size(22.dp), tint = Midnight.glow)
+                if (selected) Icon(Icons.Default.Check, null, Modifier.size(22.dp), tint = Scene.glow)
             }
             TextButton(onClick = onRemove, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp).padding(end = 4.dp)
                 .semantics { contentDescription = "${vehicle.title} 삭제" }) {
-                Text("삭제", color = Midnight.textSecondary, style = MaterialTheme.typography.labelLarge)
+                Text("삭제", color = Scene.textSecondary, style = MaterialTheme.typography.labelLarge)
             }
         }
     }
@@ -269,10 +267,10 @@ private enum class AddMode(val label: String) { PAIR("차량과 연결"), MANUAL
     var error by remember { mutableStateOf<String?>(null) }
     val latestWorking by rememberUpdatedState(working)
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { it != SheetValue.Hidden || !latestWorking })
-    ModalBottomSheet(onDismissRequest = { if (!working) onDismiss() }, modifier = modifier, sheetState = sheet, containerColor = Midnight.rail, contentColor = Midnight.text) {
+    ModalBottomSheet(onDismissRequest = { if (!working) onDismiss() }, modifier = modifier, sheetState = sheet, containerColor = Scene.rail, contentColor = Scene.text) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 20.dp).navigationBarsPadding(),
             verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("차량 추가", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Midnight.text, modifier = Modifier.semantics { heading() })
+            Text("차량 추가", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Scene.text, modifier = Modifier.semantics { heading() })
             FleetAddModeSwitch(mode, enabled = !working) { mode = it }
             when (mode) {
                 AddMode.PAIR -> {
@@ -307,13 +305,13 @@ private enum class AddMode(val label: String) { PAIR("차량과 연결"), MANUAL
 }
 
 @Composable private fun FleetAddModeSwitch(mode: AddMode, enabled: Boolean, onChange: (AddMode) -> Unit) {
-    Surface(shape = RoundedCornerShape(50), color = Midnight.glass, border = Midnight.edge, modifier = Modifier.fillMaxWidth()) {
+    Surface(shape = RoundedCornerShape(50), color = Scene.glass, border = Scene.edge, modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(4.dp).selectableGroup(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             AddMode.entries.forEach { option ->
                 val on = option == mode
-                Box(Modifier.weight(1f).heightIn(min = 48.dp).background(if (on) Midnight.glow.copy(alpha = .18f) else Color.Transparent, RoundedCornerShape(50))
+                Box(Modifier.weight(1f).heightIn(min = 48.dp).background(if (on) Scene.glow.copy(alpha = .18f) else Color.Transparent, RoundedCornerShape(50))
                     .selectable(selected = on, enabled = enabled, role = Role.Tab) { onChange(option) }, contentAlignment = Alignment.Center) {
-                    Text(option.label, style = MaterialTheme.typography.labelLarge, color = if (on) Midnight.glow else Midnight.textSecondary,
+                    Text(option.label, style = MaterialTheme.typography.labelLarge, color = if (on) Scene.glow else Scene.textSecondary,
                         fontWeight = if (on) FontWeight.Bold else FontWeight.Normal, maxLines = 1)
                 }
             }

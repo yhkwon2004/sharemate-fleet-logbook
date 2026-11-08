@@ -96,6 +96,7 @@ internal const val PAIR_UNREACHABLE = "차량에 닿지 않아요. 주소와 포
             } else PhonePairingBlock(busy, pair)
 
             PhoneCardLinkCard(cardAlerts, queued, busy, openAlertSettings, importStatement)
+            SceneModeCard(compact = true)
 
             Panel(padding = 20.dp) {
                 Eyebrow("운행파일")
@@ -121,12 +122,10 @@ internal const val PAIR_UNREACHABLE = "차량에 닿지 않아요. 주소와 포
 @Composable internal fun PhoneConnectScreen(state: TripLogState, link: PhoneLink, paired: Boolean, busy: Boolean, pair: suspend (String, String) -> Unit,
     pickFile: () -> Unit, modifier: Modifier = Modifier) {
     Column(modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        SharemateTheme(compact = true, dark = true) {
-            Panel(padding = 22.dp) {
+        Panel(padding = 22.dp) {
                 Eyebrow("운행은 차량에서, 확인과 입력은 휴대폰에서")
                 Text(if (paired) "차량과 연결됐어요\n첫 운행을 기다리고 있어요" else "차량과 연결하면\n운행이 실시간으로 와요", style = MaterialTheme.typography.headlineMedium)
                 VehicleDrawing(Modifier.fillMaxWidth().height(140.dp))
-            }
         }
         if (!paired) PhonePairingBlock(busy, pair)
         else Panel(padding = 22.dp) {

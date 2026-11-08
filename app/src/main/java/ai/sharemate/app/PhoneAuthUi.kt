@@ -199,7 +199,7 @@ internal fun PhoneSignInScreen(
     onDemo: (() -> Unit)? = null,
 ) {
     var pressed by rememberSaveable { mutableIntStateOf(PRESSED_NONE) }
-    Box(modifier.fillMaxSize().midnightBackdrop()) {
+    Box(modifier.fillMaxSize().sceneBackdrop()) {
         HomeBackdrop(Modifier.matchParentSize(), horizonAt = .46f, heightScale = .30f, moonAt = Offset(.82f, .15f), leftScrim = false)
         BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing), contentAlignment = Alignment.TopCenter) {
             Column(Modifier.widthIn(max = 480.dp).fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = maxHeight)
@@ -208,17 +208,17 @@ internal fun PhoneSignInScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
                         modifier = Modifier.semantics(mergeDescendants = true) { heading() }) {
-                        Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = null, tint = Midnight.brand, modifier = Modifier.size(40.dp))
-                        Text("SHAREMATE", style = MaterialTheme.typography.titleMedium, color = Midnight.text, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = null, tint = Scene.brand, modifier = Modifier.size(40.dp))
+                        Text("SHAREMATE", style = MaterialTheme.typography.titleMedium, color = Scene.text, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     }
                     Spacer(Modifier.height(8.dp))
-                    Text("회사 차량을\n휴대폰에서 관리해요", style = MaterialTheme.typography.headlineMedium, color = Midnight.text, fontWeight = FontWeight.Bold,
+                    Text("회사 차량을\n휴대폰에서 관리해요", style = MaterialTheme.typography.headlineMedium, color = Scene.text, fontWeight = FontWeight.Bold,
                         modifier = Modifier.semantics { heading() })
-                    Text("법인차량 운행일지 · 경비 · 예약", style = MaterialTheme.typography.bodyLarge, color = Midnight.textSecondary)
+                    Text("법인차량 운행일지 · 경비 · 예약", style = MaterialTheme.typography.bodyLarge, color = Scene.textSecondary)
                 }
                 // On navy below the city.
                 Column(Modifier.padding(top = 32.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Surface(shape = RoundedCornerShape(24.dp), color = Midnight.glass.copy(alpha = .86f), border = Midnight.edge, modifier = Modifier.fillMaxWidth()) {
+                    Surface(shape = RoundedCornerShape(24.dp), color = Scene.glass.copy(alpha = .86f), border = Scene.edge, modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             ValueLine("회사 차량 선택·예약")
                             ValueLine("원격으로 운행·비용 확인")
@@ -230,20 +230,20 @@ internal fun PhoneSignInScreen(
                         if (!busy) { pressed = PRESSED_GOOGLE; onGoogle() }
                     }
                     if (!googleAvailable) Text("이 빌드에는 Google 로그인 설정(OAuth 클라이언트 ID)이 없어서 지금은 쓸 수 없어요.",
-                        style = MaterialTheme.typography.bodySmall, color = Midnight.textSecondary, modifier = Modifier.padding(horizontal = 4.dp))
+                        style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary, modifier = Modifier.padding(horizontal = 4.dp))
                     if (onDemo != null) {
                         val demoLoading = busy && pressed == PRESSED_DEMO
-                        OutlinedButton(onClick = { if (!busy) { pressed = PRESSED_DEMO; onDemo() } }, shape = RoundedCornerShape(50), border = Midnight.edge,
-                            colors = ButtonDefaults.outlinedButtonColors(containerColor = Midnight.glass.copy(alpha = .86f), contentColor = Midnight.text),
+                        OutlinedButton(onClick = { if (!busy) { pressed = PRESSED_DEMO; onDemo() } }, shape = RoundedCornerShape(50), border = Scene.edge,
+                            colors = ButtonDefaults.outlinedButtonColors(containerColor = Scene.glass.copy(alpha = .86f), contentColor = Scene.text),
                             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                             modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).semantics { if (demoLoading) stateDescription = "시연 계정으로 들어가는 중" }) {
                             ButtonLabel("시연 계정으로 둘러보기", demoLoading, "들어가는 중…")
                         }
-                        Text("시연 빌드 전용이에요. Google 계정 없이 화면을 둘러볼 수 있어요.", style = MaterialTheme.typography.bodySmall, color = Midnight.textMuted,
+                        Text("시연 빌드 전용이에요. Google 계정 없이 화면을 둘러볼 수 있어요.", style = MaterialTheme.typography.bodySmall, color = Scene.textMuted,
                             modifier = Modifier.padding(horizontal = 4.dp))
                     }
                     InlineError(error, Modifier.padding(horizontal = 4.dp))
-                    Text("계정 정보는 이 휴대폰에만 저장돼요.", style = MaterialTheme.typography.labelMedium, color = Midnight.textMuted, textAlign = TextAlign.Center,
+                    Text("계정 정보는 이 휴대폰에만 저장돼요.", style = MaterialTheme.typography.labelMedium, color = Scene.textMuted, textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
                 }
             }
@@ -253,10 +253,10 @@ internal fun PhoneSignInScreen(
 
 @Composable private fun ValueLine(text: String) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Box(Modifier.size(28.dp).clip(CircleShape).background(Midnight.glow.copy(alpha = .14f)), contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.Check, contentDescription = null, tint = Midnight.glow, modifier = Modifier.size(16.dp))
+        Box(Modifier.size(28.dp).clip(CircleShape).background(Scene.glow.copy(alpha = .14f)), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.Check, contentDescription = null, tint = Scene.glow, modifier = Modifier.size(16.dp))
         }
-        Text(text, style = MaterialTheme.typography.titleSmall, color = Midnight.text)
+        Text(text, style = MaterialTheme.typography.titleSmall, color = Scene.text)
     }
 }
 
@@ -264,12 +264,12 @@ internal fun PhoneSignInScreen(
 @Composable private fun GoogleButton(enabled: Boolean, loading: Boolean, onClick: () -> Unit) {
     Button(onClick = onClick, enabled = enabled, shape = RoundedCornerShape(50),
         colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFF1F1F1F),
-            disabledContainerColor = Midnight.glass, disabledContentColor = Midnight.textMuted),
+            disabledContainerColor = Scene.glass, disabledContentColor = Scene.textMuted),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
         modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).semantics { if (loading) stateDescription = "Google 로그인 중" }) {
         if (!loading) {
             Box(Modifier.size(26.dp).clip(CircleShape).background(if (enabled) Color(0xFFF1F3F4) else Color.Transparent)
-                .border(1.dp, if (enabled) Color(0xFFDADCE0) else Midnight.glassBorder, CircleShape).clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
+                .border(1.dp, if (enabled) Color(0xFFDADCE0) else Scene.glassBorder, CircleShape).clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
                 Text("G", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = LocalContentColor.current)
             }
             Spacer(Modifier.size(12.dp))
@@ -347,7 +347,7 @@ internal fun PhoneOnboarding(
 
     BackHandler(enabled = step > 0 && !working) { step -= 1 }
 
-    Box(modifier.fillMaxSize().midnightBackdrop()) {
+    Box(modifier.fillMaxSize().sceneBackdrop()) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing), horizontalAlignment = Alignment.CenterHorizontally) {
             Column(Modifier.widthIn(max = 560.dp).fillMaxWidth().weight(1f)) {
                 OnboardingHeader(step, canGoBack = step > 0 && !working) { step -= 1 }
@@ -403,7 +403,7 @@ internal fun PhoneOnboarding(
                             }
                             1 -> {
                                 if (fleet.vehicles.isEmpty()) TextButton(onClick = { step = 2 }, enabled = !working, modifier = Modifier.heightIn(min = 56.dp)) {
-                                    Text("나중에 등록", color = Midnight.textSecondary)
+                                    Text("나중에 등록", color = Scene.textSecondary)
                                 }
                                 PhoneLoadingButton("다음", loading = false, enabled = onboardingCanContinue(1, errors.valid, fleet.vehicles.size) && !working,
                                     modifier = Modifier.weight(1f).heightIn(min = 56.dp)) { step = 2 }
@@ -412,7 +412,7 @@ internal fun PhoneOnboarding(
                                 TextButton(onClick = {
                                     finishError = null
                                     phoneRun(scope, onError = { finishError = it }, onBusy = { finishing = it }) { onFinish() }
-                                }, enabled = !working, modifier = Modifier.heightIn(min = 56.dp)) { Text("건너뛰기", color = Midnight.textSecondary) }
+                                }, enabled = !working, modifier = Modifier.heightIn(min = 56.dp)) { Text("건너뛰기", color = Scene.textSecondary) }
                                 PhoneLoadingButton("시작하기", loading = finishing, loadingLabel = "준비하는 중…", enabled = !working,
                                     modifier = Modifier.weight(1f).heightIn(min = 56.dp)) {
                                     finishError = null
@@ -433,23 +433,23 @@ internal fun PhoneOnboarding(
     Column(Modifier.fillMaxWidth().padding(start = 4.dp, end = 20.dp, top = 8.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (step > 0) IconButton(onClick = onBack, enabled = canGoBack, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "이전 단계", tint = Midnight.text)
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "이전 단계", tint = Scene.text)
             } else Spacer(Modifier.size(48.dp))
             Column(Modifier.weight(1f).padding(start = 4.dp).semantics(mergeDescendants = true) { heading() }) {
-                Text("처음 설정", style = MaterialTheme.typography.labelMedium, color = Midnight.brand, letterSpacing = 0.6.sp)
-                Text(onboardingStepTitles[step.coerceIn(0, ONBOARDING_STEPS - 1)], style = MaterialTheme.typography.titleMedium, color = Midnight.text,
+                Text("처음 설정", style = MaterialTheme.typography.labelMedium, color = Scene.brand, letterSpacing = 0.6.sp)
+                Text(onboardingStepTitles[step.coerceIn(0, ONBOARDING_STEPS - 1)], style = MaterialTheme.typography.titleMedium, color = Scene.text,
                     fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Surface(shape = RoundedCornerShape(50), color = Midnight.glass, border = Midnight.edge,
+            Surface(shape = RoundedCornerShape(50), color = Scene.glass, border = Scene.edge,
                 modifier = Modifier.semantics { contentDescription = "${ONBOARDING_STEPS}단계 중 ${step + 1}단계" }) {
-                Text(onboardingStepText(step), style = MaterialTheme.typography.labelLarge, color = Midnight.text,
+                Text(onboardingStepText(step), style = MaterialTheme.typography.labelLarge, color = Scene.text,
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp).clearAndSetSemantics {})
             }
         }
         Row(Modifier.fillMaxWidth().padding(start = 16.dp).clearAndSetSemantics {}, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             repeat(ONBOARDING_STEPS) { index ->
                 Box(Modifier.weight(1f).height(4.dp).clip(RoundedCornerShape(2.dp))
-                    .background(if (index <= step) Midnight.glow else Color.White.copy(alpha = .14f)))
+                    .background(if (index <= step) Scene.glow else Scene.divider))
             }
         }
     }
@@ -457,20 +457,20 @@ internal fun PhoneOnboarding(
 
 @Composable private fun StepIntro(title: String, detail: String) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(title, style = MaterialTheme.typography.headlineSmall, color = Midnight.text, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
-        Text(detail, style = MaterialTheme.typography.bodyMedium, color = Midnight.textSecondary)
+        Text(title, style = MaterialTheme.typography.headlineSmall, color = Scene.text, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+        Text(detail, style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary)
     }
 }
 
 @Composable private fun ProfileStep(account: PhoneAccount, name: String, department: String, nameError: String?, departmentError: String?,
     onName: (String) -> Unit, onDepartment: (String) -> Unit) {
     StepIntro("운행기록부에 남길 이름을 확인해 주세요", "${account.provider.label} 이름을 가져왔어요. 차량에 등록된 직원 이름과 같게 맞추면 3단계에서 바로 찾아요.")
-    Panel(color = Midnight.glass, padding = 20.dp) {
+    Panel(color = Scene.glass, padding = 20.dp) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.semantics(mergeDescendants = true) {}) {
             Avatar(accountInitial(name.ifBlank { account.name }, account.email), 44)
             Column(Modifier.weight(1f)) {
-                Text(account.email, style = MaterialTheme.typography.titleSmall, color = Midnight.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(account.provider.label, style = MaterialTheme.typography.labelMedium, color = Midnight.textMuted)
+                Text(account.email, style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(account.provider.label, style = MaterialTheme.typography.labelMedium, color = Scene.textMuted)
             }
         }
         Field("이름", name, onName, error = nameError, hint = "${PROFILE_NAME_MAX}자까지")
@@ -483,8 +483,8 @@ internal fun PhoneOnboarding(
     adding: Boolean, manualError: String?, onAdd: () -> Unit) {
     StepIntro("사용할 법인차량을 등록해요",
         "차량과 연결하면 운행 기록을 실시간으로 받고 예약할 수 있어요. 지금 연결할 수 없다면 차량 정보만 먼저 적어 두고 나중에 연결해도 돼요.")
-    if (fleet.vehicles.isNotEmpty()) Panel(color = Midnight.glass, padding = 18.dp) {
-        Eyebrow("등록한 차량 · ${fleet.vehicles.size}대", Midnight.brand)
+    if (fleet.vehicles.isNotEmpty()) Panel(color = Scene.glass, padding = 18.dp) {
+        Eyebrow("등록한 차량 · ${fleet.vehicles.size}대", Scene.brand)
         fleet.vehicles.forEach { vehicle -> RegisteredVehicleRow(vehicle) }
     }
     Row(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -493,8 +493,8 @@ internal fun PhoneOnboarding(
     }
     when (mode) {
         VEHICLE_MODE_PAIR -> PhoneConnectCard(pairBusy, pairError, onPair)
-        VEHICLE_MODE_MANUAL -> Panel(color = Midnight.glass, padding = 20.dp) {
-            Eyebrow("직접 등록", Midnight.brand)
+        VEHICLE_MODE_MANUAL -> Panel(color = Scene.glass, padding = 20.dp) {
+            Eyebrow("직접 등록", Scene.brand)
             val plateError = manualVehicleError(plate, model, company)
             Field("차량번호", plate, onPlate, hint = "예: 12가 3456", error = plateError)
             Field("차종", model, onModel, hint = "선택 · ${VEHICLE_MODEL_MAX}자까지")
@@ -512,54 +512,54 @@ internal fun PhoneOnboarding(
     val status = fleetVehicleStatus(vehicle)
     Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Box(Modifier.size(32.dp).clip(CircleShape).background(if (vehicle.paired) Midnight.glow.copy(alpha = .16f) else Color.White.copy(alpha = .08f)),
+        Box(Modifier.size(32.dp).clip(CircleShape).background(if (vehicle.paired) Scene.glow.copy(alpha = .16f) else Scene.fill),
             contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.Check, contentDescription = null, tint = if (vehicle.paired) Midnight.glow else Midnight.textSecondary, modifier = Modifier.size(18.dp))
+            Icon(Icons.Default.Check, contentDescription = null, tint = if (vehicle.paired) Scene.glow else Scene.textSecondary, modifier = Modifier.size(18.dp))
         }
         Column(Modifier.weight(1f)) {
-            Text(vehicle.title, style = MaterialTheme.typography.titleSmall, color = Midnight.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(fleetVehicleDetail(vehicle), style = MaterialTheme.typography.bodySmall, color = Midnight.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(vehicle.title, style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(fleetVehicleDetail(vehicle), style = MaterialTheme.typography.bodySmall, color = Scene.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Text(status, style = MaterialTheme.typography.labelMedium, color = if (vehicle.paired) Midnight.glow else Midnight.textSecondary)
+        Text(status, style = MaterialTheme.typography.labelMedium, color = if (vehicle.paired) Scene.glow else Scene.textSecondary)
     }
 }
 
 /** A large glass choice: lit tile, title and one line; cyan edge when chosen. */
 @Composable private fun ChoiceCard(title: String, detail: String, icon: Int, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(24.dp)
-    Surface(shape = shape, color = if (selected) Color(0xFF173049) else Midnight.glass, border = if (selected) BorderStroke(1.5.dp, Midnight.glow) else Midnight.edge,
+    Surface(shape = shape, color = if (selected) Scene.glow.copy(alpha = .14f) else Scene.glass, border = if (selected) BorderStroke(1.5.dp, Scene.glow) else Scene.edge,
         modifier = modifier.clip(shape).selectable(selected = selected, role = Role.RadioButton, onClick = onClick)) {
         Column(Modifier.background(Brush.verticalGradient(listOf(Color.White.copy(alpha = .06f), Color.Transparent))).heightIn(min = 136.dp).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
             val tile = RoundedCornerShape(14.dp)
-            Box(Modifier.size(44.dp).clip(tile).background(Brush.linearGradient(listOf(Color(0x803B6FFF), Color(0x6639D5F0)))).border(Midnight.edge, tile),
-                contentAlignment = Alignment.Center) { Icon(painterResource(icon), null, Modifier.size(22.dp), tint = Color(0xFFF2F8FF)) }
-            Text(title, style = MaterialTheme.typography.titleSmall, color = if (selected) Midnight.glow else Midnight.text, fontWeight = FontWeight.Bold)
-            Text(detail, style = MaterialTheme.typography.labelMedium, color = Midnight.textSecondary, maxLines = 2)
+            Box(Modifier.size(44.dp).clip(tile).background(Scene.tile).border(Scene.edge, tile),
+                contentAlignment = Alignment.Center) { Icon(painterResource(icon), null, Modifier.size(22.dp), tint = Scene.onTile) }
+            Text(title, style = MaterialTheme.typography.titleSmall, color = if (selected) Scene.glow else Scene.text, fontWeight = FontWeight.Bold)
+            Text(detail, style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, maxLines = 2)
         }
     }
 }
 
 @Composable private fun DriverStep(drivers: List<Driver>, selected: String?, paired: Boolean, connected: Boolean, onPick: (String) -> Unit) {
     StepIntro("나는 누구인가요?", "차량에 등록된 직원 목록이에요. 나를 골라 두면 이 휴대폰의 계정과 연결돼요.")
-    if (drivers.isEmpty()) Panel(color = Midnight.glass, padding = 20.dp) {
-        Eyebrow("직원 목록", Midnight.brand)
-        Text(driverListNote(paired, connected), style = MaterialTheme.typography.bodyMedium, color = Midnight.textSecondary,
+    if (drivers.isEmpty()) Panel(color = Scene.glass, padding = 20.dp) {
+        Eyebrow("직원 목록", Scene.brand)
+        Text(driverListNote(paired, connected), style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary,
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-    } else Panel(color = Midnight.glass, padding = 12.dp) {
+    } else Panel(color = Scene.glass, padding = 12.dp) {
         Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             drivers.forEach { driver ->
                 val on = driver.id == selected
                 val shape = RoundedCornerShape(18.dp)
-                Row(Modifier.fillMaxWidth().clip(shape).background(if (on) Midnight.glow.copy(alpha = .12f) else Color.Transparent)
-                    .border(1.dp, if (on) Midnight.glow.copy(alpha = .5f) else Color.Transparent, shape)
+                Row(Modifier.fillMaxWidth().clip(shape).background(if (on) Scene.glow.copy(alpha = .12f) else Color.Transparent)
+                    .border(1.dp, if (on) Scene.glow.copy(alpha = .5f) else Color.Transparent, shape)
                     .selectable(selected = on, role = Role.RadioButton) { onPick(driver.id) }
                     .heightIn(min = 56.dp).padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    RadioButton(selected = on, onClick = null, colors = RadioButtonDefaults.colors(selectedColor = Midnight.glow, unselectedColor = Midnight.textSecondary))
+                    RadioButton(selected = on, onClick = null, colors = RadioButtonDefaults.colors(selectedColor = Scene.glow, unselectedColor = Scene.textSecondary))
                     Column(Modifier.weight(1f)) {
-                        Text(driver.name, style = MaterialTheme.typography.titleSmall, color = Midnight.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (driver.department.isNotBlank()) Text(driver.department, style = MaterialTheme.typography.bodySmall, color = Midnight.textMuted, maxLines = 1)
+                        Text(driver.name, style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (driver.department.isNotBlank()) Text(driver.department, style = MaterialTheme.typography.bodySmall, color = Scene.textMuted, maxLines = 1)
                     }
                 }
             }
@@ -589,25 +589,25 @@ internal fun PhoneAccountCard(
     onSignOut: () -> Unit,
 ) {
     var confirming by rememberSaveable { mutableStateOf(false) }
-    Panel(modifier, color = Midnight.glass, padding = 20.dp) {
-        Eyebrow("계정", Midnight.brand)
+    Panel(modifier, color = Scene.glass, padding = 20.dp) {
+        Eyebrow("계정", Scene.brand)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
             modifier = Modifier.semantics(mergeDescendants = true) {}) {
             Avatar(accountInitial(account.name, account.email), 52)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(account.name + account.department.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty(), style = MaterialTheme.typography.titleMedium,
-                    color = Midnight.text, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(account.email, style = MaterialTheme.typography.bodySmall, color = Midnight.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    color = Scene.text, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(account.email, style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Surface(shape = RoundedCornerShape(50), color = Color.White.copy(alpha = .08f), border = Midnight.edge) {
-                Text(account.provider.label, style = MaterialTheme.typography.labelMedium, color = Midnight.text, maxLines = 1,
+            Surface(shape = RoundedCornerShape(50), color = Scene.fill, border = Scene.edge) {
+                Text(account.provider.label, style = MaterialTheme.typography.labelMedium, color = Scene.text, maxLines = 1,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
             }
         }
         Text(accountDriverLine(driverLabel), style = MaterialTheme.typography.bodyMedium,
-            color = if (driverLabel.isNullOrBlank()) Midnight.textMuted else Midnight.textSecondary)
-        OutlinedButton(onClick = { confirming = true }, shape = RoundedCornerShape(14.dp), border = Midnight.edge,
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = Midnight.text), modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+            color = if (driverLabel.isNullOrBlank()) Scene.textMuted else Scene.textSecondary)
+        OutlinedButton(onClick = { confirming = true }, shape = RoundedCornerShape(14.dp), border = Scene.edge,
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Scene.text), modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
             Text("로그아웃", style = MaterialTheme.typography.labelLarge)
         }
     }

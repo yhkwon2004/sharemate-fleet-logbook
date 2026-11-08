@@ -281,22 +281,22 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
     val availability = remember(data, now) { vehicleAvailability(data, now) }
     val text = availabilityText(availability, now, tz)
     val dot = when (availability) {
-        is VehicleAvailability.InUse -> Midnight.warn
-        is VehicleAvailability.Reserved -> Midnight.glow
+        is VehicleAvailability.InUse -> Scene.warn
+        is VehicleAvailability.Reserved -> Scene.glow
         is VehicleAvailability.Free -> LocalPleosColors.current.active
     }
     val plate = data.profile.plateNumber.ifBlank { "차량번호 미등록" }
     val model = (data.vehicle.model ?: data.profile.carModel).ifBlank { null }
-    Surface(shape = RoundedCornerShape(26.dp), color = Midnight.glass, border = Midnight.edge,
+    Surface(shape = RoundedCornerShape(26.dp), color = Scene.glass, border = Scene.edge,
         modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("차량 예약", style = MaterialTheme.typography.labelMedium, color = Midnight.brand, letterSpacing = 1.sp)
+            Text("차량 예약", style = MaterialTheme.typography.labelMedium, color = Scene.brand, letterSpacing = 1.sp)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.size(10.dp).clip(CircleShape).background(dot))
-                Text(text, style = MaterialTheme.typography.titleLarge, color = Midnight.text, fontWeight = FontWeight.Bold,
+                Text(text, style = MaterialTheme.typography.titleLarge, color = Scene.text, fontWeight = FontWeight.Bold,
                     modifier = Modifier.semantics { heading() })
             }
-            Text(listOfNotNull(plate, model).joinToString(" · "), style = MaterialTheme.typography.bodyMedium, color = Midnight.textSecondary,
+            Text(listOfNotNull(plate, model).joinToString(" · "), style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
@@ -309,13 +309,13 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
             val active = date == selected
             val count = counts[date] ?: 0
             Surface(selected = active, onClick = { onSelect(date) }, shape = RoundedCornerShape(18.dp),
-                color = if (active) Midnight.glow.copy(alpha = .16f) else Midnight.glass,
-                border = if (active) BorderStroke(1.dp, Midnight.glow.copy(alpha = .6f)) else Midnight.edge,
+                color = if (active) Scene.glow.copy(alpha = .16f) else Scene.glass,
+                border = if (active) BorderStroke(1.dp, Scene.glow.copy(alpha = .6f)) else Scene.edge,
                 modifier = Modifier.heightIn(min = 52.dp).widthIn(min = 64.dp).semantics { contentDescription = stripDescription(date, today, count); role = Role.Tab }) {
                 Column(Modifier.clearAndSetSemantics {}.padding(horizontal = 14.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically)) {
-                    Text(stripLabel(date, today), style = MaterialTheme.typography.labelLarge, color = if (active) Midnight.glow else Midnight.text, maxLines = 1)
-                    Box(Modifier.size(5.dp).clip(CircleShape).background(if (count > 0) Midnight.brand else Color.Transparent))
+                    Text(stripLabel(date, today), style = MaterialTheme.typography.labelLarge, color = if (active) Scene.glow else Scene.text, maxLines = 1)
+                    Box(Modifier.size(5.dp).clip(CircleShape).background(if (count > 0) Scene.brand else Color.Transparent))
                 }
             }
         }
@@ -325,17 +325,17 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
 @Composable private fun DayTimeline(date: LocalDate, today: LocalDate, dayBookings: List<Reservation>, data: TripLogData, driverId: String?, now: Long, tz: ZoneId,
     enabled: Boolean, onPickHour: (Int) -> Unit) {
     val early = dayBookings.any { it.startAt < epochMillisAt(date, TIMELINE_FIRST_HOUR * 60, tz) }
-    Panel(color = Midnight.glass, padding = 16.dp) {
+    Panel(color = Scene.glass, padding = 16.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("${stripLabel(date, today)} 예약 현황", style = MaterialTheme.typography.titleSmall, color = Midnight.text,
+            Text("${stripLabel(date, today)} 예약 현황", style = MaterialTheme.typography.titleSmall, color = Scene.text,
                 modifier = Modifier.weight(1f).semantics { heading() })
-            Text("${dayBookings.size}건", style = MaterialTheme.typography.labelMedium, color = Midnight.textMuted)
+            Text("${dayBookings.size}건", style = MaterialTheme.typography.labelMedium, color = Scene.textMuted)
         }
         // Hours already over with nothing booked fold into one line, so today opens at the hour that can still be booked.
         val skipped = (TIMELINE_FIRST_HOUR..TIMELINE_LAST_HOUR).takeWhile { hourIsPast(date, it, now, tz) && hourOccupant(dayBookings, date, it, tz) == null }
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (skipped.size > 1) Text("%02d:00–%02d:00 · 지난 시간".format(skipped.first(), skipped.last() + 1), style = MaterialTheme.typography.labelMedium,
-                color = Midnight.textMuted, modifier = Modifier.padding(vertical = 6.dp))
+                color = Scene.textMuted, modifier = Modifier.padding(vertical = 6.dp))
             for (hour in (if (skipped.size > 1) skipped.last() + 1 else TIMELINE_FIRST_HOUR)..TIMELINE_LAST_HOUR) {
                 val occupant = hourOccupant(dayBookings, date, hour, tz)
                 val first = occupant != null && (hour == TIMELINE_FIRST_HOUR || hourOccupant(dayBookings, date, hour - 1, tz)?.id != occupant.id)
@@ -352,10 +352,12 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
     date: LocalDate, tz: ZoneId, onPick: (() -> Unit)?) {
     val shape = RoundedCornerShape(14.dp)
     val fill = when {
-        occupant == null -> Color.White.copy(alpha = .03f)
-        mine -> Midnight.glow.copy(alpha = .20f)
-        else -> Midnight.brand.copy(alpha = .16f)
+        occupant == null -> Scene.fill
+        mine -> Scene.glow.copy(alpha = .20f)
+        else -> Scene.brand.copy(alpha = .16f)
     }
+    val nowLine = Scene.glow.copy(alpha = .55f)
+    val nowDot = Scene.glow
     val tappable = occupant == null && !past && onPick != null
     val label = when {
         occupant != null && first -> "${bookerLabel(data, occupant.driverId)} · ${dayWindowText(occupant, date, tz)}"
@@ -366,24 +368,24 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
     val description = "${minutesText(hour * 60)}, " + (if (occupant != null) "${bookerLabel(data, occupant.driverId)} 님 예약 ${dayWindowText(occupant, date, tz)}" else label) +
         if (marker != null) ", 지금" else ""
     Row(Modifier.fillMaxWidth().alpha(if (past) .45f else 1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text(minutesText(hour * 60), style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"), color = Midnight.textMuted,
+        Text(minutesText(hour * 60), style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"), color = Scene.textMuted,
             modifier = Modifier.width(44.dp).clearAndSetSemantics {})
         Box(Modifier.weight(1f).heightIn(min = 48.dp).clip(shape).background(fill)
-            .then(if (occupant != null && first) Modifier.border(1.dp, (if (mine) Midnight.glow else Midnight.brand).copy(alpha = .5f), shape) else Modifier)
+            .then(if (occupant != null && first) Modifier.border(1.dp, (if (mine) Scene.glow else Scene.brand).copy(alpha = .5f), shape) else Modifier)
             .then(if (tappable) Modifier.clickable(onClickLabel = "이 시간으로 신청서 채우기", role = Role.Button) { onPick?.invoke() } else Modifier)
             .drawWithContent {
                 // The now line runs under the row's text so "비어 있어요" never reads as struck through.
                 if (marker != null) {
                     val y = size.height * marker
-                    drawLine(Midnight.glow.copy(alpha = .55f), Offset(0f, y), Offset(size.width, y), strokeWidth = 2.dp.toPx())
-                    drawCircle(Midnight.glow, radius = 4.dp.toPx(), center = Offset(4.dp.toPx(), y))
+                    drawLine(nowLine, Offset(0f, y), Offset(size.width, y), strokeWidth = 2.dp.toPx())
+                    drawCircle(nowDot, radius = 4.dp.toPx(), center = Offset(4.dp.toPx(), y))
                 }
                 drawContent()
             }
             .semantics(mergeDescendants = true) { contentDescription = description }
             .padding(horizontal = 14.dp, vertical = 8.dp), contentAlignment = Alignment.CenterStart) {
             Text(label, Modifier.clearAndSetSemantics {}, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                color = when { occupant != null && first -> Midnight.text; occupant != null -> Midnight.textMuted; else -> Midnight.textSecondary })
+                color = when { occupant != null && first -> Scene.text; occupant != null -> Scene.textMuted; else -> Scene.textSecondary })
         }
     }
 }
@@ -398,24 +400,24 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
     val startAt = epochMillisAt(date, start, tz)
     val endAt = epochMillisAt(date, end, tz)
     val conflict = remember(data, startAt, endAt) { slotConflictText(data, startAt, endAt, tz) }
-    Panel(color = Midnight.glass, padding = 18.dp) {
-        Text("새 예약", style = MaterialTheme.typography.labelMedium, color = Midnight.brand, letterSpacing = 1.sp)
-        Text(dayLabel(date), style = MaterialTheme.typography.titleMedium, color = Midnight.text, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
-        if (blocked != null) Text(blocked, style = MaterialTheme.typography.bodyMedium, color = Midnight.warn, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+    Panel(color = Scene.glass, padding = 18.dp) {
+        Text("새 예약", style = MaterialTheme.typography.labelMedium, color = Scene.brand, letterSpacing = 1.sp)
+        Text(dayLabel(date), style = MaterialTheme.typography.titleMedium, color = Scene.text, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+        if (blocked != null) Text(blocked, style = MaterialTheme.typography.bodyMedium, color = Scene.warn, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
         if (driverId == null) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("먼저 나를 직원 목록에서 선택해 주세요", style = MaterialTheme.typography.bodyMedium, color = Midnight.textSecondary)
+                Text("먼저 나를 직원 목록에서 선택해 주세요", style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary)
                 OutlinedButton(onClick = onPickMe, modifier = Modifier.heightIn(min = 48.dp), shape = RoundedCornerShape(14.dp)) { Text("직원 목록 열기") }
             }
-        } else Text("예약자 · ${bookerLabel(data, driverId)}", style = MaterialTheme.typography.bodyMedium, color = Midnight.textSecondary)
+        } else Text("예약자 · ${bookerLabel(data, driverId)}", style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary)
 
         TimeStepper("시작", start, editable, canMinus = start > 0, canPlus = start < DAY_MINUTES - SLOT_STEP_MINUTES,
             onMinus = { onSlot(shiftStart(start, end, -SLOT_STEP_MINUTES)) }, onPlus = { onSlot(shiftStart(start, end, SLOT_STEP_MINUTES)) })
         TimeStepper("끝", end, editable, canMinus = end > start + SLOT_STEP_MINUTES, canPlus = end < DAY_MINUTES,
             onMinus = { onSlot(shiftEnd(start, end, -SLOT_STEP_MINUTES)) }, onPlus = { onSlot(shiftEnd(start, end, SLOT_STEP_MINUTES)) })
-        Text("${slotLengthText(start, end)} 동안 · 30분 단위", style = MaterialTheme.typography.labelMedium, color = Midnight.textMuted)
+        Text("${slotLengthText(start, end)} 동안 · 30분 단위", style = MaterialTheme.typography.labelMedium, color = Scene.textMuted)
 
-        Text("목적", style = MaterialTheme.typography.titleSmall, color = Midnight.text)
+        Text("목적", style = MaterialTheme.typography.titleSmall, color = Scene.text)
         val options: List<Pair<String, String>> = purposeChoices.map { it.name to it.label } + ("" to "정하지 않음")
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             options.chunked(2).forEach { row ->
@@ -426,7 +428,7 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
                 }
             }
         }
-        if (purpose != null && data.profile.autopilot) Text("예약한 시간의 운행은 ${withRo(purpose.label)} 기록돼요.", style = MaterialTheme.typography.labelMedium, color = Midnight.textMuted)
+        if (purpose != null && data.profile.autopilot) Text("예약한 시간의 운행은 ${withRo(purpose.label)} 기록돼요.", style = MaterialTheme.typography.labelMedium, color = Scene.textMuted)
 
         BookingField("목적지", destination, BOOKING_DESTINATION_MAX, editable, done = false) { destination = it; onError(null) }
         BookingField("메모", note, BOOKING_NOTE_MAX, editable, done = true) { note = it; onError(null) }
@@ -439,16 +441,16 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
             if (problem != null) onError(problem)
             else { onError(null); onSubmit(request); destination = ""; note = "" }
         }
-        Text("겹치는 예약이 있는지는 차량이 마지막으로 확인해요. 확정되면 아래 목록에 나타나요.", style = MaterialTheme.typography.labelMedium, color = Midnight.textMuted)
+        Text("겹치는 예약이 있는지는 차량이 마지막으로 확인해요. 확정되면 아래 목록에 나타나요.", style = MaterialTheme.typography.labelMedium, color = Scene.textMuted)
     }
 }
 
 @Composable private fun TimeStepper(label: String, minutes: Int, enabled: Boolean, canMinus: Boolean, canPlus: Boolean, onMinus: () -> Unit, onPlus: () -> Unit) {
-    Surface(shape = RoundedCornerShape(18.dp), color = Color.White.copy(alpha = .04f), border = Midnight.edge, modifier = Modifier.fillMaxWidth()) {
+    Surface(shape = RoundedCornerShape(18.dp), color = Scene.fill, border = Scene.edge, modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(horizontal = 14.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(label, style = MaterialTheme.typography.titleSmall, color = Midnight.textSecondary, modifier = Modifier.weight(1f))
+            Text(label, style = MaterialTheme.typography.titleSmall, color = Scene.textSecondary, modifier = Modifier.weight(1f))
             StepButton("−", "$label 30분 앞당기기", enabled && canMinus, onMinus)
-            Text(minutesText(minutes), style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum"), color = Midnight.text, textAlign = TextAlign.Center,
+            Text(minutesText(minutes), style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum"), color = Scene.text, textAlign = TextAlign.Center,
                 modifier = Modifier.width(76.dp).semantics { contentDescription = "$label ${minutesText(minutes)}"; liveRegion = LiveRegionMode.Polite })
             StepButton("+", "$label 30분 늦추기", enabled && canPlus, onPlus)
         }
@@ -456,24 +458,24 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
 }
 
 @Composable private fun StepButton(symbol: String, description: String, enabled: Boolean, onClick: () -> Unit) {
-    Surface(onClick = onClick, enabled = enabled, shape = CircleShape, color = if (enabled) Midnight.glow.copy(alpha = .14f) else Color.Transparent,
+    Surface(onClick = onClick, enabled = enabled, shape = CircleShape, color = if (enabled) Scene.glow.copy(alpha = .14f) else Color.Transparent,
         modifier = Modifier.size(48.dp).semantics { contentDescription = description }) {
         Box(Modifier.clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
-            Text(symbol, style = MaterialTheme.typography.titleLarge, color = if (enabled) Midnight.glow else Midnight.textMuted)
+            Text(symbol, style = MaterialTheme.typography.titleLarge, color = if (enabled) Scene.glow else Scene.textMuted)
         }
     }
 }
 
 @Composable private fun PurposeRadio(label: String, selected: Boolean, enabled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Surface(selected = selected, onClick = onClick, enabled = enabled, shape = RoundedCornerShape(16.dp),
-        color = if (selected) Midnight.glow.copy(alpha = .16f) else Color.White.copy(alpha = .04f),
-        border = if (selected) BorderStroke(1.dp, Midnight.glow.copy(alpha = .6f)) else Midnight.edge,
+        color = if (selected) Scene.glow.copy(alpha = .16f) else Scene.fill,
+        border = if (selected) BorderStroke(1.dp, Scene.glow.copy(alpha = .6f)) else Scene.edge,
         modifier = modifier.heightIn(min = 52.dp).semantics { role = Role.RadioButton }) {
         Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(Modifier.size(16.dp).clip(CircleShape).border(2.dp, if (selected) Midnight.glow else Midnight.textMuted, CircleShape), contentAlignment = Alignment.Center) {
-                if (selected) Box(Modifier.size(8.dp).clip(CircleShape).background(Midnight.glow))
+            Box(Modifier.size(16.dp).clip(CircleShape).border(2.dp, if (selected) Scene.glow else Scene.textMuted, CircleShape), contentAlignment = Alignment.Center) {
+                if (selected) Box(Modifier.size(8.dp).clip(CircleShape).background(Scene.glow))
             }
-            Text(label, style = MaterialTheme.typography.labelLarge, color = if (selected) Midnight.glow else Midnight.text, maxLines = 1)
+            Text(label, style = MaterialTheme.typography.labelLarge, color = if (selected) Scene.glow else Scene.text, maxLines = 1)
         }
     }
 }
@@ -483,9 +485,9 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
         label = { Text(label) }, shape = RoundedCornerShape(16.dp), textStyle = MaterialTheme.typography.bodyLarge,
         supportingText = { Text("${value.length}/$max", style = MaterialTheme.typography.labelSmall) },
         keyboardOptions = KeyboardOptions(imeAction = if (done) ImeAction.Done else ImeAction.Next),
-        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Midnight.glow, unfocusedBorderColor = Midnight.glassBorder, focusedLabelColor = Midnight.glow,
-            unfocusedLabelColor = Midnight.textMuted, focusedTextColor = Midnight.text, unfocusedTextColor = Midnight.text, cursorColor = Midnight.glow,
-            unfocusedContainerColor = Color.White.copy(alpha = .03f), focusedContainerColor = Color.White.copy(alpha = .05f)))
+        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Scene.glow, unfocusedBorderColor = Scene.glassBorder, focusedLabelColor = Scene.glow,
+            unfocusedLabelColor = Scene.textMuted, focusedTextColor = Scene.text, unfocusedTextColor = Scene.text, cursorColor = Scene.glow,
+            unfocusedContainerColor = Scene.fill, focusedContainerColor = Scene.fill))
 }
 
 @Composable private fun ReservationLists(data: TripLogData, driverId: String?, now: Long, tz: ZoneId, enabled: Boolean, onCancel: (Reservation) -> Unit) {
@@ -505,18 +507,18 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
 @Composable private fun ReservationRow(reservation: Reservation, data: TripLogData, now: Long, tz: ZoneId, enabled: Boolean, mine: Boolean, onCancel: () -> Unit) {
     val window = reservationWindowText(reservation, tz)
     val ongoing = reservation.startAt <= now
-    Surface(shape = RoundedCornerShape(20.dp), color = Midnight.glass, border = if (mine) BorderStroke(1.dp, Midnight.glow.copy(alpha = .35f)) else Midnight.edge,
+    Surface(shape = RoundedCornerShape(20.dp), color = Scene.glass, border = if (mine) BorderStroke(1.dp, Scene.glow.copy(alpha = .35f)) else Scene.edge,
         modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(start = 16.dp, end = 6.dp, top = 10.dp, bottom = 10.dp).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                if (ongoing) Text("사용 중", style = MaterialTheme.typography.labelMedium, color = Midnight.glow)
-                Text(window, style = MaterialTheme.typography.titleSmall, color = Midnight.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(reservationDetailText(data, reservation), style = MaterialTheme.typography.bodySmall, color = Midnight.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (reservation.note.isNotBlank()) Text(reservation.note, style = MaterialTheme.typography.bodySmall, color = Midnight.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (ongoing) Text("사용 중", style = MaterialTheme.typography.labelMedium, color = Scene.glow)
+                Text(window, style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(reservationDetailText(data, reservation), style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (reservation.note.isNotBlank()) Text(reservation.note, style = MaterialTheme.typography.bodySmall, color = Scene.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             TextButton(onClick = onCancel, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp).widthIn(min = 56.dp)
                 .semantics { contentDescription = "$window ${bookerLabel(data, reservation.driverId)} 예약 취소" }) {
-                Text("취소", color = if (enabled) LocalPleosColors.current.negative else Midnight.textMuted)
+                Text("취소", color = if (enabled) LocalPleosColors.current.negative else Scene.textMuted)
             }
         }
     }

@@ -131,12 +131,12 @@ internal fun phoneToday(data: TripLogData, today: LocalDate, zone: ZoneId): Phon
     val lines = remember(data, today, minute, soc) { phoneCardLines(data, today, zone, now, soc) }
     Column(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         // The phone status bar already shows the time and the header the brand, so the hero opens with the date in the brand tone.
-        Text("${dayLabel(today)}  ·  FLEET JOURNAL", style = MaterialTheme.typography.labelLarge, color = Midnight.brand, letterSpacing = 1.sp,
+        Text("${dayLabel(today)}  ·  FLEET JOURNAL", style = MaterialTheme.typography.labelLarge, color = Scene.brand, letterSpacing = 1.sp,
             modifier = Modifier.clearAndSetSemantics {})
         Text(homeGreeting(Instant.ofEpochMilli(now).atZone(zone).hour, driver?.name, open != null), style = MaterialTheme.typography.headlineMedium,
-            color = Midnight.text, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
+            color = Scene.text, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
         // No live region here: the distance in this line changes on every poll while driving; the link badge announces state.
-        Text(phoneSubtitle(paired, link.connected, open), style = MaterialTheme.typography.bodyMedium, color = Midnight.textSecondary)
+        Text(phoneSubtitle(paired, link.connected, open), style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary)
         Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 PhoneActionCard("차량 정보", lines.vehicle, R.drawable.ic_vehicle, openIncidents(data).size, Modifier.weight(1f).fillMaxHeight(), onVehicle)
@@ -153,7 +153,7 @@ internal fun phoneToday(data: TripLogData, today: LocalDate, zone: ZoneId): Phon
 /** A half-width glass card: lit icon tile on the left, the title on one line, one real number under it. At least 76 dp tall. */
 @Composable private fun PhoneActionCard(title: String, subtitle: String, icon: Int, badge: Int, modifier: Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(20.dp)
-    Surface(onClick = onClick, shape = shape, color = Midnight.glass.copy(alpha = .86f), border = Midnight.edge,
+    Surface(onClick = onClick, shape = shape, color = Scene.glass.copy(alpha = .86f), border = Scene.edge,
         modifier = modifier.semantics(mergeDescendants = true) {
             contentDescription = "$title, $subtitle" + if (badge > 0) ", 확인 필요 ${badge}건" else ""; role = Role.Button
         }) {
@@ -161,13 +161,13 @@ internal fun phoneToday(data: TripLogData, today: LocalDate, zone: ZoneId): Phon
             .padding(horizontal = 12.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Box {
                 val tile = RoundedCornerShape(13.dp)
-                Box(Modifier.size(44.dp).clip(tile).background(Brush.linearGradient(listOf(Color(0x803B6FFF), Color(0x6639D5F0)))).border(Midnight.edge, tile),
-                    contentAlignment = Alignment.Center) { Icon(painterResource(icon), null, Modifier.size(24.dp), tint = Color(0xFFF2F8FF)) }
+                Box(Modifier.size(44.dp).clip(tile).background(Scene.tile).border(Scene.edge, tile),
+                    contentAlignment = Alignment.Center) { Icon(painterResource(icon), null, Modifier.size(24.dp), tint = Scene.onTile) }
                 if (badge > 0) CountBadge(badge, Modifier.align(Alignment.TopEnd).offset(x = 8.dp, y = (-6).dp))
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, style = MaterialTheme.typography.titleSmall, color = Midnight.text, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(subtitle, style = MaterialTheme.typography.labelMedium, color = Midnight.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(title, style = MaterialTheme.typography.titleSmall, color = Scene.text, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -178,24 +178,24 @@ internal fun phoneToday(data: TripLogData, today: LocalDate, zone: ZoneId): Phon
     val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
     val day = remember(data, today) { phoneToday(data, today, zone) }
     val month = remember(data, today) { monthWidgetInfo(data.copy(trips = phoneTrips(data)), today, zone) }
-    val tone = when (month.tone) { 1 -> Midnight.glow; 2 -> Midnight.warn; else -> Midnight.text }
+    val tone = when (month.tone) { 1 -> Scene.glow; 2 -> Scene.warn; else -> Scene.text }
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Surface(shape = RoundedCornerShape(22.dp), color = Midnight.glass, border = Midnight.edge, modifier = Modifier.weight(1f)
+        Surface(shape = RoundedCornerShape(22.dp), color = Scene.glass, border = Scene.edge, modifier = Modifier.weight(1f)
             .semantics(mergeDescendants = true) { contentDescription = "오늘 운행 ${kmText(day.km)}, ${day.trips}건, 경비 ${formatWon(day.expenseWon)}" }) {
             Column(Modifier.heightIn(min = 132.dp).padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("오늘 운행", style = MaterialTheme.typography.labelMedium, color = Midnight.textMuted)
+                Text("오늘 운행", style = MaterialTheme.typography.labelMedium, color = Scene.textMuted)
                 Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(String.format(Locale.KOREA, "%,.1f", day.km), style = MaterialTheme.typography.headlineMedium.copy(fontFeatureSettings = "tnum"), color = Midnight.text, maxLines = 1)
-                    Text("km", style = MaterialTheme.typography.labelLarge, color = Midnight.textMuted, modifier = Modifier.padding(bottom = 4.dp))
+                    Text(String.format(Locale.KOREA, "%,.1f", day.km), style = MaterialTheme.typography.headlineMedium.copy(fontFeatureSettings = "tnum"), color = Scene.text, maxLines = 1)
+                    Text("km", style = MaterialTheme.typography.labelLarge, color = Scene.textMuted, modifier = Modifier.padding(bottom = 4.dp))
                 }
-                Text("${day.trips}건 · ${formatWon(day.expenseWon)}", style = MaterialTheme.typography.labelMedium, color = Midnight.textSecondary, maxLines = 1)
+                Text("${day.trips}건 · ${formatWon(day.expenseWon)}", style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, maxLines = 1)
             }
         }
-        Surface(onClick = onMonth, shape = RoundedCornerShape(22.dp), color = Midnight.glass, border = Midnight.edge, modifier = Modifier.weight(1f)
+        Surface(onClick = onMonth, shape = RoundedCornerShape(22.dp), color = Scene.glass, border = Scene.edge, modifier = Modifier.weight(1f)
             .semantics(mergeDescendants = true) { contentDescription = "${month.title} ${month.headline}, ${month.detail}, 현황 열기"; role = Role.Button }) {
             Row(Modifier.heightIn(min = 132.dp).padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("이달 운행일지", style = MaterialTheme.typography.labelMedium, color = Midnight.textMuted)
+                    Text("이달 운행일지", style = MaterialTheme.typography.labelMedium, color = Scene.textMuted)
                     Text(month.headline, style = MaterialTheme.typography.titleMedium, color = tone, fontWeight = FontWeight.Bold, maxLines = 3)
                 }
                 CompletionRing(month.percent, tone, 52.dp, 6.dp)
@@ -209,15 +209,15 @@ internal fun phoneToday(data: TripLogData, today: LocalDate, zone: ZoneId): Phon
 /** The phone's four tabs as one floating glass pill; the active tab is lit cyan and counts sit on the icon. */
 @Composable internal fun PhoneGlassNav(tabs: List<NavTab>, selected: Int, onSelect: (Int) -> Unit) {
     Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 14.dp, vertical = 10.dp)) {
-        Surface(shape = RoundedCornerShape(30.dp), color = Midnight.glass.copy(alpha = .94f), border = Midnight.edge, modifier = Modifier.fillMaxWidth()) {
+        Surface(shape = RoundedCornerShape(30.dp), color = Scene.glass.copy(alpha = .94f), border = Scene.edge, modifier = Modifier.fillMaxWidth()) {
             Row(Modifier.padding(6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 tabs.forEachIndexed { index, tab ->
                     val active = index == selected
                     // The lit state glides from the old tab to the new one on the page clock instead of jumping.
-                    val tint by animateColorAsState(if (active) Midnight.glow else Midnight.textSecondary, tabColorSpec(), label = "tab-tint")
-                    val fill by animateColorAsState(if (active) Midnight.glow.copy(alpha = .14f) else Color.Transparent, tabColorSpec(), label = "tab-fill")
-                    val ring by animateColorAsState(if (active) Midnight.glow.copy(alpha = .45f) else Color.Transparent, tabColorSpec(), label = "tab-ring")
-                    val label by animateColorAsState(if (active) Midnight.glow else Midnight.text, tabColorSpec(), label = "tab-label")
+                    val tint by animateColorAsState(if (active) Scene.glow else Scene.textSecondary, tabColorSpec(), label = "tab-tint")
+                    val fill by animateColorAsState(if (active) Scene.glow.copy(alpha = .14f) else Color.Transparent, tabColorSpec(), label = "tab-fill")
+                    val ring by animateColorAsState(if (active) Scene.glow.copy(alpha = .45f) else Color.Transparent, tabColorSpec(), label = "tab-ring")
+                    val label by animateColorAsState(if (active) Scene.glow else Scene.text, tabColorSpec(), label = "tab-label")
                     Column(Modifier.weight(1f).clip(RoundedCornerShape(24.dp)).background(fill).border(1.dp, ring, RoundedCornerShape(24.dp))
                         .clickable { onSelect(index) }
                         .clearAndSetSemantics {
@@ -252,12 +252,12 @@ internal fun phoneToday(data: TripLogData, today: LocalDate, zone: ZoneId): Phon
     Column(Modifier.fillMaxSize()) {
         PhoneRouteHeader(title = "차량 정보", subtitle = profile.plateNumber.ifBlank { null }, onBack = onBack)
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Surface(shape = RoundedCornerShape(26.dp), color = Color(0xFF0E1522), border = Midnight.edge, modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.background(Brush.linearGradient(listOf(Color(0xFF1E2C47), Color(0xFF0E1522)))).padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("MY FLEET", style = MaterialTheme.typography.labelMedium, color = Midnight.brand, letterSpacing = 1.sp)
-                    Text(profile.plateNumber.ifBlank { "차량번호 미등록" }, style = MaterialTheme.typography.headlineSmall, color = Midnight.text, fontWeight = FontWeight.Bold)
+            Surface(shape = RoundedCornerShape(26.dp), color = Scene.glass, border = Scene.edge, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.background(Brush.linearGradient(listOf(Scene.accent.copy(alpha = .22f), Color.Transparent))).padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("MY FLEET", style = MaterialTheme.typography.labelMedium, color = Scene.brand, letterSpacing = 1.sp)
+                    Text(profile.plateNumber.ifBlank { "차량번호 미등록" }, style = MaterialTheme.typography.headlineSmall, color = Scene.text, fontWeight = FontWeight.Bold)
                     Text((vehicle.model ?: profile.carModel).ifBlank { "차종 미등록" } + validVin(vehicle.vin)?.let { " · VIN …${it.takeLast(6)}" }.orEmpty(),
-                        style = MaterialTheme.typography.bodyMedium, color = Midnight.textSecondary)
+                        style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary)
                     VehicleDrawing(Modifier.fillMaxWidth().height(150.dp))
                     val live = link.live?.takeIf { it.demo == demo }
                     val streaming = live != null && link.connected
@@ -265,7 +265,7 @@ internal fun phoneToday(data: TripLogData, today: LocalDate, zone: ZoneId): Phon
                         Stat("배터리", (live?.socPercent ?: vehicle.socPercent)?.let { "$it%" } ?: "—", Modifier.weight(1f))
                         Stat(if (streaming) "계기판 · 실시간" else "계기판 · 마지막 수신", (live?.odometerKm ?: vehicle.odometerKm)?.takeIf { it > 0 }?.let(::kmText) ?: "—", Modifier.weight(1.4f))
                     }
-                    Text(if (streaming) "차량에서 실시간으로 받고 있어요." else "차량이 보낸 마지막 값이에요. 연결되면 실시간으로 바뀌어요.", style = MaterialTheme.typography.labelMedium, color = Midnight.textMuted)
+                    Text(if (streaming) "차량에서 실시간으로 받고 있어요." else "차량이 보낸 마지막 값이에요. 연결되면 실시간으로 바뀌어요.", style = MaterialTheme.typography.labelMedium, color = Scene.textMuted)
                 }
             }
             Panel(padding = 18.dp) {
@@ -309,7 +309,7 @@ internal fun phoneToday(data: TripLogData, today: LocalDate, zone: ZoneId): Phon
                                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         Text(if (incident.status == IncidentStatus.OPEN) "대응 중" else "완료", style = MaterialTheme.typography.labelMedium,
-                            color = if (incident.status == IncidentStatus.OPEN) Midnight.warn else MaterialTheme.colorScheme.onSurfaceVariant)
+                            color = if (incident.status == IncidentStatus.OPEN) Scene.warn else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }

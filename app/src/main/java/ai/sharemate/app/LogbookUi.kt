@@ -272,12 +272,11 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
             }
         }
     }
-    // 2.8: the car always uses the Midnight (navy) palette, as the home hero is a night scene; every pane was already
-    // checked for contrast in the dark scheme, and the day/night switch of the vehicle no longer flips the app.
-    SharemateTheme(dark = true) {
+    // 2.10: the scene (day · dusk · night) follows the clock or the driver's choice and cross-fades; see SceneTheme.
+    SceneTheme {
       CompositionLocalProvider(LocalFollowUp provides followUp) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-            BoxWithConstraints(Modifier.fillMaxSize().midnightBackdrop().safeDrawingPadding()) {
+            BoxWithConstraints(Modifier.fillMaxSize().sceneBackdrop().safeDrawingPadding()) {
                 val wide = maxWidth >= 1100.dp
                 val gutter = if (wide) 36.dp else 20.dp
                 // One header on every tab, home included (no side rail, so content gets the whole width): it never appears or
@@ -383,10 +382,10 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     // The tutorial is for a car that has not recorded anything yet; once real trips exist it stays reachable from settings.
     val showTutorial = state.data.trips.none { !it.demo }
     val employee: @Composable () -> Unit = {
-        Surface(onClick = onDriver, shape = RoundedCornerShape(50), color = Midnight.glass, border = BorderStroke(1.dp, Midnight.glassBorder),
+        Surface(onClick = onDriver, shape = RoundedCornerShape(50), color = Scene.glass, border = BorderStroke(1.dp, Scene.glassBorder),
             modifier = Modifier.heightIn(min = 56.dp).semantics { contentDescription = "이용 직원 ${driver?.label ?: "미선택"}, 변경" }) {
             Column(Modifier.padding(horizontal = 20.dp, vertical = 6.dp)) {
-                Text("이용 직원", style = MaterialTheme.typography.labelSmall, color = Midnight.textSecondary)
+                Text("이용 직원", style = MaterialTheme.typography.labelSmall, color = Scene.textSecondary)
                 Text(driver?.label ?: "직원 선택", style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.widthIn(max = if (wide) 230.dp else 140.dp))
             }
@@ -394,13 +393,13 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     }
     val tools: @Composable () -> Unit = {
         // On home the hero's search bar is the assistant entry; one entry per screen keeps focus order and TalkBack simple.
-        if (selected != 0) OutlinedButton(onClick = onAssistant, modifier = Modifier.heightIn(min = 56.dp), border = BorderStroke(1.dp, Midnight.glassBorder)) {
+        if (selected != 0) OutlinedButton(onClick = onAssistant, modifier = Modifier.heightIn(min = 56.dp), border = BorderStroke(1.dp, Scene.glassBorder)) {
             Icon(painterResource(R.drawable.ic_search), null, Modifier.size(22.dp)); Spacer(Modifier.width(8.dp)); Text("운행 비서")
         }
         if (showTutorial) OutlinedButton(onClick = onTutorial, modifier = Modifier.heightIn(min = 56.dp), border = BorderStroke(1.dp, colors.outlineVariant)) { Text("시연 체험") }
     }
     val mark: @Composable () -> Unit = {
-        Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = "SHAREMATE", tint = Color(0xFFE4BFA6), modifier = Modifier.size(52.dp))
+        Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = "SHAREMATE", tint = Scene.brand, modifier = Modifier.size(52.dp))
     }
     Column(Modifier.fillMaxWidth().padding(horizontal = gutter, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (wide) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -448,15 +447,15 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 /** Segment control in the same glass as the header tabs: the chosen segment is lit cyan, the others read in soft white. */
 @Composable internal fun Segmented(labels: List<String>, selected: Int, modifier: Modifier = Modifier, onSelect: (Int) -> Unit) {
     val colors = MaterialTheme.colorScheme
-    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), color = colors.surface, border = Midnight.edge) {
+    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), color = colors.surface, border = Scene.edge) {
         Row(Modifier.padding(5.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             labels.forEachIndexed { index, label ->
                 val active = index == selected
                 Box(Modifier.weight(1f).heightIn(min = 56.dp).clip(RoundedCornerShape(17.dp))
-                    .background(if (active) Midnight.glow.copy(alpha = .14f) else Color.Transparent)
-                    .then(if (active) Modifier.border(1.dp, Midnight.glow.copy(alpha = .45f), RoundedCornerShape(17.dp)) else Modifier)
+                    .background(if (active) Scene.glow.copy(alpha = .14f) else Color.Transparent)
+                    .then(if (active) Modifier.border(1.dp, Scene.glow.copy(alpha = .45f), RoundedCornerShape(17.dp)) else Modifier)
                     .semantics { this.selected = active; role = Role.Tab }.clickable { onSelect(index) }, contentAlignment = Alignment.Center) {
-                    Text(label, style = MaterialTheme.typography.labelLarge, color = if (active) Midnight.glow else colors.onSurfaceVariant,
+                    Text(label, style = MaterialTheme.typography.labelLarge, color = if (active) Scene.glow else colors.onSurfaceVariant,
                         maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 8.dp))
                 }
             }
@@ -466,7 +465,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 
 @Composable internal fun Panel(modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.surface, padding: Dp = 28.dp, content: @Composable ColumnScope.() -> Unit) {
     Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = color, contentColor = MaterialTheme.colorScheme.onSurface,
-        border = Midnight.edge) {
+        border = Scene.edge) {
         Column(Modifier.padding(padding), verticalArrangement = Arrangement.spacedBy(16.dp), content = content)
     }
 }
@@ -1114,6 +1113,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     val privacy: @Composable () -> Unit = {
         Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
             PrivacyCard(state.data.profile, act, repository, onTutorial)
+            SceneModeCard()
             AutopilotSettings(state.data.profile, act, repository) { value, change -> Field("법인카드 끝 4자리 (쉼표로 구분)", value, change, number = true, done = true, hint = "예: 1234, 5678") }
             AssistantPreviewCard(compact = !wide, onOpen = { onAssistant(null) }, onOpenWith = { phrase -> onAssistant(phrase) })
             Panel {

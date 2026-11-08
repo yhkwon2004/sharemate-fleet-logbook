@@ -122,9 +122,9 @@ internal fun carReservationsEmptyText(autopilot: Boolean): String =
 @Composable private fun CarReservationRow(title: String, detail: String, highlighted: Boolean, cancelDescription: String, onCancel: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        Box(Modifier.size(12.dp).clip(CircleShape).background(if (highlighted) Midnight.glow else Midnight.brand.copy(alpha = .7f)))
+        Box(Modifier.size(12.dp).clip(CircleShape).background(if (highlighted) Scene.glow else Scene.brand.copy(alpha = .7f)))
         Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, color = if (highlighted) Midnight.glow else colors.onSurface,
+            Text(title, style = MaterialTheme.typography.titleMedium, color = if (highlighted) Scene.glow else colors.onSurface,
                 fontWeight = if (highlighted) FontWeight.Bold else null, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(detail, style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
@@ -140,12 +140,12 @@ internal fun carReservationsEmptyText(autopilot: Boolean): String =
 @Composable internal fun NextReservationLine(data: TripLogData, now: Long, modifier: Modifier = Modifier) {
     val tz = remember { ZoneId.systemDefault() }
     val line = remember(data, now) { nextReservationLine(data, now, tz) } ?: return
-    Surface(shape = RoundedCornerShape(20.dp), color = Midnight.glass.copy(alpha = .84f), border = Midnight.edge,
+    Surface(shape = RoundedCornerShape(20.dp), color = Scene.glass.copy(alpha = .84f), border = Scene.edge,
         modifier = modifier.fillMaxWidth().heightIn(min = 56.dp).semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }) {
         Row(Modifier.heightIn(min = 56.dp).padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Box(Modifier.size(10.dp).clip(CircleShape).background(if (line.active) Midnight.glow else Midnight.brand))
-            Text(line.text, style = MaterialTheme.typography.labelLarge, color = if (line.active) Midnight.text else Midnight.textSecondary,
+            Box(Modifier.size(10.dp).clip(CircleShape).background(if (line.active) Scene.glow else Scene.brand))
+            Text(line.text, style = MaterialTheme.typography.labelLarge, color = if (line.active) Scene.text else Scene.textSecondary,
                 maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         }
     }

@@ -23,12 +23,18 @@ import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import kotlinx.coroutines.delay
+import java.time.LocalDateTime
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.ExperimentalTextApi
@@ -219,24 +225,104 @@ private val LightColors: ColorScheme = lightColorScheme(
     surfaceContainer = Color(0xFFFFFFFF), surfaceContainerHigh = Color(0xFFEDEEF2), surfaceContainerHighest = Color(0xFFE0E1E6),
 )
 
+// The day scene's Material scheme (2.10): the same navy, now as ink on white glass over a pale sky. Text on white: onSurface
+// 15.9:1, onSurfaceVariant 8.1:1, error 4.7:1; the snackbar action (inversePrimary) reads 10:1 on inverseSurface.
+private val DayColors: ColorScheme = lightColorScheme(
+    primary = Color(0xFF121A2B), onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFDCE6F5), onPrimaryContainer = Color(0xFF121A2B), inversePrimary = Color(0xFF8FCBFF),
+    secondary = Color(0xFF0064FF), onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFE3EEFF), onSecondaryContainer = Color(0xFF00296B),
+    tertiary = Color(0xFF008A4B), onTertiary = Color(0xFFFFFFFF),
+    tertiaryContainer = Color(0xFFDDF7E9), onTertiaryContainer = Color(0xFF004222),
+    background = Color(0xFFEEF3FA), onBackground = Color(0xFF121A2B),
+    surface = Color(0xFFFFFFFF), onSurface = Color(0xFF121A2B),
+    surfaceVariant = Color(0xFFE3EAF4), onSurfaceVariant = Color(0xFF44506A),
+    surfaceTint = Color.Transparent, inverseSurface = Color(0xFF121A2B), inverseOnSurface = Color(0xFFFFFFFF),
+    outline = Color(0xFF9AA6B8), outlineVariant = Color(0xFFD5DDE8),
+    error = Color(0xFFD63A14), onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFFFE6E0), onErrorContainer = Color(0xFF5C1305),
+    scrim = Color.Black, surfaceBright = Color(0xFFFFFFFF), surfaceDim = Color(0xFFE3EAF4),
+    surfaceContainerLowest = Color(0xFFFFFFFF), surfaceContainerLow = Color(0xFFF6F8FC),
+    surfaceContainer = Color(0xFFFFFFFF), surfaceContainerHigh = Color(0xFFE9EFF7), surfaceContainerHighest = Color(0xFFDCE4EF),
+)
+private val DayPleos = LightPleos.copy(surfaceHigh = Color(0xFFE3EAF4), surfaceAccent = Color(0xFFD5DDE8), textTertiary = Color(0xFF5F6B7A), negative = Color(0xFFD63A14))
+
+private fun lerpScheme(a: ColorScheme, b: ColorScheme, t: Float): ColorScheme = when {
+    t <= 0f -> a
+    t >= 1f -> b
+    else -> a.copy(
+        primary = lerp(a.primary, b.primary, t), onPrimary = lerp(a.onPrimary, b.onPrimary, t),
+        primaryContainer = lerp(a.primaryContainer, b.primaryContainer, t), onPrimaryContainer = lerp(a.onPrimaryContainer, b.onPrimaryContainer, t),
+        inversePrimary = lerp(a.inversePrimary, b.inversePrimary, t),
+        secondary = lerp(a.secondary, b.secondary, t), onSecondary = lerp(a.onSecondary, b.onSecondary, t),
+        secondaryContainer = lerp(a.secondaryContainer, b.secondaryContainer, t), onSecondaryContainer = lerp(a.onSecondaryContainer, b.onSecondaryContainer, t),
+        tertiary = lerp(a.tertiary, b.tertiary, t), onTertiary = lerp(a.onTertiary, b.onTertiary, t),
+        tertiaryContainer = lerp(a.tertiaryContainer, b.tertiaryContainer, t), onTertiaryContainer = lerp(a.onTertiaryContainer, b.onTertiaryContainer, t),
+        background = lerp(a.background, b.background, t), onBackground = lerp(a.onBackground, b.onBackground, t),
+        surface = lerp(a.surface, b.surface, t), onSurface = lerp(a.onSurface, b.onSurface, t),
+        surfaceVariant = lerp(a.surfaceVariant, b.surfaceVariant, t), onSurfaceVariant = lerp(a.onSurfaceVariant, b.onSurfaceVariant, t),
+        surfaceTint = lerp(a.surfaceTint, b.surfaceTint, t), inverseSurface = lerp(a.inverseSurface, b.inverseSurface, t), inverseOnSurface = lerp(a.inverseOnSurface, b.inverseOnSurface, t),
+        error = lerp(a.error, b.error, t), onError = lerp(a.onError, b.onError, t),
+        errorContainer = lerp(a.errorContainer, b.errorContainer, t), onErrorContainer = lerp(a.onErrorContainer, b.onErrorContainer, t),
+        outline = lerp(a.outline, b.outline, t), outlineVariant = lerp(a.outlineVariant, b.outlineVariant, t), scrim = lerp(a.scrim, b.scrim, t),
+        surfaceBright = lerp(a.surfaceBright, b.surfaceBright, t), surfaceDim = lerp(a.surfaceDim, b.surfaceDim, t),
+        surfaceContainer = lerp(a.surfaceContainer, b.surfaceContainer, t), surfaceContainerHigh = lerp(a.surfaceContainerHigh, b.surfaceContainerHigh, t),
+        surfaceContainerHighest = lerp(a.surfaceContainerHighest, b.surfaceContainerHighest, t), surfaceContainerLow = lerp(a.surfaceContainerLow, b.surfaceContainerLow, t),
+        surfaceContainerLowest = lerp(a.surfaceContainerLowest, b.surfaceContainerLowest, t),
+    )
+}
+
+private fun lerpPleos(a: PleosColors, b: PleosColors, t: Float): PleosColors = when {
+    t <= 0f -> a
+    t >= 1f -> b
+    else -> PleosColors(lerp(a.active, b.active, t), lerp(a.positive, b.positive, t), lerp(a.negative, b.negative, t),
+        lerp(a.gleoBubble, b.gleoBubble, t), lerp(a.gleoBubbleSecondary, b.gleoBubbleSecondary, t), lerp(a.gleoSpeaker, b.gleoSpeaker, t), lerp(a.gleoSurface, b.gleoSurface, t),
+        lerp(a.surfaceHigh, b.surfaceHigh, t), lerp(a.surfaceAccent, b.surfaceAccent, t), lerp(a.textTertiary, b.textTertiary, t), lerp(a.chartActive, b.chartActive, t))
+}
+
 val LocalPleosColors = staticCompositionLocalOf { DarkPleos }
 
-/** Follows the vehicle day/night mode, as Pleos Connect adjusts brightness and contrast to lighting. */
+private fun typographyFor(compact: Boolean): Typography = if (!compact) CarTypography else CarTypography.copy(
+    displayLarge = type(52, 60, FontWeight.Medium, -1.5), displayMedium = type(40, 48, FontWeight.Medium, -1.0),
+    headlineLarge = type(28, 36, FontWeight.SemiBold, -0.5), headlineMedium = type(24, 32, FontWeight.SemiBold, -0.4),
+    headlineSmall = type(22, 30, FontWeight.SemiBold), bodyLarge = type(16, 24), bodyMedium = type(15, 22), bodySmall = type(13, 19),
+    titleLarge = type(21, 29, FontWeight.SemiBold), titleMedium = type(18, 26, FontWeight.SemiBold),
+    titleSmall = type(16, 24, FontWeight.SemiBold), labelLarge = type(15, 22, FontWeight.SemiBold),
+    labelMedium = type(13, 18, FontWeight.Medium), labelSmall = type(12, 16, FontWeight.Medium))
+
+private val SharemateShapes = Shapes(extraSmall = RoundedCornerShape(8.dp), small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(16.dp), large = RoundedCornerShape(24.dp), extraLarge = RoundedCornerShape(32.dp))
+
+/** A fixed day or night Material scheme, for screens that stay in one light (the splash, the tutorial). */
 @Composable
 fun SharemateTheme(compact: Boolean = false, dark: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
     CompositionLocalProvider(LocalPleosColors provides if (dark) DarkPleos else LightPleos, LocalReduceMotion provides rememberReduceMotion()) {
-        MaterialTheme(
-            colorScheme = if (dark) DarkColors else LightColors,
-            typography = if (!compact) CarTypography else CarTypography.copy(
-                displayLarge = type(52, 60, FontWeight.Medium, -1.5), displayMedium = type(40, 48, FontWeight.Medium, -1.0),
-                headlineLarge = type(28, 36, FontWeight.SemiBold, -0.5), headlineMedium = type(24, 32, FontWeight.SemiBold, -0.4),
-                headlineSmall = type(22, 30, FontWeight.SemiBold), bodyLarge = type(16, 24), bodyMedium = type(15, 22), bodySmall = type(13, 19),
-                titleLarge = type(21, 29, FontWeight.SemiBold), titleMedium = type(18, 26, FontWeight.SemiBold),
-                titleSmall = type(16, 24, FontWeight.SemiBold), labelLarge = type(15, 22, FontWeight.SemiBold),
-                labelMedium = type(13, 18, FontWeight.Medium), labelSmall = type(12, 16, FontWeight.Medium)),
-            shapes = Shapes(extraSmall = RoundedCornerShape(8.dp), small = RoundedCornerShape(12.dp),
-                medium = RoundedCornerShape(16.dp), large = RoundedCornerShape(24.dp), extraLarge = RoundedCornerShape(32.dp)),
-            content = content,
-        )
+        MaterialTheme(colorScheme = if (dark) DarkColors else LightColors, typography = typographyFor(compact), shapes = SharemateShapes, content = content)
+    }
+}
+
+/**
+ * The app's theme (2.10): the scene follows the clock (approximate Seoul sunrise and sunset) or the driver's 자동 · 낮 · 밤
+ * choice, and a change of scene cross-fades every colour over [MOTION_SCENE_MS] instead of flipping. Night and dusk share the
+ * 2.8 Midnight palette; day is its bright twin. Provides [LocalScene], [LocalScenePhase], [LocalPleosColors] and Material.
+ */
+@Composable
+fun SceneTheme(compact: Boolean = false, content: @Composable () -> Unit) {
+    val mode = rememberSceneMode()
+    // Re-evaluated when the phase can next change (sunrise, dusk), and at least every hour; no per-second clock here.
+    val phase by produceState(scenePhaseAt(LocalDateTime.now(), mode), mode) {
+        while (true) {
+            value = scenePhaseAt(LocalDateTime.now(), mode)
+            delay(nextSceneChangeIn(LocalDateTime.now(), mode).coerceIn(15_000L, 3_600_000L))
+        }
+    }
+    val reduce = rememberReduceMotion()
+    val dayness by animateFloatAsState(if (phase == ScenePhase.DAY) 1f else 0f,
+        if (reduce) snap() else tween(MOTION_SCENE_MS, easing = FastOutSlowInEasing), label = "dayness")
+    val colors = remember(dayness) { lerpScene(NightSceneColors, DaySceneColors, dayness) }
+    val scheme = remember(dayness) { lerpScheme(DarkColors, DayColors, dayness) }
+    val pleos = remember(dayness) { lerpPleos(DarkPleos, DayPleos, dayness) }
+    CompositionLocalProvider(LocalScene provides colors, LocalScenePhase provides phase, LocalPleosColors provides pleos, LocalReduceMotion provides reduce) {
+        MaterialTheme(colorScheme = scheme, typography = typographyFor(compact), shapes = SharemateShapes, content = content)
     }
 }

@@ -15,8 +15,8 @@ android {
         applicationId = "ai.sharemate.app"
         minSdk = 28
         targetSdk = 34
-        versionCode = 19
-        versionName = "2.9.0"
+        versionCode = 20
+        versionName = "2.10.0"
         // Google sign-in (phone): the OAuth Web client ID of the company's Google Cloud project, from local.properties
         // (sharemate.googleWebClientId=...apps.googleusercontent.com) or -Psharemate.googleWebClientId. Empty = sign-in disabled.
         val localProps = Properties().apply { rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) } }

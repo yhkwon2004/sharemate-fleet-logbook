@@ -8,6 +8,7 @@ import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.snap
@@ -17,6 +18,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.InteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -32,12 +35,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -113,6 +118,29 @@ internal const val MOTION_STAGGER_MS = 40
         onDone?.invoke()
     }
     Text(text.take(shown), modifier.semantics { contentDescription = text }, style = style, color = color)
+}
+
+/**
+ * Press feedback for cards, tiles and chips: the surface settles to [pressedScale] while held and eases back on release,
+ * so a tap reads as a touch on something solid. Nothing under reduced motion. Pass the same [interactionSource] to the clickable.
+ */
+@Composable fun Modifier.pressable(interactionSource: InteractionSource, pressedScale: Float = .97f): Modifier {
+    if (LocalReduceMotion.current) return this
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed) pressedScale else 1f, spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium), label = "press")
+    return graphicsLayer { scaleX = scale; scaleY = scale }
+}
+
+/**
+ * A number that rolls to its new value (600 ms ease-out, like an odometer settling) and counts up from zero the first time
+ * it appears when [countUp]; the exact value, at once, under reduced motion.
+ */
+@Composable fun animatedValue(target: Float, countUp: Boolean = true, durationMs: Int = 600): Float {
+    val reduce = LocalReduceMotion.current
+    var started by remember { mutableStateOf(!countUp || reduce) }
+    LaunchedEffect(Unit) { started = true }
+    val value by animateFloatAsState(if (started) target else 0f, if (reduce) snap() else tween(durationMs, easing = FastOutSlowInEasing), label = "value")
+    return if (reduce) target else value
 }
 
 /** Three dots breathing in turn: the thinking indicator, used only while real work is pending. */
