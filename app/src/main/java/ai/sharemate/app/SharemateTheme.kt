@@ -57,6 +57,8 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.intl.LocaleList
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -67,20 +69,32 @@ private val AstaSans = FontFamily((300..800 step 100).map { weight ->
         variationSettings = FontVariation.Settings(FontVariation.weight(weight)))
 })
 
-private fun type(size: Int, line: Int, weight: FontWeight = FontWeight.Normal, tracking: Double = -0.2) =
-    TextStyle(fontFamily = AstaSans, fontWeight = weight, fontSize = size.sp, lineHeight = line.sp, letterSpacing = tracking.sp)
+/*
+ * Korean is the app's language. Every style breaks lines between phrases (어절, at the spaces) instead of between any two
+ * syllables, so a word never splits across lines ('맞춰' / '요.'), with the strict rules for punctuation, and is set in
+ * Korean so those rules hold on a device set to another language. Display, headline and title styles also balance their
+ * lines, so a heading that wraps does not leave one word alone below. Android applies the phrase breaking and the
+ * strictness on API 33+ and ignores them below (the strategy works everywhere). Declared before the typographies that use them.
+ */
+private val KoreanText = LocaleList("ko-KR")
+private val TextLineBreak = LineBreak(strategy = LineBreak.Strategy.Simple, strictness = LineBreak.Strictness.Strict, wordBreak = LineBreak.WordBreak.Phrase)
+private val HeadingLineBreak = TextLineBreak.copy(strategy = LineBreak.Strategy.Balanced)
+
+private fun type(size: Int, line: Int, weight: FontWeight = FontWeight.Normal, tracking: Double = -0.2, heading: Boolean = false) =
+    TextStyle(fontFamily = AstaSans, fontWeight = weight, fontSize = size.sp, lineHeight = line.sp, letterSpacing = tracking.sp,
+        lineBreak = if (heading) HeadingLineBreak else TextLineBreak, localeList = KoreanText)
 
 // Car text sizes stay above the Pleos minimum (12 sp, 18 px line) with room for viewing distance.
 private val CarTypography = Typography(
-    displayLarge = type(72, 80, FontWeight.Medium, -2.0),
-    displayMedium = type(56, 64, FontWeight.Medium, -1.5),
-    displaySmall = type(44, 52, FontWeight.Medium, -1.0),
-    headlineLarge = type(36, 46, FontWeight.SemiBold, -0.8),
-    headlineMedium = type(30, 40, FontWeight.SemiBold, -0.6),
-    headlineSmall = type(26, 36, FontWeight.SemiBold, -0.4),
-    titleLarge = type(24, 32, FontWeight.SemiBold, -0.3),
-    titleMedium = type(21, 30, FontWeight.SemiBold),
-    titleSmall = type(19, 28, FontWeight.SemiBold),
+    displayLarge = type(72, 80, FontWeight.Medium, -2.0, heading = true),
+    displayMedium = type(56, 64, FontWeight.Medium, -1.5, heading = true),
+    displaySmall = type(44, 52, FontWeight.Medium, -1.0, heading = true),
+    headlineLarge = type(36, 46, FontWeight.SemiBold, -0.8, heading = true),
+    headlineMedium = type(30, 40, FontWeight.SemiBold, -0.6, heading = true),
+    headlineSmall = type(26, 36, FontWeight.SemiBold, -0.4, heading = true),
+    titleLarge = type(24, 32, FontWeight.SemiBold, -0.3, heading = true),
+    titleMedium = type(21, 30, FontWeight.SemiBold, heading = true),
+    titleSmall = type(19, 28, FontWeight.SemiBold, heading = true),
     bodyLarge = type(20, 30),
     bodyMedium = type(18, 27),
     bodySmall = type(16, 24),
@@ -328,16 +342,23 @@ internal fun sceneRevealProgress(t: Float, timing: SceneChangeTiming): Float {
 /** The timing of the scene change in progress (or of the last one), provided by [SceneTheme]; the sky's crossfade runs on it. */
 val LocalSceneChange = compositionLocalOf { sceneChangeTiming(false) }
 
-/** True in the phone build (a theme with compact = true); the backdrop lays its day haze from the top there instead of from the left. */
+/**
+ * True in the phone build (a theme with compact = true). The sky leaves its day clouds out there, and the phone home and the
+ * sign-in lay their own day haze over it.
+ */
 val LocalCompactApp = staticCompositionLocalOf { false }
 
-private fun typographyFor(compact: Boolean): Typography = if (!compact) CarTypography else CarTypography.copy(
-    displayLarge = type(52, 60, FontWeight.Medium, -1.5), displayMedium = type(40, 48, FontWeight.Medium, -1.0),
-    headlineLarge = type(28, 36, FontWeight.SemiBold, -0.5), headlineMedium = type(24, 32, FontWeight.SemiBold, -0.4),
-    headlineSmall = type(22, 30, FontWeight.SemiBold), bodyLarge = type(16, 24), bodyMedium = type(15, 22), bodySmall = type(13, 19),
-    titleLarge = type(21, 29, FontWeight.SemiBold), titleMedium = type(18, 26, FontWeight.SemiBold),
-    titleSmall = type(16, 24, FontWeight.SemiBold), labelLarge = type(15, 22, FontWeight.SemiBold),
+// The phone's sizes, built once (displaySmall stays the car's).
+private val PhoneTypography = CarTypography.copy(
+    displayLarge = type(52, 60, FontWeight.Medium, -1.5, heading = true), displayMedium = type(40, 48, FontWeight.Medium, -1.0, heading = true),
+    headlineLarge = type(28, 36, FontWeight.SemiBold, -0.5, heading = true), headlineMedium = type(24, 32, FontWeight.SemiBold, -0.4, heading = true),
+    headlineSmall = type(22, 30, FontWeight.SemiBold, heading = true), bodyLarge = type(16, 24), bodyMedium = type(15, 22), bodySmall = type(13, 19),
+    titleLarge = type(21, 29, FontWeight.SemiBold, heading = true), titleMedium = type(18, 26, FontWeight.SemiBold, heading = true),
+    titleSmall = type(16, 24, FontWeight.SemiBold, heading = true), labelLarge = type(15, 22, FontWeight.SemiBold),
     labelMedium = type(13, 18, FontWeight.Medium), labelSmall = type(12, 16, FontWeight.Medium))
+
+/** The type scale of the car or the phone (unit-tested: every style breaks Korean between phrases). */
+internal fun typographyFor(compact: Boolean): Typography = if (compact) PhoneTypography else CarTypography
 
 private val SharemateShapes = Shapes(extraSmall = RoundedCornerShape(8.dp), small = RoundedCornerShape(12.dp),
     medium = RoundedCornerShape(16.dp), large = RoundedCornerShape(24.dp), extraLarge = RoundedCornerShape(32.dp))

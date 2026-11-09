@@ -80,10 +80,12 @@ internal fun VehiclePane(state: TripLogState, now: Long, act: Act, repository: T
         Column(Modifier.contentWidth().align(Alignment.TopStart).verticalScroll(rememberScrollState()).padding(bottom = tokens.sectionGap),
             verticalArrangement = Arrangement.spacedBy(gap)) {
             if (layout.twoColumn) {
-                // The car card sets the height (its drawing is fixed); the info column fills to match.
+                // The car card sets the height (its drawing is fixed); the info column fills to match with its content at the
+                // top, and both cards share one padding so their eyebrows sit on one line.
+                val roomy = !tokens.short
                 Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(gap)) {
-                    VehicleHero(state, fresh, layout.drawingHeight, Modifier.weight(720f).fillMaxHeight())
-                    VehicleDetails(state, fresh, now, roomy = !tokens.short, Modifier.weight(456f).fillMaxHeight())
+                    VehicleHero(state, fresh, layout.drawingHeight, Modifier.weight(720f).fillMaxHeight(), padding = vehicleCardPadding(tokens, roomy))
+                    VehicleDetails(state, fresh, now, roomy = roomy, Modifier.weight(456f).fillMaxHeight())
                 }
             } else {
                 VehicleHero(state, fresh, layout.drawingHeight, Modifier.fillMaxWidth())
@@ -120,9 +122,12 @@ internal fun VehiclePane(state: TripLogState, now: Long, act: Act, repository: T
     }
 }
 
+/** The inner padding of the car card and the info column beside it: the layout's panel padding, 20 dp when the window is not roomy. */
+private fun vehicleCardPadding(tokens: LayoutTokens, roomy: Boolean): Dp = if (roomy) tokens.panelPadding else 20.dp
+
 /** The key card: one headline (the plate), the odometer and the gear as the car reports them, the drawing, one supporting line. */
 @Composable
-private fun VehicleHero(state: TripLogState, fresh: Boolean, drawingHeight: Dp, modifier: Modifier = Modifier) {
+private fun VehicleHero(state: TripLogState, fresh: Boolean, drawingHeight: Dp, modifier: Modifier = Modifier, padding: Dp = 24.dp) {
     val profile = state.data.profile
     val gear = if (!fresh) "확인 필요" else when (state.live?.gear) {
         GearState.PARK -> "P"
@@ -132,7 +137,7 @@ private fun VehicleHero(state: TripLogState, fresh: Boolean, drawingHeight: Dp, 
     val open = state.data.open?.takeIf { it.demo == profile.demoMode }
     val footer = if (profile.demoMode) "가상 신호 · 실제 차량 상태가 아닙니다" else if (!fresh) state.signal.label
         else if (open != null) "자동 기록 중 · ${String.format(Locale.KOREA, "%,.1f km", open.distanceKm)}" else "수신한 차량 정보만 표시합니다"
-    KeyCard(modifier) {
+    KeyCard(modifier, padding = padding) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Eyebrow("MY FLEET", Scene.brand)
             Spacer(Modifier.weight(1f))
@@ -170,11 +175,13 @@ private fun VehicleDetails(state: TripLogState, fresh: Boolean, now: Long, roomy
     } ?: "수신 전"
     val sdkModel = state.vehicleModel?.takeIf { !profile.demoMode && it.isNotBlank() }
     val tokens = LocalLayout.current
-    Panel(modifier, padding = if (roomy) tokens.panelPadding else 20.dp) {
-        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(if (roomy) 28.dp else 20.dp, Alignment.CenterVertically)) {
+    Panel(modifier, padding = vehicleCardPadding(tokens, roomy)) {
+        // Top-aligned: stretched to the car card's height, the column keeps its eyebrow level with the car card's and leaves the
+        // spare height at the bottom.
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(if (roomy) 28.dp else 20.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Eyebrow("차량 정보")
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Eyebrow("차량 정보", Scene.brand)
                     Text(if (profile.demoMode) "시연 데이터" else "Pleos SDK · AAOS", style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary)
                 }
                 VehicleInfoRow("현재 직원", driver?.label ?: "직원 미지정")

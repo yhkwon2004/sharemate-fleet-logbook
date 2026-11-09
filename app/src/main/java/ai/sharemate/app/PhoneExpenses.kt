@@ -61,6 +61,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -142,6 +143,9 @@ internal fun expenseTripLabel(trip: Trip): String = "${phoneTime(trip.startAt)} 
 /** The month's registered costs by kind, every kind present (0 when nothing was spent), in [ExpenseType] order. */
 internal fun expenseTypeTotals(trips: List<Trip>): Map<ExpenseType, Long> =
     ExpenseType.entries.associateWith { type -> trips.sumOf { trip -> trip.expenses.filter { it.type == type }.sumOf { it.amountWon } } }
+
+/** The extra room under the 경비 list while the add button floats over it: the 56-dp button, its gutter margin and 12 dp of air. */
+internal fun expenseFabClearance(gutter: Dp): Dp = 56.dp + gutter + 12.dp
 
 // ───────────────────────── statement import ─────────────────────────
 
@@ -300,9 +304,12 @@ private class LauncherHolder { var launch: (() -> Unit)? = null }
     LaunchedEffect(reviews) { decided = decided.filter { id -> reviews.any { it.id == id } }.toSet() }
     LaunchedEffect(decided) { if (decided.isNotEmpty()) { delay(8_000); decided = emptySet() } }
 
+    // The floating tab bar covers the bottom of the tab: the list scrolls on under it, and the add button stands above it.
+    val navInset = LocalNavInset.current
     Box(modifier.fillMaxSize()) {
         // The list keeps to the content width and centres on a wide window (spec B); the add button stays at the window's corner.
-        LazyColumn(Modifier.contentWidth().fillMaxHeight().align(Alignment.TopCenter), contentPadding = PaddingValues(start = tokens.gutter, end = tokens.gutter, bottom = if (paired) 104.dp else 24.dp),
+        LazyColumn(Modifier.contentWidth().fillMaxHeight().align(Alignment.TopCenter),
+            contentPadding = PaddingValues(start = tokens.gutter, end = tokens.gutter, bottom = tabScrollBottom(navInset, extra = if (paired) expenseFabClearance(tokens.gutter) else 0.dp)),
             verticalArrangement = Arrangement.spacedBy(tokens.cardGap + 4.dp)) {
             item(key = "totals") {
                 Panel(padding = tokens.panelPadding + 2.dp) {
@@ -394,7 +401,8 @@ private class LauncherHolder { var launch: (() -> Unit)? = null }
             item(key = "statement") { StatementImportCard(statement, busy) }
             item(key = "card-link") { PhoneCardLinkCard(alertsGranted, queued, busy, openAlertSettings, importStatement, showImport = false) }
         }
-        if (paired) ExtendedFloatingActionButton(onClick = { showAdd = true }, modifier = Modifier.align(Alignment.BottomEnd).padding(tokens.gutter).heightIn(min = 56.dp)
+        if (paired) ExtendedFloatingActionButton(onClick = { showAdd = true },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(start = tokens.gutter, top = tokens.gutter, end = tokens.gutter, bottom = tokens.gutter + navInset).heightIn(min = 56.dp)
             .semantics { contentDescription = "경비 추가" }, containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary) {
             Text("+ 경비", style = MaterialTheme.typography.labelLarge)
         }

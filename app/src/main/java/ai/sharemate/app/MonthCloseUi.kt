@@ -84,16 +84,33 @@ internal fun monthCloseBannerText(status: MonthStatus, today: LocalDate): String
     }
 }
 
-/** One row of the close stepper. [optional] steps (Excel) never claim completion the app cannot see. */
-internal data class CloseStep(val label: String, val detail: String, val done: Boolean, val action: String? = null, val optional: Boolean = false)
+/**
+ * One rule for every Excel 저장 on the month screens, the 월간·Excel column's button and step ③ of the close card alike: a range
+ * without trips has nothing to save, so neither offers the action.
+ */
+internal fun excelSaveAvailable(trips: Int): Boolean = trips > 0
+
+/**
+ * One row of the close stepper. [optional] steps (Excel) never claim completion the app cannot see; [idle] steps have nothing
+ * to act on yet because the month has no trips: no check, no action, a neutral disc.
+ */
+internal data class CloseStep(val label: String, val detail: String, val done: Boolean, val action: String? = null, val optional: Boolean = false,
+    val idle: Boolean = false)
 
 internal fun monthCloseSteps(status: MonthStatus): List<CloseStep> {
     val closed = status.closed
+    // A month without trips has nothing confirmed yet: ① and ② wait instead of showing done, ③ offers no save (the column's
+    // Excel 저장 follows the same rule) and ④ says why it stays shut. A card question that is really pending still shows in ②.
+    val noTrips = status.trips == 0
     return listOf(
-        CloseStep("목적·사용자 확인", if (status.unfinished == 0) "모두 확인됨" else "${status.unfinished}건 남음", status.unfinished == 0, "정리하기".takeIf { status.unfinished > 0 }),
-        CloseStep("카드 확인", if (status.reviews == 0) "확인할 결제 없음" else "${status.reviews}건 남음", status.reviews == 0, "확인하기".takeIf { status.reviews > 0 }),
-        CloseStep("Excel 저장", if (closed != null) "마감 후에도 다시 저장할 수 있어요" else "마감 전 저장을 권해요", false, "Excel 저장", optional = true),
-        CloseStep("마감", when { closed != null -> "마감됨 · ${closedStamp(closed.closedAt)}"; status.ready -> "지금 마감할 수 있어요"; status.trips == 0 -> "운행이 없어요"; else -> "①·②를 끝내면 열려요" }, closed != null),
+        if (noTrips) CloseStep("목적·사용자 확인", "운행이 없어요", false, idle = true)
+        else CloseStep("목적·사용자 확인", if (status.unfinished == 0) "모두 확인됨" else "${status.unfinished}건 남음", status.unfinished == 0, "정리하기".takeIf { status.unfinished > 0 }),
+        if (noTrips && status.reviews == 0) CloseStep("카드 확인", "확인할 결제 없음", false, idle = true)
+        else CloseStep("카드 확인", if (status.reviews == 0) "확인할 결제 없음" else "${status.reviews}건 남음", status.reviews == 0, "확인하기".takeIf { status.reviews > 0 }),
+        if (!excelSaveAvailable(status.trips)) CloseStep("Excel 저장", "저장할 운행이 없어요", false, optional = true, idle = true)
+        else CloseStep("Excel 저장", if (closed != null) "마감 후에도 다시 저장할 수 있어요" else "마감 전 저장을 권해요", false, "Excel 저장", optional = true),
+        CloseStep("마감", when { closed != null -> "마감됨 · ${closedStamp(closed.closedAt)}"; status.ready -> "지금 마감할 수 있어요"; noTrips -> "운행이 없어요"; else -> "①·②를 끝내면 열려요" },
+            closed != null, idle = noTrips && closed == null),
     )
 }
 
@@ -171,7 +188,7 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
     val progress = sweepProgress((percent ?: 0) / 100f)
     Panel(if (compact) modifier else modifier.widthIn(max = MONTH_CLOSE_MAX_WIDTH), padding = if (compact) 22.dp else LocalLayout.current.panelPadding) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Eyebrow(if (compact) "월 마감 · ${status.trips}건" else "MONTH CLOSE · ${status.trips}건")
+            Eyebrow(if (compact) "월 마감 · ${status.trips}건" else "MONTH CLOSE · ${status.trips}건", Scene.brand)
             Spacer(Modifier.weight(1f))
             closed?.let { ClosedChip(it) }
         }
@@ -193,7 +210,7 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
                         followUp(FollowUp("$name 마감을 해제했어요", "다시 마감") { repository.closeMonth(key) })
                     }
                 }
-                QuietAction(if (exporting) "저장 중…" else "Excel 저장", Modifier.weight(1f), enabled = !exporting, onClick = onExport)
+                QuietAction(if (exporting) "저장 중…" else "Excel 저장", Modifier.weight(1f), enabled = !exporting && excelSaveAvailable(status.trips), onClick = onExport)
             }
         } else {
             val steps = monthCloseSteps(status)
@@ -220,14 +237,15 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
 
 @Composable private fun StepRow(number: Int, step: CloseStep, busy: Boolean, onAction: (() -> Unit)?) {
     val colors = MaterialTheme.colorScheme
-    val state = when { step.done -> "완료"; step.optional -> "선택"; else -> "남음" }
+    val state = when { step.done -> "완료"; step.idle -> "대기"; step.optional -> "선택"; else -> "남음" }
     Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).semantics(mergeDescendants = true) { stateDescription = state },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        // Done is the scene's positive with the scheme's text for it; a step still to do is the primary disc; an optional one the row fill.
-        Box(Modifier.size(32.dp).clip(CircleShape).background(when { step.done -> Scene.positive; step.optional -> Scene.fill; else -> colors.primary }),
+        // Done is the scene's positive with the scheme's text for it; a step still to do is the primary disc; an optional one the
+        // row fill; an idle one (a month with no trips) the row fill with a quieter number.
+        Box(Modifier.size(32.dp).clip(CircleShape).background(when { step.done -> Scene.positive; step.optional || step.idle -> Scene.fill; else -> colors.primary }),
             contentAlignment = Alignment.Center) {
             Text(if (step.done) "✓" else number.toString(), style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center,
-                color = when { step.done -> colors.onTertiary; step.optional -> Scene.text; else -> colors.onPrimary },
+                color = when { step.done -> colors.onTertiary; step.idle -> Scene.textSecondary; step.optional -> Scene.text; else -> colors.onPrimary },
                 modifier = Modifier.clearAndSetSemantics { contentDescription = "${number}단계" })
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {

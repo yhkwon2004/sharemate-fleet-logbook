@@ -29,12 +29,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.SelectableChipColors
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -73,6 +76,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.role
@@ -153,6 +158,19 @@ internal const val PHONE_APPEAR_CAP = 8
 /** The stagger index for the [position]-th row: rows past the cap share the last slot instead of queueing for seconds. */
 internal fun appearIndex(position: Int): Int = position.coerceIn(0, PHONE_APPEAR_CAP - 1)
 
+/** The room left under a tab's last item once it has scrolled clear of the floating tab bar. */
+internal val TAB_SCROLL_END_SPACE = 16.dp
+
+/**
+ * The bottom content padding of a tab's own scroll: the height the floating tab bar covers ([LocalNavInset]) plus 16 dp,
+ * plus [extra] for something that floats over the list (경비's add button). The shell no longer pads a tab by the bar, so
+ * content scrolls on under the glass and the last item still comes to rest above it.
+ */
+internal fun tabScrollBottom(navInset: Dp, extra: Dp = 0.dp): Dp = navInset + TAB_SCROLL_END_SPACE + extra
+
+/** [tabScrollBottom] for the bar this tab sits above. */
+@Composable internal fun phoneTabScrollBottom(extra: Dp = 0.dp): Dp = tabScrollBottom(LocalNavInset.current, extra)
+
 // ───────────────────────── pure helpers ─────────────────────────
 
 /** Trips of one month, newest first. */
@@ -168,12 +186,21 @@ internal fun tripMonthGroups(trips: List<Trip>, current: YearMonth, zone: ZoneId
 
 internal fun localDate(at: Long, zone: ZoneId): LocalDate = java.time.Instant.ofEpochMilli(at).atZone(zone).toLocalDate()
 
-/** "2026년 10월 · 23건 · 412.3 km · 업무 78%" — the sticky header's one line of numbers. */
-internal fun monthHeaderText(group: TripMonthGroup): String {
+/** "2026년 10월": the sticky header's title line. */
+internal fun monthTitleText(month: YearMonth): String = "${month.year}년 ${month.monthValue}월"
+
+/** "23건 · 412.3 km · 업무 78%": the header's muted second line, so the numbers keep a line of their own; "운행 없음" for an empty month. */
+internal fun monthStatsText(group: TripMonthGroup): String {
+    if (group.trips.isEmpty()) return "운행 없음"
     val totals = logbookTotals(group.trips)
-    return if (group.trips.isEmpty()) "${group.month.year}년 ${group.month.monthValue}월 · 운행 없음"
-    else "${group.month.year}년 ${group.month.monthValue}월 · ${totals.trips}건 · ${kmText(totals.totalKm)} · 업무 ${ratioText(totals.ratio)}"
+    return "${totals.trips}건 · ${kmText(totals.totalKm)} · 업무 ${ratioText(totals.ratio)}"
 }
+
+/** "2026년 10월 · 23건 · 412.3 km · 업무 78%": both header lines as one sentence, what a screen reader hears for the header. */
+internal fun monthHeaderText(group: TripMonthGroup): String = "${monthTitleText(group.month)} · ${monthStatsText(group)}"
+
+/** The one line that stands in for the current month while it has no trips: "11월 운행은 아직 없어요". */
+internal fun emptyMonthNote(month: YearMonth): String = "${month.monthValue}월 운행은 아직 없어요"
 
 /** Right and left swipe targets for a row: the suggestion (or 일반 업무) one way, 개인 the other; a direction that would change nothing is off. */
 internal fun swipeTargets(trip: Trip, history: List<Trip>): Pair<Pair<TripPurpose, String>?, TripPurpose?> {
@@ -193,25 +220,45 @@ internal fun dayPanelEnds(trips: List<Trip>, zone: ZoneId): List<Boolean> {
     return days.indices.map { index -> index == days.lastIndex || days[index + 1] != days[index] }
 }
 
-private sealed interface ListEntry {
-    data class Month(val group: TripMonthGroup, val first: Boolean) : ListEntry
-    data class Day(val date: LocalDate, val trips: List<Trip>) : ListEntry
+/** One item of the 운행 list, in the order the list shows them. */
+internal sealed interface TripListEntry {
+    /** A month's sticky header; [first] is the topmost header, which needs no gap above it. */
+    data class Month(val group: TripMonthGroup, val first: Boolean) : TripListEntry
+    /** The current month while it has no trips: one quiet line, never a second sticky header with a picker of its own. */
+    data class EmptyMonth(val month: YearMonth) : TripListEntry
+    data class Day(val date: LocalDate, val trips: List<Trip>) : TripListEntry
     /** [last] closes the day's panel with rounded corners. */
-    data class Row(val trip: Trip, val last: Boolean) : ListEntry
-    data class End(val first: YearMonth?) : ListEntry
+    data class Row(val trip: Trip, val last: Boolean) : TripListEntry
+    data class End(val first: YearMonth?) : TripListEntry
 }
 
-private fun entries(groups: List<TripMonthGroup>, shown: Int, firstMonth: YearMonth?, zone: ZoneId): List<ListEntry> = buildList {
-    groups.take(shown).forEachIndexed { groupIndex, group ->
-        add(ListEntry.Month(group, groupIndex == 0))
+/** True for the entry where [month] starts: its header, or the line standing in for it. */
+internal fun TripListEntry.opens(month: YearMonth): Boolean = when (this) {
+    is TripListEntry.Month -> group.month == month
+    is TripListEntry.EmptyMonth -> this.month == month
+    else -> false
+}
+
+/**
+ * The list for the first [shown] months: each month's sticky header and day panels, then the closing line once every month
+ * is in. An empty current month folds into one line above the first month with trips; when it is the only month, the
+ * closing line already says there is nothing yet, so it adds nothing.
+ */
+internal fun tripListEntries(groups: List<TripMonthGroup>, shown: Int, firstMonth: YearMonth?, zone: ZoneId): List<TripListEntry> = buildList {
+    groups.take(shown).forEach { group ->
+        if (group.trips.isEmpty()) {
+            if (groups.size > 1) add(TripListEntry.EmptyMonth(group.month))
+            return@forEach
+        }
+        add(TripListEntry.Month(group, first = none { it is TripListEntry.Month }))
         val ends = dayPanelEnds(group.trips, zone)
         var index = 0
         group.trips.groupBy { localDate(it.startAt, zone) }.forEach { (date, list) ->
-            add(ListEntry.Day(date, list))
-            list.forEach { add(ListEntry.Row(it, ends[index])); index++ }
+            add(TripListEntry.Day(date, list))
+            list.forEach { add(TripListEntry.Row(it, ends[index])); index++ }
         }
     }
-    if (shown >= groups.size) add(ListEntry.End(firstMonth))
+    if (shown >= groups.size) add(TripListEntry.End(firstMonth))
 }
 
 private val dayPanelTop = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
@@ -239,7 +286,7 @@ private val dayPanelBottom = RoundedCornerShape(bottomStart = 20.dp, bottomEnd =
     // Rows that left the mirror leave the selection too.
     val liveSelected = remember(selected, all) { selected.filter { id -> all.any { it.id == id } }.toSet() }
     val selecting = liveSelected.isNotEmpty()
-    val entriesShown = remember(groups, shown, firstMonth) { entries(groups, shown.coerceIn(1, maxOf(1, groups.size)), firstMonth, zone) }
+    val entriesShown = remember(groups, shown, firstMonth) { tripListEntries(groups, shown.coerceIn(1, maxOf(1, groups.size)), firstMonth, zone) }
     BackHandler(enabled = selecting) { selected = emptySet() }
     // Older months join when the last row is near; local data, so no spinner and no delay.
     LaunchedEffect(listState, groups.size) {
@@ -247,20 +294,25 @@ private val dayPanelBottom = RoundedCornerShape(bottomStart = 20.dp, bottomEnd =
             if (total > 0 && last >= total - 3 && shown < groups.size) shown++
         }
     }
+    val unpairedNote = !paired && filtered.isNotEmpty()
+    val showHint = paired && !hintShown && filtered.any { it.purpose == TripPurpose.UNCLASSIFIED }
     fun jumpTo(month: YearMonth) {
         val index = groups.indexOfFirst { it.month == month }
         if (index < 0) return
         if (shown < index + 1) shown = index + 1
-        val target = entries(groups, maxOf(shown, index + 1), firstMonth, zone).indexOfFirst { it is ListEntry.Month && it.group.month == month }
+        val target = tripListEntries(groups, maxOf(shown, index + 1), firstMonth, zone).indexOfFirst { it.opens(month) }
+        // The note and the hint sit above the entries in the list.
+        val lead = (if (unpairedNote) 1 else 0) + (if (showHint) 1 else 0)
         pickerOpen = false
-        if (target >= 0) scope.launch { listState.animateScrollToItem(target) }
+        if (target >= 0) scope.launch { listState.animateScrollToItem(lead + target) }
     }
-    val showHint = paired && !hintShown && filtered.any { it.purpose == TripPurpose.UNCLASSIFIED }
     val selectedTrips = all.filter { it.id in liveSelected }
     // Hoisted for the draw lambdas below: the panel glass and the hairline between a day's rows.
     val glass = Scene.glass
     val divider = Scene.divider
     val gap = tokens.cardGap
+    // The tab bar floats over the bottom of the list: the list scrolls on under it, the selection bar stands above it.
+    val navInset = LocalNavInset.current
 
     Box(modifier, contentAlignment = Alignment.TopCenter) {
         Column(Modifier.contentWidth().fillMaxHeight()) {
@@ -270,10 +322,11 @@ private val dayPanelBottom = RoundedCornerShape(bottomStart = 20.dp, bottomEnd =
                     TextButton(onClick = { selected = emptySet() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("모두 해제") }
                 }
             }
-            if (filtered.isEmpty() && groups.size <= 1) PhoneEmpty(if (all.isEmpty()) "아직 운행이 없어요" else "이 직원의 운행이 없어요", Modifier.weight(1f),
+            if (filtered.isEmpty() && groups.size <= 1) PhoneEmpty(if (all.isEmpty()) "아직 운행이 없어요" else "이 직원의 운행이 없어요", Modifier.weight(1f).padding(bottom = navInset),
                 if (all.isEmpty()) "차량이 출발하면 운행이 여기에 나타나요" else "다른 직원을 고르거나 ‘전체 직원’으로 바꿔 보세요")
-            else LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = listState, contentPadding = PaddingValues(start = tokens.gutter, end = tokens.gutter, bottom = 16.dp)) {
-                if (!paired && filtered.isNotEmpty()) item(key = "unpaired") {
+            else LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = listState,
+                contentPadding = PaddingValues(start = tokens.gutter, end = tokens.gutter, bottom = if (selecting) TAB_SCROLL_END_SPACE else tabScrollBottom(navInset))) {
+                if (unpairedNote) item(key = "unpaired") {
                     Muted("파일 사본이에요 · 차량과 연결되면 밀어서 목적을 정할 수 있어요", Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 8.dp))
                 }
                 if (showHint) item(key = "hint") {
@@ -287,19 +340,23 @@ private val dayPanelBottom = RoundedCornerShape(bottomStart = 20.dp, bottomEnd =
                 }
                 entriesShown.forEach { entry ->
                     when (entry) {
-                        is ListEntry.Month -> stickyHeader(key = "m${entry.group.month}") {
+                        is TripListEntry.Month -> stickyHeader(key = "m${entry.group.month}") {
                             MonthHeader(entry.group, groups, pickerOpen, onToggle = { pickerOpen = !pickerOpen }, onPick = ::jumpTo,
                                 modifier = Modifier.padding(top = if (entry.first) 0.dp else gap))
                         }
+                        // An empty current month is one line, so a single sticky header (and one 월 선택) heads the list.
+                        is TripListEntry.EmptyMonth -> item(key = "e${entry.month}") {
+                            Muted(emptyMonthNote(entry.month), Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 8.dp), maxLines = 1)
+                        }
                         // The day's heading opens its glass panel; the rows below continue it and the last one closes it.
-                        is ListEntry.Day -> item(key = "d${entry.date}") {
+                        is TripListEntry.Day -> item(key = "d${entry.date}") {
                             Row(Modifier.fillMaxWidth().padding(top = gap).clip(dayPanelTop).background(glass).heightIn(min = 48.dp).padding(horizontal = 16.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
                                 Text(dayLabel(entry.date), style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f).semantics { heading() })
                                 Muted("${entry.trips.size}건 · ${kmText(entry.trips.sumOf { it.distanceKm })}")
                             }
                         }
-                        is ListEntry.Row -> item(key = entry.trip.id) {
+                        is TripListEntry.Row -> item(key = entry.trip.id) {
                             val trip = entry.trip
                             val shape = if (entry.last) dayPanelBottom else RectangleShape
                             SwipeClassifyRow(trip, all, enabled = paired && !trip.open && !selecting && !busy, onClassify = { purpose -> commands.classify(trip, purpose) },
@@ -317,40 +374,65 @@ private val dayPanelBottom = RoundedCornerShape(bottomStart = 20.dp, bottomEnd =
                                     } else emptyList(), shape = shape, standalone = false)
                             }
                         }
-                        is ListEntry.End -> item(key = "end") {
+                        is TripListEntry.End -> item(key = "end") {
                             Muted(entry.first?.let { "${it.year}년 ${it.monthValue}월부터 기록이 시작됐어요" } ?: "아직 완료된 운행이 없어요", Modifier.fillMaxWidth().padding(vertical = 20.dp, horizontal = 6.dp))
                         }
                     }
                 }
             }
-            if (selecting) Row(Modifier.fillMaxWidth().padding(horizontal = tokens.gutter, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = { purposeSheet = true }, enabled = paired && !busy, modifier = Modifier.weight(1f).heightIn(min = 52.dp), shape = RoundedCornerShape(14.dp)) { Text("목적 정하기") }
-                OutlinedButton(onClick = { commands.pickDriver(liveSelected.toList()); selected = emptySet() }, enabled = paired && !busy && data.drivers.isNotEmpty(),
-                    modifier = Modifier.weight(1f).heightIn(min = 52.dp), shape = RoundedCornerShape(14.dp)) { Text("직원 지정") }
+            // The selection bar stands on the tab bar's top edge rather than under the glass.
+            if (selecting) Column(Modifier.fillMaxWidth().padding(bottom = navInset)) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = tokens.gutter, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = { purposeSheet = true }, enabled = paired && !busy, modifier = Modifier.weight(1f).heightIn(min = 52.dp), shape = RoundedCornerShape(14.dp)) { Text("목적 정하기") }
+                    OutlinedButton(onClick = { commands.pickDriver(liveSelected.toList()); selected = emptySet() }, enabled = paired && !busy && data.drivers.isNotEmpty(),
+                        modifier = Modifier.weight(1f).heightIn(min = 52.dp), shape = RoundedCornerShape(14.dp)) { Text("직원 지정") }
+                }
+                if (!paired) Muted("차량과 연결되면 분류할 수 있어요", Modifier.padding(horizontal = tokens.gutter + 4.dp, vertical = 4.dp))
             }
-            if (selecting && !paired) Muted("차량과 연결되면 분류할 수 있어요", Modifier.padding(horizontal = tokens.gutter + 4.dp, vertical = 4.dp))
         }
     }
     if (purposeSheet) PhonePurposeSheet(selectedTrips.size, onApply = { purpose -> purposeSheet = false; commands.classifyMany(selectedTrips, purpose); selected = emptySet() },
         onDismiss = { purposeSheet = false })
 }
 
-/** The sticky line for one month, with the month picker folded underneath it. */
+/**
+ * The sticky header for one month: the month as its title and the numbers as a muted second line (so the key figure is never
+ * cut short), a 48-dp calendar button at the end, and the month picker folded underneath.
+ */
 @Composable private fun MonthHeader(group: TripMonthGroup, groups: List<TripMonthGroup>, open: Boolean, onToggle: () -> Unit, onPick: (YearMonth) -> Unit, modifier: Modifier = Modifier) {
     // Near-opaque glass, not flat black: the header stays readable over rows scrolling under it and matches every other surface.
     Surface(color = Scene.glass.copy(alpha = .96f), shape = RoundedCornerShape(18.dp), border = Scene.edge, modifier = modifier.fillMaxWidth()) {
         Column {
-            Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(monthHeaderText(group), style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f).semantics { heading() }, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                TextButton(onClick = onToggle, modifier = Modifier.heightIn(min = 48.dp)) { Text(if (open) "닫기" else "월 선택 ▾") }
+            Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // One heading for both lines: "2026년 10월 · 9건 · 54.0 km · 업무 83%".
+                Column(Modifier.weight(1f).clearAndSetSemantics { heading(); contentDescription = monthHeaderText(group) }, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(monthTitleText(group.month), style = MaterialTheme.typography.titleSmall, color = Scene.text, fontWeight = FontWeight.SemiBold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(monthStatsText(group), style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"), color = Scene.textMuted,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+                MonthPickerButton(open, onToggle)
             }
             if (open) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 groups.filter { it.trips.isNotEmpty() || it == groups.first() }.forEach { candidate ->
                     val chosen = candidate.month == group.month
                     FilterChip(selected = chosen, onClick = { onPick(candidate.month) }, colors = sceneChipColors(), border = sceneChipBorder(chosen),
-                        label = { Text("${candidate.month.year}년 ${candidate.month.monthValue}월 · ${candidate.trips.size}건") }, modifier = Modifier.heightIn(min = 48.dp))
+                        label = { Text("${monthTitleText(candidate.month)} · ${candidate.trips.size}건") }, modifier = Modifier.heightIn(min = 48.dp))
                 }
             }
+        }
+    }
+}
+
+/** The month picker as a 48-dp icon button; while the picker is open it carries the selection fill, ring and glow (never colour alone). */
+@Composable private fun MonthPickerButton(open: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
+    val press = remember { MutableInteractionSource() }
+    Surface(onClick = onToggle, shape = CircleShape, color = if (open) Scene.selectionFill else Color.Transparent,
+        border = if (open) BorderStroke(1.5.dp, Scene.selectionRing) else null, interactionSource = press,
+        modifier = modifier.pressable(press).size(48.dp).semantics { contentDescription = "월 선택"; stateDescription = if (open) "펼침" else "접힘"; role = Role.Button }) {
+        Box(Modifier.clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.DateRange, contentDescription = null, tint = if (open) Scene.glow else Scene.textSecondary, modifier = Modifier.size(22.dp))
         }
     }
 }

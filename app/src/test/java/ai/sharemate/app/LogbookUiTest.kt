@@ -3,13 +3,16 @@ package ai.sharemate.app
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.YearMonth
 import java.time.ZoneId
 import java.util.UUID
 
-/** Pure parts of the car shell: the header pill's line and tone, the log's filter labels, the settings form's columns. */
+/** Pure parts of the car shell: the header pill's line and tone, the log's filter labels and empty state, the settings form's columns. */
 class LogbookUiTest {
     private val zone = ZoneId.of("Asia/Seoul")
     private fun at(month: Int, day: Int, hour: Int) = LocalDateTime.of(2026, month, day, hour, 0).atZone(zone).toInstant().toEpochMilli()
@@ -44,6 +47,22 @@ class LogbookUiTest {
     @Test fun logFilterLabelsCarryTheCountsAndShortenWhereTheRowIsNarrow() {
         assertEquals(listOf("전체 9", "점검 필요 7", "자동 반영 0"), logFilterLabels(9, 7, 0, wide = true))
         assertEquals(listOf("전체 9", "점검 필요 7", "자동 0"), logFilterLabels(9, 7, 0, wide = false))
+    }
+
+    @Test fun anEmptyLogSaysWhatTheMonthIsMissingAndOffersClearingOnlyWhenSomethingNarrowsIt() {
+        val today = LocalDate.of(2026, 11, 9)
+        val november = YearMonth.of(2026, 11)
+        val plain = logEmptyCopy(0, november, 0, null, today)
+        assertEquals("11월 운행 기록이 없어요", plain.title); assertNull(plain.detail)
+        assertFalse("전체·전체 직원이면 필터 해제가 없음", plain.clearable)
+        val employee = logEmptyCopy(0, november, 0, "영업 · 권", today)
+        assertEquals("11월 영업 · 권 님의 운행 기록이 없어요", employee.title); assertTrue(employee.clearable)
+        val checked = logEmptyCopy(1, november, 4, null, today)
+        assertEquals("11월 점검할 운행이 없어요", checked.title); assertEquals("계기판 누적거리가 끊김 없이 이어져요", checked.detail)
+        assertTrue(checked.clearable)
+        assertEquals("운행이 없으면 점검 필요도 운행이 없다고 말함", "11월 운행 기록이 없어요", logEmptyCopy(1, november, 0, null, today).title)
+        assertEquals("11월 카드 결제가 자동으로 들어간 운행이 없어요", logEmptyCopy(2, november, 3, null, today).title)
+        assertEquals("지난해 달은 연도를 붙임", "2025년 12월 운행 기록이 없어요", logEmptyCopy(0, YearMonth.of(2025, 12), 0, null, today).title)
     }
 
     @Test fun settingsFormsPairFieldsOnlyOnWideWindowsAtTheNormalFont() {

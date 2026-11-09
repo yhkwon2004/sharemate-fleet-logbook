@@ -10,8 +10,11 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -58,6 +61,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -69,6 +74,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -246,6 +252,50 @@ internal fun bookingTwoPane(tokens: LayoutTokens): Boolean = !tokens.compact
 /** The 'now' line's resting place inside its hour row: the fraction, or the top edge while the line is elsewhere (nothing is drawn then). */
 internal fun nowLineTarget(marker: Float?): Float = marker?.coerceIn(0f, 1f) ?: 0f
 
+/** "06:00–09:00 · 지난 시간": the hours from [firstHour] up to [endHour] that are already over, folded into one line. */
+internal fun pastHoursText(firstHour: Int, endHour: Int): String = "%02d:00–%02d:00 · 지난 시간".format(firstHour, endHour)
+
+/** True when nothing is booked between 06:00 and 24:00 on [date]: the day then shows its open hours as a grid, not eighteen identical rows. */
+internal fun timelineIsFree(dayBookings: List<Reservation>, date: LocalDate, zone: ZoneId): Boolean =
+    (TIMELINE_FIRST_HOUR..TIMELINE_LAST_HOUR).none { hourOccupant(dayBookings, date, it, zone) != null }
+
+/** An hour of a free day that can still be asked for, and the start (minutes after midnight) a tap fills in, the way [slotFromHour] does. */
+internal data class FreeHourChip(val hour: Int, val start: Int)
+
+/**
+ * The open hours of a day with nothing booked, 06:00 to 23:00. Today starts at the next half hour, so the hour under way
+ * offers its half (09:10 → "09:30") or drops out once that has begun too; none are left after 23:30.
+ */
+internal fun freeHourChips(date: LocalDate, now: Long, zone: ZoneId): List<FreeHourChip> {
+    val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+    val earliest = when {
+        date.isBefore(today) -> DAY_MINUTES
+        date.isAfter(today) -> 0
+        else -> {
+            val next = nextHalfHourMillis(now, zone)
+            if (Instant.ofEpochMilli(next).atZone(zone).toLocalDate() == today) minutesOfDay(next, today, zone) else DAY_MINUTES
+        }
+    }
+    return (TIMELINE_FIRST_HOUR..TIMELINE_LAST_HOUR).mapNotNull { hour ->
+        val start = maxOf(hour * 60, earliest)
+        if (start < (hour + 1) * 60) FreeHourChip(hour, start) else null
+    }
+}
+
+/** The narrowest an hour chip gets at a 1.0 font, and the space between chips. */
+internal val FREE_HOUR_CHIP_MIN = 64.dp
+internal val FREE_HOUR_GAP = 8.dp
+
+/** Hour chips per row: four when four fit at this font scale, otherwise three. */
+internal fun freeHourColumns(width: Dp, fontScale: Float): Int =
+    if (width >= FREE_HOUR_CHIP_MIN * fontScale.coerceAtLeast(1f) * 4 + FREE_HOUR_GAP * 3) 4 else 3
+
+/**
+ * How far the date strip reaches past its column on the start and the end side: the gutter on both in one column, so the
+ * chips scroll to the screen edge; beside the form only the start, since the end meets the other pane there.
+ */
+internal fun stripBleed(gutter: Dp, twoPane: Boolean): Pair<Dp, Dp> = gutter to if (twoPane) 0.dp else gutter
+
 // ───────────────────────── tab ─────────────────────────
 
 /**
@@ -280,10 +330,10 @@ internal fun nowLineTarget(marker: Float?): Float = marker?.coerceIn(0f, 1f) ?: 
 
     val day: @Composable ColumnScope.() -> Unit = {
         AvailabilityCard(data, liveNow, tz, tokens.panelPadding)
-        DateStrip(dates, selected, today, data, tz) { selectedDay = it.toEpochDay(); error = null }
-        DayTimeline(selected, today, dayBookings, data, driverId, liveNow, tz, tokens.panelPadding, enabled = blocked == null) { hour ->
+        DateStrip(dates, selected, today, data, tz, bleed = stripBleed(tokens.gutter, twoPane), onSelect = { selectedDay = it.toEpochDay(); error = null })
+        DayTimeline(selected, today, dayBookings, data, driverId, liveNow, tz, tokens.panelPadding, enabled = blocked == null, onPickHour = { hour ->
             setSlot(slotFromHour(hour, selected, dayBookings, liveNow, tz)); scope.launch { formView.bringIntoView() }
-        }
+        })
     }
     val request: @Composable ColumnScope.() -> Unit = {
         Box(Modifier.bringIntoViewRequester(formView)) {
@@ -303,7 +353,8 @@ internal fun nowLineTarget(marker: Float?): Float = marker?.coerceIn(0f, 1f) ?: 
         }
     }
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-        Column(Modifier.contentWidth().fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = tokens.gutter).padding(top = 8.dp, bottom = 96.dp),
+        // The scroll runs to the bottom of the window and on under the floating tab bar; its last card comes to rest above it.
+        Column(Modifier.contentWidth().fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = tokens.gutter).padding(top = 8.dp, bottom = phoneTabScrollBottom()),
             verticalArrangement = Arrangement.spacedBy(tokens.cardGap)) {
             if (twoPane) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(tokens.cardGap)) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(tokens.cardGap), content = day)
@@ -338,10 +389,31 @@ internal fun nowLineTarget(marker: Float?): Float = marker?.coerceIn(0f, 1f) ?: 
     }
 }
 
-/** Fourteen 48-dp date chips that scroll; the chosen one carries the selection fill, ring and glow label. */
-@Composable private fun DateStrip(dates: List<LocalDate>, selected: LocalDate, today: LocalDate, data: TripLogData, tz: ZoneId, onSelect: (LocalDate) -> Unit) {
+/**
+ * Measures the content [start] + [end] wider than its slot and places it [start] before it, so a row that scrolls sideways
+ * runs under the gutters; the row takes the same amounts as inner padding, so at rest it still starts on the content line.
+ */
+private fun Modifier.bleedPast(start: Dp, end: Dp): Modifier = layout { measurable, constraints ->
+    val before = start.roundToPx()
+    val after = end.roundToPx()
+    if (!constraints.hasBoundedWidth || before + after == 0) {
+        val placeable = measurable.measure(constraints)
+        return@layout layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
+    }
+    val placeable = measurable.measure(constraints.copy(minWidth = constraints.minWidth + before + after, maxWidth = constraints.maxWidth + before + after))
+    layout((placeable.width - before - after).coerceIn(constraints.minWidth, constraints.maxWidth), placeable.height) { placeable.placeRelative(-before, 0) }
+}
+
+/**
+ * Fourteen 48-dp date chips that scroll; the chosen one carries the selection fill, ring and glow label. The strip runs
+ * full-bleed by [bleed] (start, end; see [stripBleed]), so its chips scroll out at the screen edge like the employee chips on 운행.
+ */
+@Composable private fun DateStrip(dates: List<LocalDate>, selected: LocalDate, today: LocalDate, data: TripLogData, tz: ZoneId, bleed: Pair<Dp, Dp>,
+    onSelect: (LocalDate) -> Unit, modifier: Modifier = Modifier) {
     val counts = remember(data, dates) { dates.associateWith { reservationsOn(data, it, tz).size } }
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    val (bleedStart, bleedEnd) = bleed
+    Row(modifier.bleedPast(bleedStart, bleedEnd).fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = bleedStart, end = bleedEnd),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         dates.forEach { date ->
             val active = date == selected
             val count = counts[date] ?: 0
@@ -359,29 +431,74 @@ internal fun nowLineTarget(marker: Float?): Float = marker?.coerceIn(0f, 1f) ?: 
     }
 }
 
+/**
+ * The chosen day from 06:00 to 24:00. With a booking in those hours, one row per hour (bookings, the now line, free rows);
+ * with none, the hours still open as a compact grid of hour chips, so the form stays near the top. Either way the hours
+ * already over fold into one line, and a tap on a free hour fills the form.
+ */
 @Composable private fun DayTimeline(date: LocalDate, today: LocalDate, dayBookings: List<Reservation>, data: TripLogData, driverId: String?, now: Long, tz: ZoneId,
-    padding: androidx.compose.ui.unit.Dp, enabled: Boolean, onPickHour: (Int) -> Unit) {
+    padding: Dp, enabled: Boolean, onPickHour: (Int) -> Unit, modifier: Modifier = Modifier) {
     val early = dayBookings.any { it.startAt < epochMillisAt(date, TIMELINE_FIRST_HOUR * 60, tz) }
-    Panel(color = Scene.glass, padding = padding) {
+    val free = remember(dayBookings, date) { timelineIsFree(dayBookings, date, tz) }
+    val chips = if (free) freeHourChips(date, now, tz) else emptyList()
+    Panel(modifier, color = Scene.glass, padding = padding) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("${stripLabel(date, today)} 예약 현황", style = MaterialTheme.typography.titleSmall, color = Scene.text,
                 modifier = Modifier.weight(1f).semantics { heading() })
             DigitChange("${dayBookings.size}건", style = MaterialTheme.typography.labelMedium, color = Scene.textMuted)
         }
-        // Hours already over with nothing booked fold into one line, so today opens at the hour that can still be booked.
-        val skipped = (TIMELINE_FIRST_HOUR..TIMELINE_LAST_HOUR).takeWhile { hourIsPast(date, it, now, tz) && hourOccupant(dayBookings, date, it, tz) == null }
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (skipped.size > 1) Text("%02d:00–%02d:00 · 지난 시간".format(skipped.first(), skipped.last() + 1), style = MaterialTheme.typography.labelMedium,
+        if (free) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            // Nothing booked: the past hours are one line and every hour still open is one chip.
+            val pastEnd = chips.firstOrNull()?.hour ?: (TIMELINE_LAST_HOUR + 1)
+            if (pastEnd > TIMELINE_FIRST_HOUR) Text(pastHoursText(TIMELINE_FIRST_HOUR, pastEnd), style = MaterialTheme.typography.labelMedium,
                 color = Scene.textMuted, modifier = Modifier.padding(vertical = 6.dp))
-            for (hour in (if (skipped.size > 1) skipped.last() + 1 else TIMELINE_FIRST_HOUR)..TIMELINE_LAST_HOUR) {
-                val occupant = hourOccupant(dayBookings, date, hour, tz)
-                val first = occupant != null && (hour == TIMELINE_FIRST_HOUR || hourOccupant(dayBookings, date, hour - 1, tz)?.id != occupant.id)
-                HourRow(hour, occupant, first, data, mine = occupant != null && occupant.driverId == driverId, past = hourIsPast(date, hour, now, tz),
-                    marker = nowFraction(date, hour, now, tz), date = date, tz = tz, onPick = if (enabled) ({ onPickHour(hour) }) else null)
+            if (chips.isEmpty()) Muted("남은 시간이 없어요 · 다른 날을 골라 주세요")
+            else FreeHourGrid(chips, onPick = if (enabled) onPickHour else null)
+        } else {
+            // Hours already over with nothing booked fold into one line, so today opens at the hour that can still be booked.
+            val skipped = (TIMELINE_FIRST_HOUR..TIMELINE_LAST_HOUR).takeWhile { hourIsPast(date, it, now, tz) && hourOccupant(dayBookings, date, it, tz) == null }
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (skipped.size > 1) Text(pastHoursText(skipped.first(), skipped.last() + 1), style = MaterialTheme.typography.labelMedium,
+                    color = Scene.textMuted, modifier = Modifier.padding(vertical = 6.dp))
+                for (hour in (if (skipped.size > 1) skipped.last() + 1 else TIMELINE_FIRST_HOUR)..TIMELINE_LAST_HOUR) {
+                    val occupant = hourOccupant(dayBookings, date, hour, tz)
+                    val first = occupant != null && (hour == TIMELINE_FIRST_HOUR || hourOccupant(dayBookings, date, hour - 1, tz)?.id != occupant.id)
+                    HourRow(hour, occupant, first, data, mine = occupant != null && occupant.driverId == driverId, past = hourIsPast(date, hour, now, tz),
+                        marker = nowFraction(date, hour, now, tz), date = date, tz = tz, onPick = if (enabled) ({ onPickHour(hour) }) else null)
+                }
             }
         }
         if (early) Muted("06:00 전에 시작하는 예약은 아래 목록에서 볼 수 있어요.")
-        if (enabled) Muted("빈 시간을 누르면 신청서의 시작 시각이 채워져요.")
+        if (enabled && (!free || chips.isNotEmpty())) Muted("빈 시간을 누르면 신청서의 시작 시각이 채워져요.")
+    }
+}
+
+/** A day with nothing booked: the open hours as 48-dp chips, three or four to a row ([freeHourColumns]). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable private fun FreeHourGrid(chips: List<FreeHourChip>, onPick: ((Int) -> Unit)?, modifier: Modifier = Modifier) {
+    val fontScale = LocalDensity.current.fontScale
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val columns = freeHourColumns(maxWidth, fontScale)
+        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(FREE_HOUR_GAP), verticalArrangement = Arrangement.spacedBy(FREE_HOUR_GAP),
+            maxItemsInEachRow = columns) {
+            chips.forEach { chip -> key(chip.hour) { FreeHourButton(chip, onPick, Modifier.weight(1f)) } }
+            // Empty cells keep the chips of a short last row as wide as the rest.
+            repeat((columns - chips.size % columns) % columns) { Spacer(Modifier.weight(1f)) }
+        }
+    }
+}
+
+/** One open hour, labelled with the start a tap fills in; it reads like a free timeline row and is inert while the form cannot send. */
+@Composable private fun FreeHourButton(chip: FreeHourChip, onPick: ((Int) -> Unit)?, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(14.dp)
+    val press = remember { MutableInteractionSource() }
+    val label = minutesText(chip.start)
+    Box(modifier.then(if (onPick != null) Modifier.pressable(press) else Modifier).heightIn(min = 48.dp).clip(shape).background(Scene.fill)
+        .then(if (onPick != null) Modifier.clickable(interactionSource = press, indication = LocalIndication.current, onClickLabel = "이 시간으로 신청서 채우기",
+            role = Role.Button) { onPick(chip.hour) } else Modifier)
+        .semantics(mergeDescendants = true) { contentDescription = "$label, 비어 있어요" }
+        .padding(horizontal = 6.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+        Text(label, Modifier.clearAndSetSemantics {}, style = MaterialTheme.typography.labelLarge.copy(fontFeatureSettings = "tnum"), color = Scene.text, maxLines = 1)
     }
 }
 
