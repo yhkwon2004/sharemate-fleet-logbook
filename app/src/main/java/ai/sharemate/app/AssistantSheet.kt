@@ -84,6 +84,17 @@ private const val THINKING_DELAY_MS = 300L
 /** The sheet's scrim settles at .45 over the page (spec C); the sheet itself keeps Material's slide. */
 private const val SHEET_SCRIM_ALPHA = .45f
 
+/**
+ * The assistant's touch target, chosen by the device and not by the window: 48 dp on the phone, 56 on the car even in a
+ * split window narrower than the roomy sheet ([compact]), 60 for the buttons of the roomy car sheet. Chips and bubbles stop
+ * at 56 on the car.
+ */
+internal fun assistantTapTarget(car: Boolean, compact: Boolean): Dp = when {
+    !car -> 48.dp
+    compact -> 56.dp
+    else -> 60.dp
+}
+
 /** Phrases the preview card shows; each is one the parser understands today. */
 internal val ASSISTANT_EXAMPLES = listOf("방금 운행 업무로 기록해줘", "통행료 3,600원 추가해줘", "이번 달 운행 요약해줘")
 
@@ -113,9 +124,11 @@ private sealed interface TurnState {
 private data class AssistantTurn(val id: Long, val text: String, val state: TurnState)
 
 /**
- * Bottom sheet for the parked car ([compact] = false) and the phone ([compact] = true). The host decides when it may be
- * open; passing `open = false` composes nothing, so flipping it when the car starts moving removes the sheet at once.
- * [initialText] pre-fills the field when the sheet is opened from an example phrase.
+ * Bottom sheet for the parked car and the phone. [compact] is the window (the phone, or a car window narrower than the
+ * roomy sheet): it sets the padding, the sheet's width and the type. The touch targets and the press come from the device
+ * ([LocalLayout]'s startAnchored, true on the car), so a split car window keeps 56-dp targets and the car's press. The host
+ * decides when it may be open; passing `open = false` composes nothing, so flipping it when the car starts moving removes
+ * the sheet at once. [initialText] pre-fills the field when the sheet is opened from an example phrase.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -161,7 +174,8 @@ internal fun AssistantBody(
     val haptic = LocalHapticFeedback.current
     val reduce = LocalReduceMotion.current
     val pad = if (compact) 16.dp else 28.dp
-    val tap = if (compact) 48.dp else 60.dp
+    // The device, not the window, sets the targets: a car window split narrower than the roomy sheet is still the car.
+    val tap = assistantTapTarget(car = LocalLayout.current.startAnchored, compact = compact)
     var input by rememberSaveable { mutableStateOf(initialText.orEmpty()) }
     val turns = remember { mutableStateListOf<AssistantTurn>() }
     var busy by remember { mutableStateOf(false) }
@@ -239,11 +253,11 @@ internal fun AssistantBody(
     }
 
     Column(modifier.fillMaxWidth().imePadding().padding(horizontal = pad).padding(bottom = pad), verticalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 16.dp)) {
-        AssistantHeader(compact, writer.sourceNote, onClose)
+        AssistantHeader(compact, tap, writer.sourceNote, onClose)
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll), verticalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 16.dp)) {
             if (turns.isEmpty()) AssistantIntro(compact, writer.canWrite)
             turns.forEachIndexed { index, turn ->
-                UserBubble(turn.text, compact, enabled = !busy) { input = turn.text }
+                UserBubble(turn.text, compact, tap, enabled = !busy) { input = turn.text }
                 when (val state = turn.state) {
                     TurnState.Thinking -> ThinkingBubble(compact)
                     is TurnState.Confirm -> ConfirmBubble(state.preview, compact, tap, busy, onOpenTrip,
@@ -279,18 +293,20 @@ internal fun AssistantBody(
 }
 
 /**
- * A tappable surface the car and the phone share (spec C): on the phone it settles to .97 with Material's bounded ripple,
- * on the car to .98 with no ripple. One interaction source per surface, shared with its clickable.
+ * A tappable surface the car and the phone share (spec C). The device decides the press, not the window: on the car (the
+ * start-anchored layout, a split window included) it settles to .98 with no ripple ([carTap]); on the phone to .97 with
+ * Material's bounded ripple. One interaction source per surface, shared with its clickable.
  */
-@Composable private fun TapSurface(phone: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, shape: Shape,
+@Composable private fun TapSurface(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, shape: Shape,
     color: Color, contentColor: Color, border: BorderStroke? = null, content: @Composable () -> Unit) {
     val source = remember { MutableInteractionSource() }
-    if (phone) Surface(onClick = onClick, modifier = modifier.pressable(source, .97f), enabled = enabled, shape = shape, color = color, contentColor = contentColor,
+    if (LocalLayout.current.startAnchored) Surface(modifier.carTap(source, enabled = enabled, onClick = onClick), shape = shape, color = color,
+        contentColor = contentColor, border = border, content = content)
+    else Surface(onClick = onClick, modifier = modifier.pressable(source, .97f), enabled = enabled, shape = shape, color = color, contentColor = contentColor,
         border = border, interactionSource = source, content = content)
-    else Surface(modifier.carTap(source, enabled = enabled, onClick = onClick), shape = shape, color = color, contentColor = contentColor, border = border, content = content)
 }
 
-@Composable private fun AssistantHeader(compact: Boolean, sourceNote: String?, onClose: (() -> Unit)?) {
+@Composable private fun AssistantHeader(compact: Boolean, tap: Dp, sourceNote: String?, onClose: (() -> Unit)?) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -304,7 +320,7 @@ internal fun AssistantBody(
             Muted(listOfNotNull(ASSISTANT_NOTE, sourceNote).joinToString(" · "))
         }
         if (onClose != null) {
-            if (compact) TextButton(onClick = onClose, Modifier.heightIn(min = 48.dp)) { Text("닫기") }
+            if (compact) TextButton(onClick = onClose, Modifier.heightIn(min = tap)) { Text("닫기") }
             else QuietAction("닫기", onClick = onClose)
         }
     }
@@ -318,13 +334,13 @@ internal fun AssistantBody(
     }
 }
 
-/** The sentence the person sent; tapping it puts the words back in the field to adjust and resend. */
-@Composable private fun UserBubble(text: String, compact: Boolean, enabled: Boolean, onRevise: () -> Unit) {
+/** The sentence the person sent; tapping it puts the words back in the field to adjust and resend. [tap] is the device's target; the bubble stops at 56 dp. */
+@Composable private fun UserBubble(text: String, compact: Boolean, tap: Dp, enabled: Boolean, onRevise: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-        TapSurface(phone = compact, onClick = onRevise, enabled = enabled, shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomStart = 22.dp, bottomEnd = 6.dp),
+        TapSurface(onClick = onRevise, enabled = enabled, shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomStart = 22.dp, bottomEnd = 6.dp),
             color = colors.primaryContainer, contentColor = colors.onPrimaryContainer,
-            modifier = Modifier.widthIn(max = if (compact) 320.dp else 560.dp).heightIn(min = if (compact) 48.dp else 56.dp)
+            modifier = Modifier.widthIn(max = if (compact) 320.dp else 560.dp).heightIn(min = tap.coerceAtMost(56.dp))
                 .semantics { contentDescription = "보낸 말: $text. 눌러서 고쳐 묻기" }) {
             Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp))
         }
@@ -359,7 +375,7 @@ internal fun AssistantBody(
     AssistantSurface(Modifier.semantics { liveRegion = LiveRegionMode.Polite }, compact) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(preview.text, style = MaterialTheme.typography.bodyLarge)
-            if (preview.citations.isNotEmpty()) CitationRow(preview.citations, compact, onOpenTrip)
+            if (preview.citations.isNotEmpty()) CitationRow(preview.citations, compact, tap, onOpenTrip)
             Muted("이렇게 이해했어요. 맞으면 ${verb}을 눌러 주세요. 기록 뒤에도 바로 되돌릴 수 있어요.")
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(onClick = confirm, enabled = !busy, shape = RoundedCornerShape(18.dp), modifier = Modifier.heightIn(min = tap)) { Text(verb, style = MaterialTheme.typography.labelLarge) }
@@ -380,10 +396,11 @@ internal fun AssistantBody(
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             StreamingText(answer.text, onDone = { streamed = true })
             if (answer.steps.isNotEmpty() && streamed) StepList(answer.steps, undone)
-            if (answer.citations.isNotEmpty() && streamed) CitationRow(answer.citations, compact, onOpenTrip)
+            if (answer.citations.isNotEmpty() && streamed) CitationRow(answer.citations, compact, tap, onOpenTrip)
             // A cost named without a sum: the usual amounts are one tap away, the field stays open for any other.
             if (askAmount != null && streamed) Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Eyebrow("금액 선택 · ${askAmount.type.label}")
+                // A caption over the chips inside the bubble, not a section label: grey rather than the brand eyebrow.
+                Eyebrow("금액 선택 · ${askAmount.type.label}", Scene.textSecondary)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     quickAmounts(askAmount.type).forEach { amount ->
                         PromptChip(formatWon(amount), tap, enabled = !busy, description = "${askAmount.type.label} ${formatWon(amount)} 추가") { send(expensePhrase(askAmount.type, amount)) }
@@ -434,17 +451,17 @@ internal fun AssistantBody(
     }
 }
 
-/** Trips the answer read or changed, as chips that open the trip itself: the source is always one tap away. */
+/** Trips the answer read or changed, as chips that open the trip itself: the source is always one tap away. [tap] is the device's target; the chips stop at 56 dp. */
 @OptIn(ExperimentalLayoutApi::class)
-@Composable private fun CitationRow(citations: List<AssistantCitation>, compact: Boolean, onOpenTrip: (String) -> Unit) {
+@Composable private fun CitationRow(citations: List<AssistantCitation>, compact: Boolean, tap: Dp, onOpenTrip: (String) -> Unit) {
     val colors = MaterialTheme.colorScheme
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Eyebrow("출처 · 운행 ${citations.size}건")
+        Eyebrow("출처 · 운행 ${citations.size}건", Scene.textSecondary)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             citations.forEach { citation ->
-                TapSurface(phone = compact, onClick = { onOpenTrip(citation.tripId) }, shape = RoundedCornerShape(14.dp), color = colors.surface, contentColor = Scene.text,
+                TapSurface(onClick = { onOpenTrip(citation.tripId) }, shape = RoundedCornerShape(14.dp), color = colors.surface, contentColor = Scene.text,
                     border = BorderStroke(1.dp, Scene.outline),
-                    modifier = Modifier.heightIn(min = if (compact) 48.dp else 56.dp).semantics { contentDescription = "운행 상세 보기: ${citation.label}" }) {
+                    modifier = Modifier.heightIn(min = tap.coerceAtMost(56.dp)).semantics { contentDescription = "운행 상세 보기: ${citation.label}" }) {
                     Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(citation.label, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = if (compact) 260.dp else 420.dp))
                         Text("›", style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, modifier = Modifier.clearAndSetSemantics {})
@@ -455,12 +472,15 @@ internal fun AssistantBody(
     }
 }
 
-/** One suggested sentence; disabled chips keep their words visible so the person still learns what can be asked. [tap] under 56 dp means the phone. */
-@Composable private fun PromptChip(text: String, tap: Dp, enabled: Boolean, description: String? = null, onClick: () -> Unit) {
+/**
+ * One suggested sentence; disabled chips keep their words visible so the person still learns what can be asked. [tap] is
+ * the height ([assistantTapTarget]); the press follows the device ([TapSurface]).
+ */
+@Composable private fun PromptChip(text: String, tap: Dp, enabled: Boolean, modifier: Modifier = Modifier, description: String? = null, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    TapSurface(phone = tap < 56.dp, onClick = onClick, enabled = enabled, shape = RoundedCornerShape(18.dp), color = if (enabled) colors.surfaceContainerHigh else colors.surfaceContainerLow,
+    TapSurface(onClick = onClick, enabled = enabled, shape = RoundedCornerShape(18.dp), color = if (enabled) colors.surfaceContainerHigh else colors.surfaceContainerLow,
         border = BorderStroke(1.dp, Scene.outline), contentColor = if (enabled) Scene.text else Scene.textSecondary,
-        modifier = Modifier.heightIn(min = tap.coerceAtLeast(48.dp)).semantics {
+        modifier = modifier.heightIn(min = tap.coerceAtLeast(48.dp)).semantics {
             if (description != null) contentDescription = description
             if (!enabled) stateDescription = "차량 연결 후 사용"
         }) {
@@ -474,12 +494,16 @@ internal fun AssistantBody(
 
 /**
  * Replaces the old Gleo preview card: the same three phrases, but each one now does something. Tapping a phrase opens
- * the sheet with the words already in the field ([onOpenWith]); the button opens it empty.
+ * the sheet with the words already in the field ([onOpenWith]); the button opens it empty. [compact] (the window) sets
+ * the padding and how many phrases show; the device sets the targets, so a narrow car window keeps 56-dp chips and the
+ * 64-dp button.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun AssistantPreviewCard(compact: Boolean, onOpen: () -> Unit, onOpenWith: ((String) -> Unit)? = null) {
-    Panel(padding = if (compact) 20.dp else 28.dp) {
+fun AssistantPreviewCard(compact: Boolean, onOpen: () -> Unit, modifier: Modifier = Modifier, onOpenWith: ((String) -> Unit)? = null) {
+    val car = LocalLayout.current.startAnchored
+    val tap = assistantTapTarget(car, compact).coerceAtMost(56.dp)
+    Panel(modifier, padding = if (compact) 20.dp else 28.dp) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(ASSISTANT_TITLE, style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
             Surface(shape = RoundedCornerShape(10.dp), color = Scene.fill, contentColor = Scene.textSecondary, border = BorderStroke(1.dp, Scene.divider)) {
@@ -490,11 +514,11 @@ fun AssistantPreviewCard(compact: Boolean, onOpen: () -> Unit, onOpenWith: ((Str
         Text("말하듯 적으면 운행 목적을 기록하고 비용을 더하고 이달을 요약해요.", style = MaterialTheme.typography.bodyLarge)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             (if (compact) ASSISTANT_EXAMPLES.take(2) else ASSISTANT_EXAMPLES).forEach { phrase ->
-                PromptChip("“$phrase”", if (compact) 48.dp else 56.dp, enabled = true) { onOpenWith?.invoke(phrase) ?: onOpen() }
+                PromptChip("“$phrase”", tap, enabled = true) { onOpenWith?.invoke(phrase) ?: onOpen() }
             }
         }
         Muted("$ASSISTANT_NOTE · Gleo 음성 연동은 승인 후 같은 세 동작으로 이어져요.")
-        if (compact) FilledTonalButton(onClick = onOpen, Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = RoundedCornerShape(16.dp)) { Text("운행 비서 열기") }
+        if (compact && !car) FilledTonalButton(onClick = onOpen, Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = RoundedCornerShape(16.dp)) { Text("운행 비서 열기") }
         else PrimaryAction("운행 비서 열기", Modifier.fillMaxWidth(), onClick = onOpen)
     }
 }

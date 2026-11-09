@@ -138,8 +138,9 @@ private fun VehicleHero(state: TripLogState, fresh: Boolean, drawingHeight: Dp, 
     val footer = if (profile.demoMode) "가상 신호 · 실제 차량 상태가 아닙니다" else if (!fresh) state.signal.label
         else if (open != null) "자동 기록 중 · ${String.format(Locale.KOREA, "%,.1f km", open.distanceKm)}" else "수신한 차량 정보만 표시합니다"
     KeyCard(modifier, padding = padding) {
+        // Eyebrows: the card's own label takes the brand default; the labels over a value inside it stay grey.
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Eyebrow("MY FLEET", Scene.brand)
+            Eyebrow("MY FLEET")
             Spacer(Modifier.weight(1f))
             Text(if (profile.demoMode) "시연 신호" else "차량 신호", style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary)
         }
@@ -181,7 +182,7 @@ private fun VehicleDetails(state: TripLogState, fresh: Boolean, now: Long, roomy
         Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(if (roomy) 28.dp else 20.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                    Eyebrow("차량 정보", Scene.brand)
+                    Eyebrow("차량 정보")
                     Text(if (profile.demoMode) "시연 데이터" else "Pleos SDK · AAOS", style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary)
                 }
                 VehicleInfoRow("현재 직원", driver?.label ?: "직원 미지정")
@@ -199,7 +200,8 @@ private fun VehicleDetails(state: TripLogState, fresh: Boolean, now: Long, roomy
                 Stat(if (fresh) "최근 수신" else "이전 수신", update, Modifier.weight(1f), large = roomy)
             }
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Eyebrow(if (latest?.recovered == true) "최근 운행 · 종료시각 확인" else "최근 완료 운행")
+                // A label over values inside the card, like 데이터 연결 beside it: grey, not the brand of the card's own label.
+                Eyebrow(if (latest?.recovered == true) "최근 운행 · 종료시각 확인" else "최근 완료 운행", Scene.textSecondary)
                 if (latest == null) {
                     Text("완료된 운행이 아직 없어요", style = MaterialTheme.typography.titleSmall)
                     Text("출발하면 자동으로 기록을 시작해요.", style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary)

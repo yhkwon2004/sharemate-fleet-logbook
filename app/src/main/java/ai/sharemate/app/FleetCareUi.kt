@@ -323,8 +323,9 @@ internal fun careLevelState(level: CareLevel) = when (level) { CareLevel.OVERDUE
             Text(alert.detail, style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (progress != null) {
                 val percent = (progress * 100).roundToInt()
-                // The bar sweeps from the previous value to the new one (spec C); the figure TalkBack hears is the real one.
-                val shown = sweepProgress(progress)
+                // The bar sweeps from the previous value to the new one (spec C); the figure TalkBack hears is the real one. Keyed, so
+                // coming back to the 차량 tab shows it at its value instead of sweeping again from empty.
+                val shown = sweepProgress(progress, key = "vehicle-care-service")
                 LinearProgressIndicator(progress = { shown.value }, modifier = Modifier.fillMaxWidth().height(8.dp).padding(top = 2.dp)
                     .semantics { contentDescription = "정비 주기 ${percent}퍼센트 사용" },
                     color = color, trackColor = Scene.ringTrack, drawStopIndicator = {})
@@ -415,7 +416,9 @@ internal fun careLevelState(level: CareLevel) = when (level) { CareLevel.OVERDUE
 @Composable internal fun CareDueCard(alert: CareAlert, onSnooze: () -> Unit, onDone: () -> Unit, modifier: Modifier = Modifier) {
     val color = careLevelColor(alert.level)
     Panel(modifier) {
-        Eyebrow("차량 관리 · ${careLevelState(alert.level)}", if (alert.level == CareLevel.OVERDUE) color else Scene.textSecondary)
+        // The card's section label takes the brand eyebrow; a deadline already passed says so in the scene's negative.
+        val eyebrow = "차량 관리 · ${careLevelState(alert.level)}"
+        if (alert.level == CareLevel.OVERDUE) Eyebrow(eyebrow, color) else Eyebrow(eyebrow)
         Text(alert.title, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() }, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Muted(alert.detail)
         Text(careGuidance(alert.kind), style = MaterialTheme.typography.bodyLarge)

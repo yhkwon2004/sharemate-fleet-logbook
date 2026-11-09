@@ -2,6 +2,7 @@ package ai.sharemate.app
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -81,8 +82,10 @@ internal fun pairingRemaining(info: SyncInfo, now: Long): String? =
 internal const val CAR_APPEAR_CAP = 5
 
 /**
- * Press feedback for a surface the driver taps on the car (spec C): the surface settles to .98 while held and no ripple
- * draws. The same [source] goes nowhere else. [label] is the click label TalkBack reads.
+ * Press feedback for a surface the driver taps on the car (spec C): the surface settles to .98 while held ([pressable]) and
+ * no ripple draws (indication = null), as on the car's segmented controls and stepper arrows. A car card is built as
+ * `Surface(modifier.carTap(source) { … })`, never `Surface(onClick = …)`, which brings Material's ripple back. The same
+ * [source] goes nowhere else. [label] is the click label TalkBack reads.
  */
 @Composable internal fun Modifier.carTap(source: MutableInteractionSource, enabled: Boolean = true, role: Role = Role.Button, label: String? = null,
     onClick: () -> Unit): Modifier =
@@ -186,9 +189,10 @@ private fun deleteIncident(incident: Incident, act: Act, repository: TripLogRepo
     LaunchedEffect(incident.id) { introduced = true }
     var confirmDelete by remember(incident.id) { mutableStateOf(false) }
     val negative = Scene.negative
-    val surface = MaterialTheme.colorScheme.surface
-    // An accident card is tinted, not translucent: the tint is composited onto the panel surface of the scene in effect.
-    val tint = if (incident.kind == IncidentKind.ACCIDENT) negative.copy(alpha = .08f).compositeOver(surface) else surface
+    val glass = Scene.glass
+    // An accident card is tinted, not translucent: the tint is composited onto the scene's glass, the surface of every other
+    // panel (Material's surface is a shade darker than the glass at night).
+    val tint = if (incident.kind == IncidentKind.ACCIDENT) negative.copy(alpha = .08f).compositeOver(glass) else glass
     Panel(color = tint) {
         Column(Modifier.semantics { liveRegion = LiveRegionMode.Polite }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Eyebrow("${incident.kind.label} · ${incident.status.label} · ${clock(incident.at)}", negative)
@@ -235,13 +239,15 @@ private fun deleteIncident(incident: Incident, act: Act, repository: TripLogRepo
 /**
  * Thumbnails for a report's photos. A photo whose file is not on this device yet shows a placeholder and asks [missing]
  * to fetch it; [version] bumps when a fetch lands so the strip re-reads the files. The remove mark is a 28-dp disc whose
- * touch area is [tapTarget] square (48 on the phone, 56 on the car); the scrim under it stays black on purpose: it sits
- * on a photograph, not on the scene.
+ * touch area is [tapTarget] square (48 on the phone, 56 on the car) and presses like the rest of its device: .98 with no
+ * ripple on the car ([carTap]), .97 with Material's bounded ripple on the phone. The scrim under it stays black on purpose:
+ * it sits on a photograph, not on the scene.
  */
 @Composable internal fun PhotoStrip(photos: List<IncidentPhoto>, store: PhotoStore, version: Int = 0, size: Dp = 96.dp,
     missing: ((String) -> Unit)? = null, onRemove: ((IncidentPhoto) -> Unit)? = null, tapTarget: Dp = 48.dp) {
     if (photos.isEmpty()) return
     val placeholder = Scene.rail
+    val car = LocalLayout.current.startAnchored
     Row(Modifier.horizontalScroll(rememberScrollState()).semantics { contentDescription = "첨부 사진 ${photos.size}장" }, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         photos.forEach { photo ->
             val file = store.file(photo.id)
@@ -251,11 +257,16 @@ private fun deleteIncident(incident: Incident, act: Act, repository: TripLogRepo
                 bitmap?.let { Image(it.asImageBitmap(), "사진 ${clock(photo.at)} · ${photo.source.label}", Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
                     ?: Text(if (missing != null) "받는 중" else "사진 없음", style = MaterialTheme.typography.labelSmall, color = Scene.textSecondary,
                         modifier = Modifier.align(Alignment.Center))
-                if (onRemove != null) Box(Modifier.align(Alignment.TopEnd).size(tapTarget.coerceAtMost(size))
-                        .clickable(role = Role.Button, onClickLabel = "사진 삭제") { onRemove(photo) }.semantics { contentDescription = "사진 삭제" },
-                        contentAlignment = Alignment.TopEnd) {
-                    Surface(shape = CircleShape, color = Color.Black.copy(alpha = .55f), contentColor = Color.White, modifier = Modifier.padding(4.dp).size(28.dp)) {
-                        Text("×", textAlign = TextAlign.Center, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 2.dp).clearAndSetSemantics {})
+                if (onRemove != null) {
+                    val source = remember(photo.id) { MutableInteractionSource() }
+                    val area = Modifier.align(Alignment.TopEnd).size(tapTarget.coerceAtMost(size))
+                    val press = if (car) area.carTap(source, label = "사진 삭제") { onRemove(photo) }
+                        else area.pressable(source, .97f).clickable(interactionSource = source, indication = LocalIndication.current, role = Role.Button,
+                            onClickLabel = "사진 삭제") { onRemove(photo) }
+                    Box(press.semantics { contentDescription = "사진 삭제" }, contentAlignment = Alignment.TopEnd) {
+                        Surface(shape = CircleShape, color = Color.Black.copy(alpha = .55f), contentColor = Color.White, modifier = Modifier.padding(4.dp).size(28.dp)) {
+                            Text("×", textAlign = TextAlign.Center, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 2.dp).clearAndSetSemantics {})
+                        }
                     }
                 }
             }
@@ -356,7 +367,8 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
             Stat("계기판", km(session.odometerKm), Modifier.weight(1f))
         }
         if (anchors.isNotEmpty()) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Eyebrow("이 차가 지난번에 낸 금액")
+            // A caption over the chips inside the card, not the card's own label: grey, while section labels take the brand eyebrow.
+            Eyebrow("이 차가 지난번에 낸 금액", Scene.textSecondary)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 anchors.forEach { anchor -> AmountChip(anchor.label, Modifier.weight(1f), description = "${anchor.label}, 이 금액으로 등록", known = true) { register(anchor.amountWon) } }
             }

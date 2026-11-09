@@ -54,7 +54,8 @@ internal fun DemoTutorial(exporting: Boolean, saveFile: (String, String, ByteArr
     val at = rememberSaveable { System.currentTimeMillis() }
     val data = remember(step, employee, purpose, at) { tutorialData(step, employee, purpose, at) }
     val swap = cardSwap()
-    val progress = sweepProgress((step + 1) / 6f)
+    // Keyed: reopening the walkthrough (or the activity coming back) shows the bar at its step instead of sweeping from empty.
+    val progress = sweepProgress((step + 1) / 6f, key = "tutorial-progress")
     Dialog(onDismissRequest = close, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxWidth(.95f).fillMaxHeight(.94f), shape = RoundedCornerShape(28.dp), color = Scene.bg, contentColor = Scene.text, border = Scene.edge) {
             BoxWithConstraints(Modifier.padding(24.dp)) {
@@ -62,7 +63,7 @@ internal fun DemoTutorial(exporting: Boolean, saveFile: (String, String, ByteArr
                 Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                     Row(Modifier.heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Eyebrow("SHAREMATE EXPERIENCE · ${step + 1} / 6", Scene.brand)
+                            Eyebrow("SHAREMATE EXPERIENCE · ${step + 1} / 6")
                             Text("직접 체험하는 자동 운행일지", style = MaterialTheme.typography.headlineSmall)
                         }
                         TextButton(onClick = close, modifier = Modifier.heightIn(min = 56.dp)) { Text("시연 닫기") }
@@ -73,7 +74,7 @@ internal fun DemoTutorial(exporting: Boolean, saveFile: (String, String, ByteArr
                         val shownData = remember(shown, employee, purpose, at) { tutorialData(shown, employee, purpose, at) }
                         val story: @Composable (Modifier) -> Unit = { modifier ->
                             KeyCard(modifier, padding = 28.dp) {
-                                Eyebrow(TUTORIAL_EYEBROWS[shown], Scene.brand)
+                                Eyebrow(TUTORIAL_EYEBROWS[shown])
                                 Text(TUTORIAL_TITLES[shown], style = MaterialTheme.typography.headlineMedium, color = Scene.text)
                                 VehicleDrawing(Modifier.fillMaxWidth().height(if (wide) 180.dp else 105.dp))
                                 Text(when (shown) { 0 -> shownData.drivers[employee].label; 1 -> "D → 운행 기록 시작"; 2 -> "P → 12.4 km 저장"; 3 -> "주유·충전 55,000원"; 4 -> "운행·직원·경비 통합"; else -> "운행기록부 + 직원별 현황 + 경비원장" },
