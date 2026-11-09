@@ -132,6 +132,9 @@ private val NightPaint = SkyPaint(
     orb = Color(0xFFF8F0DC), orbHalo = Color(0x4DF6EBD3), orbShade = Color(0x1A0B111C), orbRadius = .040f, clouds = null,
 )
 
+/** The day sky at its top: the darkest sky any day haze lies over, so the haze's weakest point under text (checked in SceneTest). */
+internal val DaySkyTop = Color(0xFF4F9BE8)
+
 /**
  * A clear morning (2.10 spec, section A): a deep blue overhead that warms to a pale haze at the horizon, a low sun with a
  * wide halo and no rays, four still white clouds, a pale-blue ridge and far towers, near towers in a slate blue that keeps
@@ -139,7 +142,7 @@ private val NightPaint = SkyPaint(
  * reflections. No stars, no bloom, no red beacons: nothing that reads as night.
  */
 private val DayPaint = SkyPaint(
-    sky = listOf(0f to Color(0xFF4F9BE8), .45f to Color(0xFF8FC1F2), .70f to Color(0xFFD7E9F8), 1f to Color(0xFFF3EEE4)),
+    sky = listOf(0f to DaySkyTop, .45f to Color(0xFF8FC1F2), .70f to Color(0xFFD7E9F8), 1f to Color(0xFFF3EEE4)),
     horizonGlow = listOf(Color(0x99FFFFFF), Color(0x40FFFFFF), Color(0x00FFFFFF)),
     water = listOf(0f to Color(0xFFB9D4EC), .40f to Color(0xFFD5E6F4), 1f to Color(0xFFEEF3FA)),
     ridge = Color(0xFFAEC1D6), farBody = Color(0xFFB5C6DA), farWarm = Color(0x8CFFFFFF), farCool = Color(0x80E6EEF7), nearBody = Color(0xFF7B90AC),

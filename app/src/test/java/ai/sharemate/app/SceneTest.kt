@@ -3,6 +3,7 @@ package ai.sharemate.app
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.text.intl.LocaleList
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.unit.Dp
@@ -74,6 +75,31 @@ class SceneTest {
         assertEquals(DaySceneColors, sceneColorsFor(ScenePhase.DAY))
         assertEquals(NightSceneColors, sceneColorsFor(ScenePhase.DUSK))
         assertEquals(NightSceneColors, sceneColorsFor(ScenePhase.NIGHT))
+    }
+
+    @Test fun duskAndNightChangeOnlyTheSky() {
+        // The palette changes between day and the other two, so only those changes fade the content through the base colour.
+        listOf(ScenePhase.DUSK, ScenePhase.NIGHT).forEach { dark ->
+            assertTrue("낮 → $dark 은 페이드스루", sceneChangeNeedsScrim(ScenePhase.DAY, dark))
+            assertTrue("$dark → 낮 은 페이드스루", sceneChangeNeedsScrim(dark, ScenePhase.DAY))
+        }
+        // Dusk and night share the Midnight palette: no scrim, the shown phase moves at once and only the sky crossfades.
+        assertTrue("해 질 무렵 → 밤은 하늘만", !sceneChangeNeedsScrim(ScenePhase.DUSK, ScenePhase.NIGHT))
+        assertTrue("밤 → 해 뜰 무렵도 하늘만", !sceneChangeNeedsScrim(ScenePhase.NIGHT, ScenePhase.DUSK))
+        ScenePhase.entries.forEach { assertTrue("같은 장면은 바꿀 것이 없음", !sceneChangeNeedsScrim(it, it)) }
+        // The sky-only clock: the crossfade keeps its length (600 ms, 360 on a tap), nothing is hidden, and no scrim is ever drawn.
+        listOf(false, true).forEach { tap ->
+            val full = sceneChangeTiming(tap)
+            val sky = skyOnlyTiming(full)
+            assertEquals("하늘은 같은 길이로 겹침", full.crossfadeMs, sky.crossfadeMs)
+            assertEquals("가려지는 구간 없음", 0, sky.swapAtMs)
+            assertEquals(sky.crossfadeMs, sky.totalMs)
+            listOf(0f, 1f, sky.totalMs / 2f, sky.totalMs.toFloat(), 2_000f).forEach { ms ->
+                assertEquals("스크림 없음 ($ms ms)", 0f, sceneScrimAlpha(ms, sky), 0f)
+            }
+            // With nothing hidden, the orb and the stars move over the whole crossfade.
+            listOf(0f, .25f, .5f, 1f).forEach { t -> assertEquals(t, sceneRevealProgress(t, sky), 1e-4f) }
+        }
     }
 
     @Test fun aSecondChangeCarriesOnFromTheScrimAsItStands() {
@@ -208,10 +234,40 @@ class SceneTest {
         listOf(day.positive, day.negative).forEach { color -> assertTrue("$color status text on white", contrast(color, day.glass) >= 4.5) }
         assertTrue("outline on white", contrast(day.outline, day.glass) >= 3.0)
         assertTrue("white icon on the tile", contrast(Color.White, day.tileEnd) >= 4.5 && contrast(Color.White, day.tileStart) >= 4.5)
-        assertTrue("selection ring on the selection fill", contrast(day.selectionRing, day.glass) >= 3.0)
+        // The selection: an opaque fill (the glow at .12 over white), so a selected chip, segment or row reads the same on glass,
+        // on a rail sheet or straight over the sky; the ring and the glow label are measured on the fill itself (spec: 5.15).
+        assertEquals("낮 선택 채움은 불투명", 1f, day.selectionFill.alpha, 0f)
+        assertEquals(Color(0xFFE2EDF0), day.selectionFill)
+        listOf(day.glass, day.rail, day.bg, DaySkyTop).forEach { under ->
+            val selected = day.selectionFill.compositeOver(under)
+            assertTrue("selection ring on the selection fill over $under", contrast(day.selectionRing, selected) >= 3.0)
+            assertTrue("glow label on the selection fill over $under", contrast(day.glow, selected) >= 4.5)
+        }
+        assertEquals("spec: glow on fill 5.15", 5.15, contrast(day.glow, day.selectionFill), .01)
+        assertTrue("textMuted on the rail", contrast(day.textMuted, day.rail) >= 4.5)
+        // Only text, textSecondary and brand sit on the day haze. Its weakest point under text: the car hero haze at .76 (the
+        // stop at the hero column's edge) and the sign-in haze at .84, each over the top of the day sky.
+        val heroHaze = skyScrims(day = true, leftScrim = true, horizonAt = .52f, haze = day.haze, bg = day.bg)[0].stops[1].second
+        assertEquals(.76f, heroHaze.alpha, .005f)
+        val hazes = listOf(heroHaze.compositeOver(DaySkyTop), day.haze.copy(alpha = .84f).compositeOver(DaySkyTop))
+        assertNear("히어로 안개 ≈ #D5E7F9", Color(0xFFD5E7F9), hazes[0])
+        assertNear("로그인 안개 ≈ #E3EFFB", Color(0xFFE3EFFB), hazes[1])
+        (hazes + listOf(Color(0xFFD5E7F9), Color(0xFFE3EFFB))).forEach { haze ->
+            listOf(day.text, day.textSecondary, day.brand).forEach { color -> assertTrue("$color on the haze $haze", contrast(color, haze) >= 4.5) }
+        }
         val night = NightSceneColors
         listOf(night.text, night.textSecondary, night.textMuted, night.glow, night.warn, night.brand).forEach { color ->
             assertTrue("$color on night glass", contrast(color, night.glass) >= 4.5)
+        }
+        // The night outline is the only edge of an empty text field: 3:1 on night glass, and on the night background and rail.
+        assertEquals(Color(0xFF6E7A8F), night.outline)
+        listOf(night.glass, night.bg, night.rail).forEach { under -> assertTrue("night outline on $under", contrast(night.outline, under) >= 3.0) }
+    }
+
+    /** Two opaque colours within one step of 255 per channel (a composite rounds either way). */
+    private fun assertNear(message: String, expected: Color, actual: Color) {
+        listOf(expected.red to actual.red, expected.green to actual.green, expected.blue to actual.blue).forEach { (e, a) ->
+            assertEquals(message, e * 255f, a * 255f, 1.01f)
         }
     }
 
@@ -268,5 +324,15 @@ class SceneTest {
             assertEquals("지금은 해 질 무렵이에요 · 곧 밤 화면으로 바뀌어요", sceneModeHint(SceneMode.AUTO, scenePhaseAt(evening), morning = evening.hour < 12))
         }
         assertEquals("고정하면 아침이어도 그대로", "항상 어두운 밤 화면을 써요", sceneModeHint(SceneMode.NIGHT, ScenePhase.DUSK, morning = true))
+        // While the car's light sensor holds the night scene, the line says why (in place of the clock's line, which would say
+        // '지금은 낮 화면이에요' over a night screen). Only under 자동: a 낮 or 밤 choice ignores the sensor.
+        assertEquals("지금은 터널·주차장이라 밤 화면이에요 · 밝아지면 낮 화면으로 돌아가요", sceneModeHint(SceneMode.AUTO, ScenePhase.NIGHT, vetoed = true))
+        assertEquals(SCENE_VETO_HINT, sceneModeHint(SceneMode.AUTO, ScenePhase.NIGHT, morning = true, vetoed = true))
+        assertEquals("항상 밝은 낮 화면을 써요", sceneModeHint(SceneMode.DAY, ScenePhase.DAY, vetoed = true))
+        assertEquals("지금은 밤 화면이에요 · 해가 뜨면 낮 화면으로 바뀌어요", sceneModeHint(SceneMode.AUTO, ScenePhase.NIGHT, vetoed = false))
+        // Short and polite: every line ends in -요.
+        listOf(SCENE_VETO_HINT, sceneModeHint(SceneMode.AUTO, ScenePhase.DAY), sceneModeHint(SceneMode.NIGHT, ScenePhase.NIGHT)).forEach {
+            assertTrue(it, it.endsWith("요"))
+        }
     }
 }

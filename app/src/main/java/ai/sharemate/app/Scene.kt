@@ -1,10 +1,14 @@
 package ai.sharemate.app
 
 import android.content.Context
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
@@ -61,8 +65,11 @@ data class SceneColors(
     /** The sweep that starts the completion ring and the tile halo. */
     val accent: Color,
     val isDay: Boolean,
-    /** 2.10 spec: status colours, selection and scrim tokens that differ by scene (night defaults). */
-    val positive: Color = Color(0xFF00E074), val negative: Color = Color(0xFFFF4C28), val outline: Color = Color(0xFF5E6A7E),
+    /**
+     * 2.10 spec: status colours, selection and scrim tokens that differ by scene (night defaults). The night outline is
+     * #6E7A8F, 3.7:1 on night glass: it is the only edge of an empty text field (#5E6A7E was 2.9:1).
+     */
+    val positive: Color = Color(0xFF00E074), val negative: Color = Color(0xFFFF4C28), val outline: Color = Color(0xFF6E7A8F),
     val selectionFill: Color = Color(0x244CE3F0), val selectionRing: Color = Color(0x734CE3F0),
     /** The scrim colour laid over the sky behind text (bg by night, white by day), the sun or moon, and the drop shadow under tappable cards. */
     val haze: Color = Color(0xFF0B111C), val sun: Color = Color(0xFFF6EBD3), val shadow: Color = Color.Transparent,
@@ -88,7 +95,10 @@ internal val NightSceneColors = SceneColors(
 /**
  * Day: a clear morning. White glass on a pale sky, ink-navy text, a deep teal for what is active. Every text token clears
  * WCAG AA on the day background and on white glass: text 15.9:1, textSecondary 8.1:1, textMuted 5.4:1, glow 6.1:1,
- * warn 6.1:1, brand 6.2:1 against #FFFFFF, and all of them at least 4.9:1 against #EEF3FA (checked in SceneTest).
+ * warn 6.1:1, brand 6.2:1 against #FFFFFF, and all of them at least 4.9:1 against #EEF3FA (checked in SceneTest). The
+ * selection fill is opaque (#E2EDF0, the glow at .12 over white): selected chips, segments and rows draw it in place of
+ * glass, on rail sheets and over the sky as well, and a glow label keeps 5.15:1 on it wherever it sits (the translucent
+ * fill fell to 4.3:1 there). Night keeps its translucent fill.
  */
 internal val DaySceneColors = SceneColors(
     bg = Color(0xFFEEF3FA), rail = Color(0xFFE3EAF4), glass = Color(0xFFFFFFFF), glassBorder = Color(0x241B2B4D),
@@ -101,7 +111,7 @@ internal val DaySceneColors = SceneColors(
     glowCool = Color(0x40A8C8FF), glowWarm = Color(0x33FFC9A0), accent = Color(0xFF2F6BFF),
     isDay = true,
     positive = Color(0xFF00703C), negative = Color(0xFFC62B0C), outline = Color(0xFF6B7786),
-    selectionFill = Color(0x1F0B6B7E), selectionRing = Color(0xFF0B6B7E),
+    selectionFill = Color(0xFFE2EDF0), selectionRing = Color(0xFF0B6B7E),
     haze = Color(0xFFFFFFFF), sun = Color(0xFFFFD27A), shadow = Color(0x1F121A2B),
 )
 
@@ -113,6 +123,9 @@ val LocalScene = compositionLocalOf { NightSceneColors }
 
 /** The phase in effect (the sky to draw), provided by [SceneTheme]. */
 val LocalScenePhase = staticCompositionLocalOf { ScenePhase.NIGHT }
+
+/** True while the car's light sensor holds the scene at night (a tunnel, a car park), provided by [SceneTheme]; the settings card says so. */
+val LocalSceneVeto = compositionLocalOf { false }
 
 /** The scene's colours, read where they are drawn: `Scene.glass`, `Scene.text`, `Scene.edge`. */
 internal object Scene {
@@ -187,6 +200,108 @@ internal fun nextSceneChangeIn(time: LocalDateTime, mode: SceneMode = SceneMode.
     return (steps + 1) * 60_000L
 }
 
+// ───────────────────────── the car's light sensor (pure, unit-tested) ─────────────────────────
+
+/** How long the system must say night before the car's scene follows it, and how long it must say day again before the scene lets go. */
+internal const val SENSOR_HOLD_MS = 90_000L
+internal const val SENSOR_RELEASE_MS = 90_000L
+/** The least time between two sensor flips: the sensor takes hold at most once in 10 minutes. */
+internal const val SENSOR_FLIP_GAP_MS = 10 * 60_000L
+
+/**
+ * The light-sensor veto (spec A, the car only). Pleos sets the system's night mode from its light sensor (a tunnel, a car
+ * park, the headlights); held [SENSOR_HOLD_MS] it turns a day or dusk scene to night under 자동, and it lets go
+ * [SENSOR_RELEASE_MS] after the flag clears. Times are monotonic ms (elapsedRealtime). [forcing]: the veto holds.
+ * [nightSince]: when the current run of night began (null while the system says day). [daySince]: when the flag cleared
+ * while the veto holds. [lastFlipAt]: when the veto last took hold or let go.
+ */
+@Immutable
+internal data class SensorVeto(val forcing: Boolean = false, val nightSince: Long? = null, val daySince: Long? = null, val lastFlipAt: Long? = null)
+
+/** One step of the veto: its state after the step, whether it turns the scene to night now, and when to look again (null: only when an input changes). */
+internal class SensorVetoStep(val veto: SensorVeto, val vetoing: Boolean, val wakeAt: Long?)
+
+/**
+ * Steps the veto to [now] (pure, unit-tested). It takes hold once the flag has said night for [SENSOR_HOLD_MS] and
+ * [SENSOR_FLIP_GAP_MS] has passed since its last flip, so a run of tunnels cannot flap the screen; it lets go
+ * [SENSOR_RELEASE_MS] after the flag clears and never later: a night screen in daylight is the worse error, and the
+ * settings line promises the day screen back once it is bright. The flag is followed whatever the mode; a 낮 or 밤 choice
+ * (and the night band, which is night already) only keeps it off the screen ([sensorVetoes]).
+ */
+internal fun sensorVetoStep(previous: SensorVeto, now: Long, sensorNight: Boolean, clockPhase: ScenePhase, mode: SceneMode): SensorVetoStep {
+    val nightSince = if (sensorNight) previous.nightSince ?: now else null
+    var forcing = previous.forcing
+    var daySince = if (forcing && !sensorNight) previous.daySince ?: now else null
+    var lastFlipAt = previous.lastFlipAt
+    var wakeAt: Long? = null
+    if (forcing) {
+        if (daySince != null) {
+            val due = daySince + SENSOR_RELEASE_MS
+            if (now >= due) { forcing = false; daySince = null; lastFlipAt = now } else wakeAt = due
+        }
+    } else if (nightSince != null) {
+        val due = maxOf(nightSince + SENSOR_HOLD_MS, lastFlipAt?.plus(SENSOR_FLIP_GAP_MS) ?: Long.MIN_VALUE)
+        if (now >= due) { forcing = true; lastFlipAt = now } else wakeAt = due
+    }
+    val veto = SensorVeto(forcing, nightSince, daySince, lastFlipAt)
+    return SensorVetoStep(veto, sensorVetoes(veto, clockPhase, mode), wakeAt)
+}
+
+/** Whether the veto turns this moment's scene to night: it holds, the mode is 자동 and the clock says day or dusk. */
+internal fun sensorVetoes(veto: SensorVeto, clockPhase: ScenePhase, mode: SceneMode): Boolean =
+    veto.forcing && mode == SceneMode.AUTO && clockPhase != ScenePhase.NIGHT
+
+// ───────────────────────── what the screen showed (process-level, unit-tested) ─────────────────────────
+
+/**
+ * The phase a new [SceneTheme] starts on (pure, unit-tested). While the car drives (and every car theme starts that way,
+ * until the restriction service answers) it picks up the phase pinned when driving began ([held]), else the one last on
+ * screen, so a recreated activity never changes the driving screen's palette; parked, and on the phone, it starts on the
+ * phase asked for, as a fresh screen should.
+ */
+internal fun sceneSeed(requested: ScenePhase, hold: Boolean, held: ScenePhase?, lastShown: ScenePhase?): ScenePhase =
+    if (hold) held ?: lastShown ?: requested else requested
+
+/**
+ * The scene's memory for the life of the process: what the car's and the phone's screens last showed, the phase pinned while
+ * the car drives, and the light-sensor veto. [SceneTheme] lives in composition, so an activity that is recreated (the
+ * manifest keeps day/night flips and resizes from doing that; a locale or density change still does) would otherwise start
+ * again from the clock and could change the palette mid-drive. Plain memory, no Android.
+ */
+internal object SceneController {
+    private val shown = arrayOfNulls<ScenePhase>(2)
+    private val held = arrayOfNulls<ScenePhase>(2)
+    private var veto = SensorVeto()
+
+    private fun slot(compact: Boolean) = if (compact) 1 else 0
+
+    @Synchronized fun lastShown(compact: Boolean): ScenePhase? = shown[slot(compact)]
+    @Synchronized fun held(compact: Boolean): ScenePhase? = held[slot(compact)]
+
+    /** Notes what [compact]'s screen shows and, while the car drives, the phase it keeps ([holding]; null when parked). */
+    @Synchronized fun record(compact: Boolean, phase: ScenePhase, holding: ScenePhase?) {
+        shown[slot(compact)] = phase
+        held[slot(compact)] = holding
+    }
+
+    /** The phase a new theme for [compact]'s screen starts on ([sceneSeed]). */
+    @Synchronized fun seed(compact: Boolean, requested: ScenePhase, hold: Boolean): ScenePhase =
+        sceneSeed(requested, hold, held[slot(compact)], shown[slot(compact)])
+
+    @Synchronized fun currentVeto(): SensorVeto = veto
+
+    /** Steps the car's light-sensor veto to [now] and keeps the result ([sensorVetoStep]). */
+    @Synchronized fun stepVeto(now: Long, sensorNight: Boolean, clockPhase: ScenePhase, mode: SceneMode): SensorVetoStep =
+        sensorVetoStep(veto, now, sensorNight, clockPhase, mode).also { veto = it.veto }
+
+    /** Forgets everything (unit tests). */
+    @Synchronized fun reset() {
+        shown.fill(null)
+        held.fill(null)
+        veto = SensorVeto()
+    }
+}
+
 // ───────────────────────── the driver's choice ─────────────────────────
 
 /** 자동 · 낮 · 밤, kept in plain preferences (not in the logbook file, so a scene choice never changes a record). */
@@ -215,31 +330,54 @@ object ScenePrefs {
     return mode ?: SceneMode.AUTO
 }
 
+/** The settings line while the car's light sensor holds the scene at night (spec A). */
+internal const val SCENE_VETO_HINT = "지금은 터널·주차장이라 밤 화면이에요 · 밝아지면 낮 화면으로 돌아가요"
+
 /**
  * The copy under the scene choice in settings. Dusk covers the half hour around sunrise as well as the 45 minutes either side
- * of sunset, so [morning] (before noon) tells a dusk that turns to day from one that turns to night.
+ * of sunset, so [morning] (before noon) tells a dusk that turns to day from one that turns to night. While the car's light
+ * sensor holds the night scene ([vetoed], 자동 only) the line says that instead: the clock's line (at noon '지금은 낮
+ * 화면이에요 · 해 질 무렵…') would contradict the screen.
  */
-internal fun sceneModeHint(mode: SceneMode, phase: ScenePhase, morning: Boolean = false): String = when (mode) {
-    SceneMode.AUTO -> when (phase) {
-        ScenePhase.DAY -> "지금은 낮 화면이에요 · 해 질 무렵 밤 화면으로 바뀌어요"
-        ScenePhase.DUSK -> if (morning) "지금은 해 뜰 무렵이에요 · 곧 낮 화면으로 바뀌어요" else "지금은 해 질 무렵이에요 · 곧 밤 화면으로 바뀌어요"
-        ScenePhase.NIGHT -> "지금은 밤 화면이에요 · 해가 뜨면 낮 화면으로 바뀌어요"
+internal fun sceneModeHint(mode: SceneMode, phase: ScenePhase, morning: Boolean = false, vetoed: Boolean = false): String = when (mode) {
+    SceneMode.AUTO -> when {
+        vetoed -> SCENE_VETO_HINT
+        phase == ScenePhase.DAY -> "지금은 낮 화면이에요 · 해 질 무렵 밤 화면으로 바뀌어요"
+        phase == ScenePhase.DUSK -> if (morning) "지금은 해 뜰 무렵이에요 · 곧 낮 화면으로 바뀌어요" else "지금은 해 질 무렵이에요 · 곧 밤 화면으로 바뀌어요"
+        else -> "지금은 밤 화면이에요 · 해가 뜨면 낮 화면으로 바뀌어요"
     }
     SceneMode.DAY -> "항상 밝은 낮 화면을 써요"
     SceneMode.NIGHT -> "항상 어두운 밤 화면을 써요"
 }
 
-/** The settings row for the scene, shared by the car (설정 › 화면) and the phone (설정): a segmented 자동 · 낮 · 밤 with one line under it. */
+/**
+ * The settings row for the scene, shared by the car (설정 › 화면) and the phone (설정): a segmented 자동 · 낮 · 밤 with one line
+ * under it, which on the car says so while the light sensor holds the night scene ([LocalSceneVeto]).
+ */
 @Composable internal fun SceneModeCard(modifier: Modifier = Modifier, compact: Boolean = false) {
     val context = LocalContext.current
     val mode = rememberSceneMode()
     val phase = LocalScenePhase.current
+    val vetoed = LocalSceneVeto.current
     Panel(modifier, padding = if (compact) 20.dp else 28.dp) {
         Eyebrow("화면 분위기")
         Column {
             Segmented(SceneMode.entries.map { it.label }, SceneMode.entries.indexOf(mode)) { ScenePrefs.set(context, SceneMode.entries[it]) }
         }
         // A change of phase recomposes the card, so the clock is read again then; sunrise and sunset never share a side of noon.
-        Muted(sceneModeHint(mode, phase, morning = LocalDateTime.now().hour < 12))
+        Muted(sceneModeHint(mode, phase, morning = LocalDateTime.now().hour < 12, vetoed = vetoed))
+    }
+}
+
+/**
+ * The phone activities' system bars follow the scene, not the system theme: dark icons on the day backdrop, light ones by
+ * night, over transparent bars so the backdrop runs under both. Shared by PhoneActivity and PhoneLogbookActivity.
+ */
+@Composable internal fun SceneSystemBars(activity: ComponentActivity) {
+    val day = Scene.isDay
+    LaunchedEffect(activity, day) {
+        val style = if (day) SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+            else SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        activity.enableEdgeToEdge(style, style)
     }
 }

@@ -65,15 +65,7 @@ class PhoneLogbookActivity : ComponentActivity() {
         if (packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_AUTOMOTIVE)) { finish(); return }
         // The backdrop runs under both system bars; their icons follow the scene (light on the night scrim, dark by day).
         enableEdgeToEdge(SystemBarStyle.dark(android.graphics.Color.TRANSPARENT), SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
-        setContent { SceneTheme(compact = true) { SceneSystemBars(); PhoneLogbookApp(intent?.data) } }
-    }
-
-    @Composable private fun SceneSystemBars() {
-        val day = Scene.isDay
-        LaunchedEffect(day) {
-            val style = if (day) SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT) else SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
-            enableEdgeToEdge(style, style)
-        }
+        setContent { SceneTheme(compact = true) { SceneSystemBars(this@PhoneLogbookActivity); PhoneLogbookApp(intent?.data) } }
     }
 }
 

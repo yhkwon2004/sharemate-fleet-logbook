@@ -1,5 +1,6 @@
 package ai.sharemate.app
 
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -32,16 +33,15 @@ class LogbookUiTest {
         assertEquals("시연 데이터" to PillTone.DEMO, statusPillInfo(ready.copy(signal = SignalStatus.DEMO), fresh = true, status = "수신 중"))
     }
 
-    @Test fun theTaskStackIsComposedOnlyWhileItCouldShowSomething() {
-        val end = at(11, 4, 10)
-        val auto = Trip(id("t"), at(11, 4, 9), end, 100.0, 110.0, purpose = TripPurpose.BUSINESS, purposeSource = EditSource.AUTO)
-        val data = TripLogData(trips = listOf(auto))
-        assertTrue("할 일이 있으면 항상", taskStackHasContent(listOf(ParkedTask(TaskKind.PURPOSE, 1)), TripLogData(), null, end))
-        assertTrue("방금 끝난 자동 분류 운행은 카드와 목적 선택을 위해 유지", taskStackHasContent(emptyList(), data, auto.id, end + 60_000))
-        assertFalse("유예 시간이 지나면 해제", taskStackHasContent(emptyList(), data, auto.id, end + 11 * 60_000))
-        assertFalse("직접 분류한 운행은 카드가 없음", taskStackHasContent(emptyList(), data.copy(trips = listOf(auto.copy(purposeSource = EditSource.DRIVER))), auto.id, end + 60_000))
-        assertFalse("자동 완성이 꺼져 있으면 카드가 없음", taskStackHasContent(emptyList(), data.copy(profile = FleetProfile(autopilot = false)), auto.id, end + 60_000))
-        assertFalse("아무것도 없으면 비움", taskStackHasContent(emptyList(), data, null, end))
+    @Test fun theExcelPreviewFillsThePaneUnderTheViewTabsAndNeverDropsUnder480() {
+        // FULL car pane, about 950 dp: less the pinned save bar (72 + 16) and the view tabs with the range line (66 + 16 + 16 + 16).
+        assertEquals(748f, excelPreviewHeight(950.dp).value, .01f)
+        assertEquals("큰 글꼴은 범위 줄이 커진 만큼만 줄어듦", 743.2f, excelPreviewHeight(950.dp, 1.3f).value, .01f)
+        assertEquals("짧은 창은 480에서 멈추고 창이 더 스크롤", EXCEL_PREVIEW_MIN_HEIGHT, excelPreviewHeight(400.dp))
+        assertEquals(480f, EXCEL_PREVIEW_MIN_HEIGHT.value, .01f)
+        assertEquals("큰 글꼴의 최소 높이는 글꼴만큼 커짐", 624f, excelPreviewHeight(400.dp, 1.3f).value, .01f)
+        assertEquals("높이가 정해지지 않으면 최소값", EXCEL_PREVIEW_MIN_HEIGHT, excelPreviewHeight(Dp.Infinity))
+        assertEquals("저장 바 72 + 위 간격 16", 88f, SAVE_BAR_RESERVE.value, .01f)
     }
 
     @Test fun logFilterLabelsCarryTheCountsAndShortenWhereTheRowIsNarrow() {

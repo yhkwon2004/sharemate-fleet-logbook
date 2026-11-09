@@ -5,6 +5,7 @@ import android.car.drivingstate.CarUxRestrictions
 import android.car.drivingstate.CarUxRestrictionsManager
 import android.content.pm.PackageManager
 import android.content.pm.PermissionInfo
+import android.content.res.Configuration
 import android.os.Bundle
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -61,6 +62,16 @@ class MainActivity : ComponentActivity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) hideStatusBar()
+    }
+
+    /**
+     * The manifest keeps this activity through a day/night flip (the Pleos light sensor), a rotation and a split-window resize
+     * (configChanges), so the driving state above is not rebuilt as "restricted, unknown" mid-drive and the scene keeps its hold;
+     * Compose re-reads the configuration itself. The status strip is hidden again in case the system bars were re-laid out.
+     */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        hideStatusBar()
     }
 
     private fun requestDataPermissions() {

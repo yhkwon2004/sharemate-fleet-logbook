@@ -11,17 +11,16 @@ import android.os.Bundle
 import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.SystemBarStyle
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -29,8 +28,10 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -67,7 +68,7 @@ class PhoneActivity : ComponentActivity() {
             val state by model.state.collectAsState()
             // 2.10: the inspection app follows the same scene as the logbook (day by daylight, night otherwise, or the driver's choice).
             SceneTheme(compact = true) {
-                SceneSystemBars()
+                SceneSystemBars(this@PhoneActivity)
                 PhoneApp(model, state, capture = { stage, view ->
                     model.prepareCapture(stage, view) { uri ->
                         try { if (view == EvidenceView.WALKAROUND) video.launch(uri) else photo.launch(uri) }
@@ -83,15 +84,6 @@ class PhoneActivity : ComponentActivity() {
                     MobileConnectionPanel(onSessionChanged = model::setLinkedSession, inspectionSummary = model.exportSummary(), visible = visible)
                 })
             }
-        }
-    }
-
-    /** Bar icons follow the scene, not the system theme: dark on the day backdrop, light by night (the logbook activity does the same). */
-    @Composable private fun SceneSystemBars() {
-        val day = Scene.isDay
-        LaunchedEffect(day) {
-            val style = if (day) SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT) else SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
-            enableEdgeToEdge(style, style)
         }
     }
 }
@@ -316,15 +308,35 @@ private val stepLabels = EvidenceView.entries.map { it.label } + listOf("문제 
     }
 }
 
-/** Seven step marks, each a 48-dp target: the current one in the glow, finished ones in the positive green, the rest on the ring track. */
+/** What TalkBack hears after a step's name (pure, unit-tested): the current step says so, a finished one says 완료, the rest nothing. */
+internal fun inspectionStepState(current: Boolean, done: Boolean): String? = when {
+    current && done -> "현재 단계 · 완료"
+    current -> "현재 단계"
+    done -> "완료"
+    else -> null
+}
+
+/**
+ * Seven step marks, each a target at least 48 dp tall that meets the next (the 6-dp gaps between the bars lie inside the
+ * targets, so on a phone each is about 53 dp wide). Finished steps are positive green, the rest the ring track; the current
+ * step is lit in the glow and drawn taller (14 dp against 6), because by night the glow and the green are about as bright, so
+ * colour alone would not tell it apart. Each mark is a tab: TalkBack hears the step, '현재 단계' or '완료', and which is selected.
+ */
 @Composable private fun StepTrack(current: Int, done: (Int) -> Boolean, select: (Int) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(Modifier.fillMaxWidth().selectableGroup()) {
             stepLabels.indices.forEach { index ->
-                val color = when { index == current -> Scene.glow; done(index) -> Scene.positive; else -> Scene.ringTrack }
-                Box(Modifier.weight(1f).heightIn(min = 48.dp).clickable { select(index) }
-                    .semantics { contentDescription = "${index + 1}단계 ${stepLabels[index]}${if (done(index)) " 완료" else ""}" }, contentAlignment = Alignment.Center) {
-                    Box(Modifier.fillMaxWidth().height(6.dp).background(color, RoundedCornerShape(3.dp)))
+                val isCurrent = index == current
+                val finished = done(index)
+                val color = when { isCurrent -> Scene.glow; finished -> Scene.positive; else -> Scene.ringTrack }
+                Box(Modifier.weight(1f).heightIn(min = 48.dp)
+                    .selectable(selected = isCurrent, role = Role.Tab) { select(index) }
+                    .semantics {
+                        contentDescription = "${index + 1}단계 ${stepLabels[index]}"
+                        inspectionStepState(isCurrent, finished)?.let { stateDescription = it }
+                    }
+                    .padding(horizontal = 3.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.fillMaxWidth().height(if (isCurrent) 14.dp else 6.dp).background(color, RoundedCornerShape(if (isCurrent) 7.dp else 3.dp)))
                 }
             }
         }

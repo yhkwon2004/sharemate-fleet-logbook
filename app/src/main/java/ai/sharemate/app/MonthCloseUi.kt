@@ -184,8 +184,9 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
     val key = monthKey(status.month)
     val closed = status.closed
     val percent = status.percent
-    // The completion bar sweeps from the previous value to the new one (spec C); TalkBack hears the real figure.
-    val progress = sweepProgress((percent ?: 0) / 100f)
+    // The completion bar sweeps from the previous value to the new one (spec C); TalkBack hears the real figure. Keyed per place
+    // (the home card, the 월간 column), so a bar that already swept starts where it stood when its page comes back.
+    val progress = sweepProgress((percent ?: 0) / 100f, key = if (compact) "home-close-bar" else "report-close-bar")
     Panel(if (compact) modifier else modifier.widthIn(max = MONTH_CLOSE_MAX_WIDTH), padding = if (compact) 22.dp else LocalLayout.current.panelPadding) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Eyebrow(if (compact) "월 마감 · ${status.trips}건" else "MONTH CLOSE · ${status.trips}건", Scene.brand)

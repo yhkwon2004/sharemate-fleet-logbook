@@ -2,6 +2,7 @@ package ai.sharemate.app
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.LinearEasing
@@ -39,7 +40,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -54,6 +54,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
@@ -127,13 +128,22 @@ internal const val MOTION_STAGGER_MS = 40
     Text(text.take(shown), modifier.semantics { contentDescription = text }, style = style, color = color)
 }
 
+/** How far a pressed control dims under reduced motion, where it does not scale. */
+internal const val PRESS_DIM_ALPHA = .82f
+
+/** The opacity of a [pressable] control under reduced motion (pure, unit-tested): dimmed while held, full otherwise; never animated. */
+internal fun pressDimAlpha(pressed: Boolean): Float = if (pressed) PRESS_DIM_ALPHA else 1f
+
 /**
  * Press feedback for cards, tiles and chips: the surface settles to [pressedScale] while held and eases back on release,
- * so a tap reads as a touch on something solid. Nothing under reduced motion. Pass the same [interactionSource] to the clickable.
+ * so a tap reads as a touch on something solid. Under reduced motion it dims at once to [PRESS_DIM_ALPHA] while held and
+ * comes back at once on release (nothing moves), so the header tabs, segments, rows and steppers that have no ripple still
+ * answer the finger. Pass the same [interactionSource] to the clickable.
  */
 @Composable fun Modifier.pressable(interactionSource: InteractionSource, pressedScale: Float = .97f): Modifier {
-    if (LocalReduceMotion.current) return this
     val pressed by interactionSource.collectIsPressedAsState()
+    // Read in the layer, so a press redraws this control and recomposes nothing.
+    if (LocalReduceMotion.current) return graphicsLayer { alpha = pressDimAlpha(pressed) }
     // 90 ms in, 160 ms out: quick to acknowledge the touch, soft to let go (no bounce on a car screen).
     val scale by animateFloatAsState(if (pressed) pressedScale else 1f,
         if (pressed) tween(90, easing = LinearOutSlowInEasing) else tween(160, easing = FastOutSlowInEasing), label = "press")
@@ -141,29 +151,25 @@ internal const val MOTION_STAGGER_MS = 40
 }
 
 /**
- * A number that rolls to its new value (600 ms ease-out, like an odometer settling) and counts up from zero the first time
- * it appears when [countUp]; the exact value, at once, under reduced motion.
+ * How [DigitChange]'s box follows the new text's size (pure, unit-tested): at once under reduced motion, otherwise on the
+ * same 160 ms as the text. The box never clips, so the new text is never cut while the size settles.
  */
-@Composable fun animatedValue(target: Float, countUp: Boolean = true, durationMs: Int = 600): Float {
-    val reduce = LocalReduceMotion.current
-    var started by remember { mutableStateOf(!countUp || reduce) }
-    LaunchedEffect(Unit) { started = true }
-    val value by animateFloatAsState(if (started) target else 0f, if (reduce) snap() else tween(durationMs, easing = FastOutSlowInEasing), label = "value")
-    return if (reduce) target else value
-}
+internal fun digitSizeSpec(reduce: Boolean): FiniteAnimationSpec<IntSize> = if (reduce) snap() else tween(160, easing = FastOutSlowInEasing)
 
 /**
  * A value that changes in place (a widget number, a greeting, a count): the old text fades out as the new one fades in
- * with a 6 dp lift, 160 ms; an instant swap under reduced motion. Never used for the clock or live telemetry, which simply update.
+ * with a 6 dp lift, 160 ms; an instant swap under reduced motion, size included. Never used for the clock or live telemetry, which simply update.
  */
 @Composable fun DigitChange(text: String, modifier: Modifier = Modifier, style: TextStyle = MaterialTheme.typography.bodyLarge, color: Color = Color.Unspecified,
     fontWeight: FontWeight? = null, maxLines: Int = 1, lift: Dp = 6.dp) {
     val reduce = LocalReduceMotion.current
     val liftPx = with(LocalDensity.current) { lift.roundToPx() }
     AnimatedContent(targetState = text, modifier = modifier, label = "digit", transitionSpec = {
-        if (reduce) fadeIn(snap()) togetherWith fadeOut(snap())
+        val swap = if (reduce) fadeIn(snap()) togetherWith fadeOut(snap())
         else (fadeIn(tween(160, easing = FastOutSlowInEasing)) + slideInVertically(tween(160, easing = FastOutSlowInEasing)) { liftPx }) togetherWith
             (fadeOut(tween(120, easing = FastOutSlowInEasing)) + slideOutVertically(tween(160, easing = FastOutSlowInEasing)) { -liftPx })
+        // `togetherWith` alone brings the default SizeTransform: a clipping spring, which ran even under reduced motion.
+        swap using SizeTransform(clip = false) { _, _ -> digitSizeSpec(reduce) }
     }) { value -> Text(value, style = style, color = color, fontWeight = fontWeight, maxLines = maxLines, overflow = TextOverflow.Ellipsis) }
 }
 

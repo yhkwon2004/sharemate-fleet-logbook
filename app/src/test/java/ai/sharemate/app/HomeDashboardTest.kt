@@ -1,5 +1,6 @@
 package ai.sharemate.app
 
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -37,6 +38,20 @@ class HomeDashboardTest {
         val open = Trip(id("o"), at(11, 4, 9), null, 100.0, 103.2)
         assertTrue(homeSubtitle(SignalStatus.RECORDING, false, open).contains("3.2 km"))
         assertEquals("차량 데이터를 받을 수 없어요. 연결 상태를 확인해 주세요.", homeSubtitle(SignalStatus.ERROR, false, null))
+    }
+
+    @Test fun aRecordingTripMakesTheHomeDistancesLiveTelemetry() {
+        val open = Trip(id("o"), at(11, 4, 9), null, 100.0, 103.2)
+        assertTrue("기록 중이면 거리는 그 자리에서 갱신", homeShowsLiveTrip(TripLogData(open = open)))
+        assertFalse("기록 중인 운행이 없으면 숫자는 교차 페이드", homeShowsLiveTrip(TripLogData()))
+        assertFalse("시연 모드에서는 실제 운행이 화면 숫자에 들어가지 않음", homeShowsLiveTrip(TripLogData(open = open, profile = FleetProfile(demoMode = true))))
+        assertTrue(homeShowsLiveTrip(TripLogData(open = open.copy(demo = true), profile = FleetProfile(demoMode = true))))
+    }
+
+    @Test fun theSheetTabUnderlineSitsOnTheTabsBottomEdgeInsetAndNeverShrinksToADot() {
+        val tab = Rect(100f, 0f, 200f, 56f)
+        assertEquals("16 dp씩 안쪽, 바닥에 3 dp", Rect(116f, 53f, 184f, 56f), underlineBar(tab, thickness = 3f, inset = 16f))
+        assertEquals("좁은 탭도 두께의 4배 폭은 유지", Rect(144f, 53f, 156f, 56f), underlineBar(Rect(130f, 0f, 170f, 56f), thickness = 3f, inset = 16f))
     }
 
     @Test fun cardLinesQuoteRealVehicleNumbersAndPutADueDeadlineFirst() {
