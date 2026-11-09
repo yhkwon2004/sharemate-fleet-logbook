@@ -1,5 +1,11 @@
 package ai.sharemate.app
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.VectorConverter
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
@@ -15,9 +21,18 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -32,6 +47,9 @@ import java.util.Locale
 
 /** The row-number column of the preview table. */
 private val ROW_NUMBER_WIDTH = 48.dp
+
+/** The Excel view's measure on the car (spec B): the preview, its sheet tabs and the save bar under it, like the month-close card. */
+internal val EXCEL_VIEW_MAX_WIDTH = 760.dp
 
 /** Column widths of the preview table: the remarks column (last) widest, date columns 180, the rest 170 (136 on the phone). */
 internal fun excelColumnWidths(columns: List<String>, compact: Boolean): List<Dp> = columns.mapIndexed { index, title -> when {
@@ -50,8 +68,9 @@ internal fun previewCell(value: Any): String = when (value) {
 }
 
 /**
- * A read-only data preview of the same five sheets that Excel export writes (운행·직원·경비·차량관리·확인). The table keeps
- * its row number and first column pinned while the rest scrolls sideways (spec B); a row opens its full contents.
+ * A read-only data preview of the same five sheets that Excel export writes (운행·직원·경비·차량관리·확인). The sheets are
+ * text tabs ([SheetTabs], max 760), a lighter level than the view tabs above the preview. The table keeps its row number and
+ * first column pinned while the rest scrolls sideways (spec B); a row opens its full contents.
  */
 @Composable
 internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate, to: LocalDate,
@@ -68,7 +87,8 @@ internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate,
     LaunchedEffect(data.profile, trips, data.drivers, from, to) { page = 0; detail = null }
     val closed = remember(data.closedMonths, data.profile.demoMode, from, to) { closedMonthFor(data, from, to) }
     val colors = MaterialTheme.colorScheme
-    val tapHeight = if (compact) 48.dp else 56.dp
+    // Touch targets follow the device, not the width: 56 dp on the car (a narrow car window too), 48 on the phone.
+    val tapHeight = if (LocalLayout.current.startAnchored) 56.dp else 48.dp
     BoxWithConstraints(modifier) {
     val rowsPerPage = ((maxHeight.value - if (compact) 340 else 470) / if (compact) 64 else 72).toInt().coerceIn(1, if (compact) 3 else 6)
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -82,7 +102,7 @@ internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate,
             Text(if (data.profile.demoMode) "시연 데이터 · 제출용이 아닙니다" else "${data.profile.companyName.ifBlank { "법인명 미입력" }} · ${data.profile.plateNumber.ifBlank { "차량번호 미입력" }}",
                 style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Segmented(listOf("운행", "직원", "경비", "차량", "확인"), sheetIndex) { sheetIndex = it; page = 0; detail = null }
+        SheetTabs(listOf("운행", "직원", "경비", "차량", "확인"), sheetIndex, Modifier.widthIn(max = EXCEL_VIEW_MAX_WIDTH)) { sheetIndex = it; page = 0; detail = null }
         when {
             result == null -> SkeletonTable(columns = if (compact) 4 else 6, rows = rowsPerPage, compact = compact)
             result!!.isFailure -> Panel { Text("미리보기를 만들지 못했어요"); Muted("기록은 변경하지 않았습니다. 조회 기간을 다시 선택해 주세요.") }
@@ -136,20 +156,79 @@ internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate,
 }
 
 /**
+ * The preview's sheet tabs, one level under the 월간·Excel view tabs: plain text tabs (56 dp on the car, 48 on the phone) on a
+ * hairline instead of a glass pill. The chosen sheet's label takes the glow colour over a 3-dp glow underline (a shape, so
+ * never colour alone) that glides to a new sheet in 180 ms, a snap under reduced motion. Cap the width with [modifier].
+ */
+@Composable private fun SheetTabs(labels: List<String>, selected: Int, modifier: Modifier = Modifier, onSelect: (Int) -> Unit) {
+    val car = LocalLayout.current.startAnchored
+    val bounds = rememberItemBounds()
+    val reduce = LocalReduceMotion.current
+    val hairline = Scene.divider
+    Box(modifier.fillMaxWidth().drawBehind {
+        val stroke = 1.dp.toPx()
+        drawRect(hairline, Offset(0f, size.height - stroke), Size(size.width, stroke))
+    }) {
+        Row(Modifier.horizontalScroll(rememberScrollState()).underlineGlide(bounds, selected), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            labels.forEachIndexed { index, label ->
+                val active = index == selected
+                val interaction = remember { MutableInteractionSource() }
+                val tint by animateColorAsState(if (active) Scene.glow else Scene.textSecondary, if (reduce) snap() else tween(180, easing = FastOutSlowInEasing), label = "sheet-tab")
+                Box(Modifier.reportBounds(bounds, index).pressable(interaction, .98f).heightIn(min = if (car) 56.dp else 48.dp).widthIn(min = 72.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .semantics { this.selected = active; role = Role.Tab }
+                    .clickable(interactionSource = interaction, indication = if (car) null else LocalIndication.current) { onSelect(index) }
+                    .padding(horizontal = 18.dp), contentAlignment = Alignment.Center) {
+                    Text(label, style = MaterialTheme.typography.labelLarge, color = tint, maxLines = 1)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The chosen sheet's underline: 3 dp of glow along the bottom of its tab (inset 16 dp a side), gliding to a new tab in
+ * [durationMs] (FastOutSlowIn); the first placement and reduced motion snap. Apply it to the tab row itself, so the drawing
+ * and the bounds the tabs report share one coordinate space.
+ */
+@Composable private fun Modifier.underlineGlide(bounds: ItemBounds, selected: Int, durationMs: Int = 180): Modifier {
+    val reduce = LocalReduceMotion.current
+    val color = Scene.glow
+    val target = bounds[selected]
+    val rect = remember { Animatable(Rect.Zero, Rect.VectorConverter) }
+    var placed by remember { mutableStateOf(false) }
+    LaunchedEffect(target, reduce) {
+        val next = target ?: return@LaunchedEffect
+        if (!placed || reduce) { rect.snapTo(next); placed = true } else rect.animateTo(next, tween(durationMs, easing = FastOutSlowInEasing))
+    }
+    val density = LocalDensity.current
+    val thickness = with(density) { 3.dp.toPx() }
+    val inset = with(density) { 16.dp.toPx() }
+    val visible = target != null
+    return drawBehind {
+        if (!placed || !visible) return@drawBehind
+        val r = rect.value
+        val width = (r.width - inset * 2).coerceAtLeast(thickness * 4)
+        drawRoundRect(color, Offset(r.center.x - width / 2, r.bottom - thickness), Size(width, thickness), CornerRadius(thickness / 2, thickness / 2))
+    }
+}
+
+/**
  * One table row: the row number and the first column pinned, the other cells in a row that scrolls sideways on the shared
- * [sideways] state. A data row is a 72-dp (64 on the phone) button that opens its full contents, pressed with the car's
- * scale and no ripple, or the phone's ripple.
+ * [sideways] state. A data row is a 72-dp (64 when [compact]) button that opens its full contents, pressed with the car's
+ * scale and no ripple on the car (a narrow car window too), or the phone's ripple.
  */
 @Composable private fun PreviewRow(number: String, cells: List<String>, widths: List<Dp>, sideways: ScrollState, header: Boolean, compact: Boolean,
     zebra: Boolean = false, numeric: List<Boolean> = emptyList(), clickLabel: String? = null, onClick: (() -> Unit)? = null) {
     val source = remember { MutableInteractionSource() }
+    val car = LocalLayout.current.startAnchored
     val rowHeight = if (compact) 64.dp else 72.dp
     val fill = when { header -> Scene.rail; zebra -> Scene.fill; else -> Color.Transparent }
     val divider = Scene.divider
     val base = Modifier.fillMaxWidth().height(IntrinsicSize.Min).heightIn(min = if (header) 0.dp else rowHeight).background(fill)
     val tappable = when {
         onClick == null -> base
-        compact -> base.pressable(source, .97f).clickable(interactionSource = source, indication = LocalIndication.current, onClickLabel = clickLabel, role = Role.Button, onClick = onClick)
+        !car -> base.pressable(source, .97f).clickable(interactionSource = source, indication = LocalIndication.current, onClickLabel = clickLabel, role = Role.Button, onClick = onClick)
         else -> base.carTap(source, label = clickLabel, onClick = onClick)
     }
     val cellStyle = if (header) MaterialTheme.typography.labelLarge else MaterialTheme.typography.bodyMedium

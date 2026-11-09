@@ -27,6 +27,10 @@ class FleetCareTest {
         assertEquals(CareLevel.SOON, alerts[1].level); assertEquals("정기검사 D-19", alerts[1].title)
         assertEquals(CareLevel.SOON, alerts[2].level); assertEquals(700.0, alerts[2].kmLeft!!, 0.01)
         assertEquals(CareLevel.INFO, alerts[3].level)
+        // The particle 까지 attaches to the date; the other lines keep a space before their first word.
+        assertEquals("11월 20일까지 검사를 받아야 해요", alerts[1].detail)
+        assertEquals("10월 25일 만기 · 갱신 확인", alerts[0].detail)
+        assertEquals("6월 30일 계약 종료 · 반납·연장 결정", alerts[3].detail)
         assertTrue("미설정 항목은 조용함", careAlerts(VehicleCare(), 1.0, today).isEmpty())
         assertTrue("정비 주기는 계기판 없이는 계산하지 않음", careAlerts(care.copy(inspectionDue = null, insuranceDue = null, leaseEnd = null), null, today).isEmpty())
     }

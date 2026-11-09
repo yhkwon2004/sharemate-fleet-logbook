@@ -36,6 +36,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -490,14 +493,13 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
     // Freshness comes from the same rule as the driving screen, so a stale signal never reads as "ready".
     val overview = drivingOverviewInfo(state, System.currentTimeMillis(), true, zone)
     val (label, tone) = statusPillInfo(state, overview.fresh, overview.status)
-    val target = when (tone) {
+    // A status colour never animates (spec C): a changed state swaps the dot at once, with no tint transition and no pulse.
+    val dot = when (tone) {
         PillTone.NEGATIVE -> Scene.negative
         PillTone.QUIET -> Scene.textMuted
         PillTone.POSITIVE -> Scene.positive
         PillTone.DEMO -> LocalPleosColors.current.gleoSpeaker
     }
-    // A changed state tints the dot on the page clock (one transition, never a pulse); an instant swap under reduced motion.
-    val dot by animateColorAsState(target, tabColorSpec(), label = "status-dot")
     Surface(shape = RoundedCornerShape(20.dp), color = Scene.glass, border = Scene.edge) {
         // Polite live region: TalkBack announces recording start/stop without the driver touching the screen.
         Row(Modifier.heightIn(min = 56.dp).padding(horizontal = 18.dp).semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
@@ -552,12 +554,17 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
         contentPadding = PaddingValues(horizontal = 28.dp, vertical = 14.dp)) { Text(label, style = MaterialTheme.typography.labelLarge) }
 }
 
-/** [description] replaces a symbolic label such as "‹" for screen readers. */
+/**
+ * A secondary action on the row fill. Disabled, it drops its container and keeps the label at 38 %, so it never reads stronger
+ * than an enabled one (Material's disabled container is a darker slab than this light fill). [description] replaces a
+ * symbolic label for screen readers.
+ */
 @Composable internal fun QuietAction(label: String, modifier: Modifier = Modifier, enabled: Boolean = true, color: Color = MaterialTheme.colorScheme.onSurface,
     description: String? = null, onClick: () -> Unit) {
     FilledTonalButton(onClick = onClick, enabled = enabled, shape = RoundedCornerShape(20.dp),
         modifier = modifier.heightIn(min = 60.dp).then(if (description != null) Modifier.semantics { contentDescription = description } else Modifier),
-        colors = ButtonDefaults.filledTonalButtonColors(containerColor = LocalPleosColors.current.surfaceHigh, contentColor = color),
+        colors = ButtonDefaults.filledTonalButtonColors(containerColor = LocalPleosColors.current.surfaceHigh, contentColor = color,
+            disabledContainerColor = Color.Transparent, disabledContentColor = color.copy(alpha = .38f)),
         contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)) {
         Text(label, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center,
             modifier = if (description != null) Modifier.clearAndSetSemantics {} else Modifier)
@@ -745,7 +752,7 @@ internal fun taskStackHasContent(tasks: List<ParkedTask>, data: TripLogData, las
         "현재 사용자 선택" to (data.currentDriverId != null),
     )
     Panel {
-        Eyebrow("시작 설정 · ${steps.count { it.second }}/${steps.size}")
+        Eyebrow("시작 설정 · ${steps.count { it.second }}/${steps.size}", Scene.brand)
         Text("운행기록부 양식에 들어갈 정보를 한 번만 등록해 주세요", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
         steps.forEachIndexed { index, (label, done) ->
             Row(Modifier.semantics(mergeDescendants = true) { stateDescription = if (done) "완료" else "미완료" },
@@ -774,10 +781,32 @@ internal fun taskStackHasContent(tasks: List<ParkedTask>, data: TripLogData, las
 internal fun logFilterLabels(trips: Int, issues: Int, matched: Int, wide: Boolean): List<String> =
     listOf("전체 $trips", "점검 필요 $issues", if (wide) "자동 반영 $matched" else "자동 $matched")
 
+/** The log's one empty state: a title, an optional second line, and whether 필터 해제 is offered beside 이전 달 보기. */
+@Immutable
+internal data class LogEmptyCopy(val title: String, val detail: String? = null, val clearable: Boolean = false)
+
+/**
+ * What the log says when the list under [filter] (0 전체, 1 점검 필요, 2 자동 반영) has nothing to pick in [month]: no trips,
+ * no trip left to check, or no card payment that went in by itself. [monthTrips] counts the month's trips after the employee
+ * filter, whose label is [employee] when one is set. 필터 해제 ([LogEmptyCopy.clearable]) whenever a filter other than 전체 or
+ * an employee is set; 이전 달 보기 always.
+ */
+internal fun logEmptyCopy(filter: Int, month: YearMonth, monthTrips: Int, employee: String?, today: LocalDate): LogEmptyCopy {
+    val name = monthLabel(month, today)
+    val who = employee?.let { " $it 님의" }.orEmpty()
+    val clearable = filter != 0 || employee != null
+    return when {
+        filter == 1 && monthTrips > 0 -> LogEmptyCopy("$name$who 점검할 운행이 없어요", "계기판 누적거리가 끊김 없이 이어져요", clearable)
+        filter == 2 -> LogEmptyCopy("$name 카드 결제가 자동으로 들어간 운행이 없어요", clearable = clearable)
+        else -> LogEmptyCopy("$name$who 운행 기록이 없어요", clearable = clearable)
+    }
+}
+
 /**
  * 운행기록: the month stepper, the 3-way filter and the totals on one 64-dp row, the employee chip under it, then the list
  * (560 wide at FULL) beside the detail (616). MEDIUM and below keep the full-width list and open the detail as a side sheet;
- * a short window folds the filters into one dropdown chip and trims the rows to 64 dp.
+ * a short window folds the filters into one dropdown chip and trims the rows to 64 dp. When the chosen list is empty the list
+ * column holds one glass card that says so (max 560) and the detail panel stays away: there is nothing to pick.
  */
 @Composable private fun LogPane(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, openDriver: (String?) -> Unit,
     initialTripId: String?, initialFilter: Int = 0, initialMonth: String? = null) {
@@ -794,15 +823,20 @@ internal fun logFilterLabels(trips: Int, issues: Int, matched: Int, wide: Boolea
     val ids = trips.map { it.id }.toSet()
     val issues = auditTrips(all).filter { it.tripId in ids }
     val selected = all.firstOrNull { it.id == selectedId }
-    val matchedRows = matchedTripsThisMonth(state.data, zone, localDate(now))
+    // 자동 반영 follows the stepper's month like the other two lists (its list reads the month from the clock it is handed).
+    val thisMonth = YearMonth.from(localDate(now))
+    val periodClock = if (period == thisMonth) now else period.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
+    val matchedRows = matchedTripsThisMonth(state.data, zone, period.atDay(1))
     val filters = logFilterLabels(trips.size, issues.size, matchedRows.size, wide)
     val totalsLine = "총 ${kmText(totals.totalKm)} · 업무 ${ratioText(totals.ratio)} · ${totals.trips}건"
-    val employeeLabel = state.data.drivers.firstOrNull { it.id == employeeFilter }?.label ?: "전체 직원"
+    val employeeName = state.data.drivers.firstOrNull { it.id == employeeFilter }?.label
+    val employeeLabel = employeeName ?: "전체 직원"
+    val previousMonth = { month = period.minusMonths(1).toString(); selectedId = null }
     val stepper: @Composable RowScope.() -> Unit = {
-        QuietAction("‹", Modifier.width(64.dp), description = "이전 달") { month = period.minusMonths(1).toString(); selectedId = null }
+        MonthStepButton(forward = false, description = "이전 달", onClick = previousMonth)
         Text("${period.year}년 ${period.monthValue}월", style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center, maxLines = 1,
             modifier = Modifier.widthIn(min = 180.dp).semantics { heading() })
-        QuietAction("›", Modifier.width(64.dp), enabled = period < YearMonth.from(localDate(now)), description = "다음 달") { month = period.plusMonths(1).toString(); selectedId = null }
+        MonthStepButton(forward = true, description = "다음 달", enabled = period < thisMonth) { month = period.plusMonths(1).toString(); selectedId = null }
     }
     val employeeItems: @Composable ColumnScope.(() -> Unit) -> Unit = { close ->
         DropdownMenuItem(text = { Text("전체 직원") }, onClick = { employeeFilter = null; selectedId = null; close() })
@@ -840,17 +874,23 @@ internal fun logFilterLabels(trips: Int, issues: Int, matched: Int, wide: Boolea
                 DropdownChip("직원: $employeeLabel", content = employeeItems)
             }
         }
+        // An empty list is one card in the list column, never a blank column beside an empty detail panel.
+        val empty = when (filter) { 0 -> trips.isEmpty(); 1 -> issues.isEmpty(); else -> matchedRows.isEmpty() }
         val list: @Composable (Modifier) -> Unit = { modifier ->
-            when (filter) {
+            if (empty) Box(modifier.verticalScroll(rememberScrollState())) {
+                LogEmptyCard(logEmptyCopy(filter, period, trips.size, employeeName, localDate(now)), onPrevious = previousMonth,
+                    onClear = { filter = 0; employeeFilter = null; selectedId = null })
+            } else when (filter) {
                 0 -> TripList(trips, state.data, issues, selectedId, modifier, compact = layout.short) { selectedId = it }
                 1 -> IssueList(issues, state.data, modifier, act, repository, openDriver) { selectedId = it }
-                else -> MatchedTripList(state.data, now, act, repository, modifier) { selectedId = it }
+                else -> MatchedTripList(state.data, periodClock, act, repository, modifier) { selectedId = it }
             }
         }
         if (wide) Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(layout.cardGap)) {
             // FULL: list 560 + gap 24 + detail 616 fill the 1200-dp column; EXPANDED splits what it has.
             list(if (layout.full) Modifier.width(560.dp).fillMaxHeight() else Modifier.weight(1f).fillMaxHeight())
-            Surface(Modifier.weight(1f).fillMaxHeight(), shape = RoundedCornerShape(32.dp), color = Scene.glass, border = Scene.edge) {
+            // The detail and its placeholder only when there are rows to pick (or a trip is already open).
+            if (!empty || selected != null) Surface(Modifier.weight(1f).fillMaxHeight(), shape = RoundedCornerShape(32.dp), color = Scene.glass, border = Scene.edge) {
                 if (selected == null) Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
                     Muted("운행을 선택하면 계기판 기록과 목적·비용·수정 이력을 볼 수 있어요.", Modifier.widthIn(max = 420.dp))
                 } else TripDetail(selected, state.data, act, repository, openDriver) { selectedId = null }
@@ -860,6 +900,42 @@ internal fun logFilterLabels(trips: Int, issues: Int, matched: Int, wide: Boolea
             SideSheet(selected, onDismiss = { selectedId = null }, widthFraction = if (layout.compact) .94f else .62f) { trip ->
                 TripDetail(trip, state.data, act, repository, openDriver) { selectedId = null }
             }
+        }
+    }
+}
+
+/**
+ * One arrow of the month stepper, a 64-dp target: a 28-dp chevron on glass with the scene's lit edge. Disabled, the container
+ * goes transparent and the chevron drops to 38 %, so a dead arrow never reads stronger than a live one. Settles to .98 while
+ * held; no ripple on the car. [description] is what TalkBack reads (이전 달 · 다음 달).
+ */
+@Composable private fun MonthStepButton(forward: Boolean, description: String, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(20.dp)
+    val interaction = remember { MutableInteractionSource() }
+    val noRipple = LocalLayout.current.startAnchored
+    val tint = if (enabled) Scene.text else Scene.text.copy(alpha = .38f)
+    Box(modifier.size(64.dp).pressable(interaction, .98f).clip(shape)
+        .then(if (enabled) Modifier.background(Scene.glass).border(Scene.edge, shape) else Modifier)
+        .clickable(interactionSource = interaction, indication = if (noRipple) null else LocalIndication.current, enabled = enabled, role = Role.Button, onClick = onClick)
+        .semantics { contentDescription = description }, contentAlignment = Alignment.Center) {
+        Icon(if (forward) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null,
+            modifier = Modifier.size(28.dp), tint = tint)
+    }
+}
+
+/**
+ * The log's one empty state: a glass card at the top of the list column (max 560) with what the month is missing and the way
+ * on, 이전 달 보기, plus 필터 해제 while a filter or an employee narrows the list ([LogEmptyCopy.clearable]).
+ */
+@Composable private fun LogEmptyCard(copy: LogEmptyCopy, onPrevious: () -> Unit, onClear: () -> Unit, modifier: Modifier = Modifier) {
+    Panel(modifier.widthIn(max = 560.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(copy.title, style = MaterialTheme.typography.titleMedium, color = Scene.text)
+            copy.detail?.let { Muted(it) }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            QuietAction("이전 달 보기", onClick = onPrevious)
+            if (copy.clearable) QuietAction("필터 해제", onClick = onClear)
         }
     }
 }
@@ -927,15 +1003,18 @@ private class LastShown<T> { var value: T? = null }
     }
 }
 
-/** One trip of the list (88 dp, or 64 when [compact]). The selected row carries the selection fill and ring, never colour alone; it settles to .98 while held. */
+/**
+ * One trip of the list (88 dp, or 64 when [compact]). Every row sits on glass; the selected one lays the selection fill over
+ * that glass and adds the 1.5-dp ring (never colour alone, and never a bare tint over the sky). Settles to .98 while held.
+ */
 @Composable internal fun TripRow(trip: Trip, data: TripLogData, flagged: Boolean, selected: Boolean, compact: Boolean = false, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val driver = data.drivers.firstOrNull { it.id == trip.driverId }
     val shape = RoundedCornerShape(if (compact) 18.dp else 24.dp)
     val interaction = remember { MutableInteractionSource() }
     val noRipple = LocalLayout.current.startAnchored
-    Row(Modifier.fillMaxWidth().pressable(interaction, .98f).clip(shape).background(if (selected) Scene.selectionFill else Scene.glass)
-        .then(if (selected) Modifier.border(1.5.dp, Scene.selectionRing, shape) else Modifier)
+    Row(Modifier.fillMaxWidth().pressable(interaction, .98f).clip(shape).background(Scene.glass)
+        .then(if (selected) Modifier.background(Scene.selectionFill).border(1.5.dp, Scene.selectionRing, shape) else Modifier)
         .semantics { this.selected = selected; if (flagged) stateDescription = "점검 필요" }
         .clickable(interactionSource = interaction, indication = if (noRipple) null else LocalIndication.current, role = Role.Button, onClickLabel = "운행 상세 보기", onClick = onClick)
         .heightIn(min = if (compact) 64.dp else 88.dp).padding(horizontal = 20.dp, vertical = if (compact) 8.dp else 14.dp),
@@ -1009,7 +1088,7 @@ private class LastShown<T> { var value: T? = null }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(28.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f).semantics(mergeDescendants = true) { heading() }) {
-                Eyebrow(dayLabel(localDate(trip.startAt)) + if (trip.demo) " · 시연 데이터" else "")
+                Eyebrow(dayLabel(localDate(trip.startAt)) + if (trip.demo) " · 시연 데이터" else "", Scene.brand)
                 Text("${hm(trip.startAt)} – ${if (trip.open) "기록 중" else hm(trip.endAt!!)}", style = MaterialTheme.typography.headlineSmall)
             }
             TextButton(onClick = close, modifier = Modifier.heightIn(min = 56.dp)) { Text("닫기") }
@@ -1121,7 +1200,7 @@ private class LastShown<T> { var value: T? = null }
 
 /** The bar pinned under the Excel preview (72 dp, max 760): one line of context and the save action, on glass. */
 @Composable private fun SaveBar(hint: String, modifier: Modifier = Modifier, action: @Composable () -> Unit) {
-    Surface(modifier.widthIn(max = 760.dp).fillMaxWidth(), shape = RoundedCornerShape(22.dp), color = Scene.glass, border = Scene.edge) {
+    Surface(modifier.widthIn(max = EXCEL_VIEW_MAX_WIDTH).fillMaxWidth(), shape = RoundedCornerShape(22.dp), color = Scene.glass, border = Scene.edge) {
         Row(Modifier.heightIn(min = 72.dp).padding(start = 22.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Muted(hint, Modifier.weight(1f), maxLines = 2)
@@ -1132,8 +1211,9 @@ private class LastShown<T> { var value: T? = null }
 
 /**
  * 월간·Excel: the period choice (480 wide) with Excel 저장 at the column's right, the month-close card (max 760) while this
- * month is chosen, the four views as 56-dp tabs (max 960), then the view. The Excel view keeps its save bar (72 dp, max 760)
- * pinned under the preview; the two cards of the other views sit side by side from EXPANDED up and stack below it.
+ * month is chosen, the four views as 56-dp tabs (max 960), then the view. The Excel view keeps to 760 like the month-close
+ * card: the preview with its lighter sheet tabs, and the save bar (72 dp) pinned under it; the two cards of the other views
+ * sit side by side from EXPANDED up and stack below it. Both Excel 저장 actions follow one rule ([excelSaveAvailable]).
  */
 @Composable private fun ReportPane(state: TripLogState, now: Long, exporting: Boolean, saveFile: (String, String, ByteArray) -> Unit,
     act: Act, repository: TripLogRepository, goSettings: () -> Unit, goHome: () -> Unit, goReview: (YearMonth) -> Unit) {
@@ -1170,7 +1250,9 @@ private class LastShown<T> { var value: T? = null }
             // 이번 달 · 올해 keeps to 480 at the start of the row; Excel 저장 sits at the column's right.
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Segmented(listOf("이번 달", "올해"), period, Modifier.weight(1f, fill = false).widthIn(max = 480.dp)) { period = it }
-                LoadingAction("Excel 저장", loading = exporting, modifier = Modifier.padding(start = 16.dp), loadingLabel = "만드는 중…", enabled = trips.isNotEmpty()) {
+                // The same rule as the month-close card's ③: a range without trips has nothing to save.
+                LoadingAction("Excel 저장", loading = exporting, modifier = Modifier.padding(start = 16.dp), loadingLabel = "만드는 중…",
+                    enabled = excelSaveAvailable(trips.size)) {
                     if (totals.unclassifiedKm > 0 || trips.any { it.driverId == null }) confirmExport = true else export()
                 }
             }
@@ -1182,7 +1264,7 @@ private class LastShown<T> { var value: T? = null }
         Crossfade(view, Modifier.weight(1f).fillMaxWidth(), animationSpec = pageFade(), label = "report-section") { page ->
             if (page == 2) Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 ExcelPreview(data.copy(profile = data.profile.copy(carModel = data.profile.carModel.ifBlank { state.vehicleModel.orEmpty() })), trips, from, today,
-                    Modifier.weight(1f).fillMaxWidth(), compact = !wide)
+                    Modifier.weight(1f).widthIn(max = EXCEL_VIEW_MAX_WIDTH).fillMaxWidth(), compact = !wide)
                 // The save bar stays put under the preview while the sheets scroll above it.
                 SaveBar("휴대폰 SHAREMATE에서 여는 운행 파일이에요") {
                     LoadingAction("휴대폰용 운행파일 저장", loading = exporting, loadingLabel = "만드는 중…", enabled = data.trips.isNotEmpty()) {
@@ -1196,7 +1278,7 @@ private class LastShown<T> { var value: T? = null }
                     else -> {
                         // Reading panels keep to the month-close card's measure (760) instead of spanning the rail.
                         Panel(Modifier.widthIn(max = 760.dp)) {
-                            Eyebrow("증빙 준비 상태")
+                            Eyebrow("증빙 준비 상태", Scene.brand)
                             val issues = auditTrips(trips)
                             Text(if (issues.isEmpty() && trips.isNotEmpty()) "기록 기본 점검 완료" else "확인이 필요한 항목 ${issues.size}개", style = MaterialTheme.typography.titleLarge)
                             Muted("직원·운행 목적·계기판 거리의 연결을 점검합니다. Excel 확인사항 시트에서 세부 항목을 볼 수 있어요.")
@@ -1216,7 +1298,7 @@ private class LastShown<T> { var value: T? = null }
 
 @Composable private fun EmployeeUsageCard(trips: List<Trip>, data: TripLogData, modifier: Modifier) {
     Panel(modifier) {
-        Eyebrow("EMPLOYEES / 직원별 이번 기간 이용")
+        Eyebrow("EMPLOYEES / 직원별 이번 기간 이용", Scene.brand)
         val rows = employeeUsage(trips, data.drivers, data.profile.reimbursePerKmWon)
         if (rows.isEmpty()) Muted("완료된 운행이 없어요. 출발하면 자동으로 기록해요.")
         rows.forEach { row ->
@@ -1235,7 +1317,7 @@ private class LastShown<T> { var value: T? = null }
 
 @Composable private fun ExpenseOverview(trips: List<Trip>, modifier: Modifier) {
     Panel(modifier) {
-        Eyebrow("EXPENSES / 등록 경비")
+        Eyebrow("EXPENSES / 등록 경비", Scene.brand)
         Stat("경비 합계", formatWon(trips.sumOf { it.expenseWon }), large = true)
         ExpenseType.entries.forEach { type ->
             Row {
@@ -1252,7 +1334,7 @@ private class LastShown<T> { var value: T? = null }
     // The bar tracks share the ring's track token so they read on day glass as well as night.
     val track = Scene.ringTrack
     Panel(modifier.fillMaxHeight()) {
-        Eyebrow("업무사용비율 ⑬ = ⑫ ÷ ⑪")
+        Eyebrow("업무사용비율 ⑬ = ⑫ ÷ ⑪", Scene.brand)
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { RatioRing(totals.ratio, if (compact) 148.dp else 220.dp, "업무사용비율") }
         val rows = listOf(
             Triple("출·퇴근 ⑧", totals.commuteKm, pleos.positive), Triple("일반 업무 ⑨", totals.generalKm, pleos.chartActive),
@@ -1273,7 +1355,7 @@ private class LastShown<T> { var value: T? = null }
 
 @Composable private fun TaxCard(profile: FleetProfile, year: LogbookTotals, modifier: Modifier, goSettings: () -> Unit) {
     Panel(modifier.fillMaxHeight()) {
-        Eyebrow("비용 참고 · 올해 업무사용비율 기준")
+        Eyebrow("비용 참고 · 올해 업무사용비율 기준", Scene.brand)
         val cost = profile.annualCostWon
         val ratio = year.ratio
         if (cost == null || ratio == null) {
@@ -1300,7 +1382,7 @@ private class LastShown<T> { var value: T? = null }
 @Composable private fun SettlementCard(trips: List<Trip>, data: TripLogData, modifier: Modifier, goSettings: () -> Unit) {
     val rate = data.profile.reimbursePerKmWon
     Panel(modifier.fillMaxHeight()) {
-        Eyebrow("유류비 정산 · 업무용 거리 × km당 단가")
+        Eyebrow("유류비 정산 · 업무용 거리 × km당 단가", Scene.brand)
         if (rate <= 0) {
             Text("km당 정산 단가를 입력하면 사용자별 정산액을 계산해요", style = MaterialTheme.typography.titleMedium)
             Muted("회사에서 정한 단가를 업무용 계기판 거리에 적용합니다. 실제 주유 경비와 별개로 표시해요.")
@@ -1354,7 +1436,7 @@ internal fun settingsFieldColumns(layout: LayoutTokens, fontScale: Float): Int =
             AutopilotSettings(state.data.profile, act, repository) { value, change -> Field("법인카드 끝 4자리 (쉼표로 구분)", value, change, number = true, done = true, hint = "예: 1234, 5678") }
             AssistantPreviewCard(compact = !layout.expanded, onOpen = { onAssistant(null) }, onOpenWith = { phrase -> onAssistant(phrase) })
             Panel {
-                Eyebrow("PLEOS SDK / 필요한 신호만 사용")
+                Eyebrow("PLEOS SDK / 필요한 신호만 사용", Scene.brand)
                 Text("${state.signal.label} · 기어·누적거리·충전상태·배터리·VIN", style = MaterialTheme.typography.titleMedium)
                 Muted("Vehicle SDK로 거리·배터리·VIN을, AAOS로 기어와 충전 상태를 읽습니다. NaviHelper 주소는 수신한 경우에만 기록합니다.")
                 Muted("권한·미지원·수신 지연은 확인 필요로 표시합니다. 차량 제어와 내비 목적지 변경은 하지 않습니다.")
@@ -1384,7 +1466,7 @@ internal fun settingsFieldColumns(layout: LayoutTokens, fontScale: Float): Int =
     val numberError = if (number.isNotBlank() && !BUSINESS_NUMBER.matches(number.trim())) "000-00-00000 형식으로 입력해 주세요" else null
     val vehicleModel = state.vehicleModel?.takeIf { it.isNotBlank() && it != "시연 차량" }
     Panel {
-        Eyebrow("FLEET PROFILE")
+        Eyebrow("FLEET PROFILE", Scene.brand)
         Text("운행일지의 기본 정보", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
         Muted("한 번 저장하면 이후 운행과 Excel에 함께 사용합니다.")
         // 법인명 and 사업자등록번호 pair up only when the form has two columns ([settingsFieldColumns]).
@@ -1413,7 +1495,7 @@ internal fun settingsFieldColumns(layout: LayoutTokens, fontScale: Float): Int =
     var name by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf<Driver?>(null) }
     Panel {
-        Eyebrow("사용자 · ④ 부서와 성명")
+        Eyebrow("사용자 · ④ 부서와 성명", Scene.brand)
         if (data.drivers.isEmpty()) Muted("차량을 이용하는 직원을 등록하세요. 운행마다 사용자가 기록됩니다.")
         data.drivers.forEach { driver ->
             Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1448,7 +1530,7 @@ internal fun settingsFieldColumns(layout: LayoutTokens, fontScale: Float): Int =
     val updated = saved.copy(reimbursePerKmWon = rate.toLongOrNull() ?: 0, annualCostWon = cost.toLongOrNull())
     val validation = runCatching { validateProfile(updated) }.exceptionOrNull()?.message
     Panel {
-        Eyebrow("정산·세무")
+        Eyebrow("정산·세무", Scene.brand)
         SideBySide(twoColumns, 16.dp, { modifier -> Field("유류비 정산 단가 (km당)", rate, { if (it.length <= 6 && it.all(Char::isDigit)) rate = it }, modifier, number = true, suffix = "원",
             hint = rate.toLongOrNull()?.let(::formatWon) ?: "회사에서 정한 km당 단가") }) { modifier ->
             Field("연간 차량 관련 비용", cost, { if (it.length <= 11 && it.all(Char::isDigit)) cost = it }, modifier, number = true, suffix = "원", done = true, hint = cost.toLongOrNull()?.let(::formatWon))
@@ -1468,7 +1550,7 @@ internal fun settingsFieldColumns(layout: LayoutTokens, fontScale: Float): Int =
 @Composable private fun PrivacyCard(saved: FleetProfile, act: Act, repository: TripLogRepository, onTutorial: () -> Unit = {}) {
     Panel {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Eyebrow("기록 방식·개인정보")
+            Eyebrow("기록 방식·개인정보", Scene.brand)
             Spacer(Modifier.weight(1f))
             TextButton(onClick = onTutorial, modifier = Modifier.heightIn(min = 48.dp)) { Text("시연 체험 다시 보기") }
         }

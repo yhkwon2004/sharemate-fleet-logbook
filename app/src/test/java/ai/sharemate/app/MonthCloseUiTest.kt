@@ -55,6 +55,23 @@ class MonthCloseUiTest {
         assertTrue(closed[3].done); assertEquals("마감됨 · " + closedStamp(at(11, 1, 18, 2)), closed[3].detail)
         assertFalse("Excel 저장은 앱이 확인할 수 없어 완료 표시를 하지 않음", closed[2].done)
         assertEquals("운행이 없어요", monthCloseSteps(MonthStatus(YearMonth.of(2026, 10), 0, 0, 0, null))[3].detail)
+        assertTrue("운행이 있는 달의 단계는 대기가 아님", (open + ready + closed).none { it.idle })
+        assertEquals("Excel 저장", ready[2].action)
+    }
+
+    @Test fun aMonthWithoutTripsShowsNothingDoneAndOffersNoExcelSave() {
+        val empty = monthCloseSteps(MonthStatus(YearMonth.of(2026, 11), 0, 0, 0, null))
+        assertEquals("운행이 없는 달은 완료 표시가 없음", listOf(false, false, false, false), empty.map { it.done })
+        assertEquals(listOf(true, true, true, true), empty.map { it.idle })
+        assertEquals(listOf("운행이 없어요", "확인할 결제 없음", "저장할 운행이 없어요", "운행이 없어요"), empty.map { it.detail })
+        assertTrue("저장할 운행이 없으면 ③에 저장 버튼이 없음", empty.all { it.action == null })
+        // The column's Excel 저장 reads the same rule, so the two buttons can never disagree about an empty range.
+        assertFalse(excelSaveAvailable(0)); assertTrue(excelSaveAvailable(1))
+        // A card question that is really pending still shows, with its action, in a month without trips.
+        val pending = monthCloseSteps(MonthStatus(YearMonth.of(2026, 11), 0, 0, 2, null))
+        assertFalse(pending[1].done); assertFalse(pending[1].idle)
+        assertEquals("2건 남음", pending[1].detail); assertEquals("확인하기", pending[1].action)
+        assertTrue(pending[0].idle && pending[2].idle && pending[3].idle)
     }
 
     @Test fun editsAfterCloseAreRecognisedFromTheHistoryTheRepositoryWrites() {

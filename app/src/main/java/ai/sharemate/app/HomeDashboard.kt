@@ -54,12 +54,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.onPlaced
@@ -219,8 +221,9 @@ internal fun homeSubtitle(signal: SignalStatus, demo: Boolean, open: Trip?): Str
 
 /**
  * How the home lays itself out in one window ([LayoutTokens] plus the font scale and the window height):
- * [cardColumns] 3 across on the wide classes, 2 + 1 below at a large font on the classes under FULL, one 96-dp row per card in
- * narrow windows; the widgets sit side by side from EXPANDED up (and on one 120-dp row in a short window, [compactWidgets]);
+ * [cardColumns] 3 across on the wide classes, 2 + 1 below at a large font on the classes under FULL (the third card one
+ * column wide, [homeCardRows]), one 96-dp row per card in narrow windows; the widgets sit side by side from EXPANDED up
+ * (and on one 120-dp row in a short window, [compactWidgets]);
  * a short window hides the eyebrow, moves the clock into the header and keeps the hero to [heroMin].
  */
 @Immutable
@@ -240,6 +243,16 @@ internal fun homePlan(layout: LayoutTokens, fontScale: Float, windowHeight: Dp):
 /** The hero keeps 70 % of the window between 420 and 600 dp; a short window keeps 55 % from 300 dp. A minimum only: the column grows when a large font needs the room. */
 internal fun heroMinHeight(windowHeight: Dp, short: Boolean): Dp =
     if (short) (windowHeight * .55f).coerceIn(300.dp, 420.dp) else (windowHeight * .70f).coerceIn(420.dp, 600.dp)
+
+/**
+ * The destination cards as rows of [columns] card indices. A short last row is padded with nulls (empty cells), so at 2 + 1
+ * the third card keeps one column's width and the vertical anatomy, start-aligned under the first, instead of stretching
+ * into a full-width strip. One column gives one card per row (the 96-dp horizontal rows).
+ */
+internal fun homeCardRows(count: Int, columns: Int): List<List<Int?>> {
+    val per = columns.coerceAtLeast(1)
+    return (0 until count.coerceAtLeast(0)).chunked(per).map { row -> row + List(per - row.size) { null } }
+}
 
 @Immutable
 internal data class HomeCardLines(val vehicle: String, val log: String, val logPending: Int, val export: String)
@@ -370,13 +383,13 @@ private var homeEntranceDone = false
         Appear(Modifier.readingWidth(), index = 2, animate = entrance) { AssistantSearch(onAssistant) }
         Appear(Modifier.fillMaxWidth().padding(top = if (compact) 16.dp else 24.dp), index = 3, animate = entrance) {
             Column(verticalArrangement = Arrangement.spacedBy(layout.cardGap)) {
-                when (plan.cardColumns) {
-                    3 -> Row(horizontalArrangement = Arrangement.spacedBy(layout.cardGap)) { cards.forEach { HomeActionCard(it, Modifier.weight(1f)) } }
-                    2 -> {
-                        Row(horizontalArrangement = Arrangement.spacedBy(layout.cardGap)) { cards.take(2).forEach { HomeActionCard(it, Modifier.weight(1f)) } }
-                        cards.drop(2).forEach { HomeActionCard(it, Modifier.fillMaxWidth(), horizontal = true) }
+                // 3 across, or 2 + 1 at a large font: every card keeps the vertical anatomy at one column's width, and an
+                // empty cell holds the place of a missing one so a lone card never stretches across the row.
+                if (plan.cardColumns == 1) cards.forEach { HomeActionCard(it, Modifier.fillMaxWidth(), horizontal = true) }
+                else homeCardRows(cards.size, plan.cardColumns).forEach { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(layout.cardGap)) {
+                        row.forEach { index -> if (index != null) HomeActionCard(cards[index], Modifier.weight(1f)) else Spacer(Modifier.weight(1f)) }
                     }
-                    else -> cards.forEach { HomeActionCard(it, Modifier.fillMaxWidth(), horizontal = true) }
                 }
                 demoControls()
             }
@@ -402,15 +415,46 @@ private var homeEntranceDone = false
     }
 }
 
-/** One destination card (184 dp tall on the wide car screen, a 96-dp row in narrow windows). Settles to .98 while held; no ripple on the car. */
+/**
+ * The glass of the home's cards and widgets: opaque [Scene.glass] by day, so neither the towers nor the bridge show through
+ * the white; by night the scene's glass at [translucent] (null keeps the token's own alpha), as built.
+ */
+@Composable private fun homeCardGlass(translucent: Float? = null): Color {
+    val glass = Scene.glass
+    return when {
+        Scene.isDay -> glass.copy(alpha = 1f)
+        translucent != null -> glass.copy(alpha = translucent)
+        else -> glass
+    }
+}
+
+/**
+ * The drop shadow under a tappable car card: the phone's day shadow ([Scene.shadow], 6 dp, as under its cards). The token is
+ * transparent by night, so nothing is drawn there. Put it before the press scale so the card settles inside its shadow.
+ */
+@Composable private fun Modifier.dayCardShadow(shape: Shape): Modifier {
+    val tone = Scene.shadow
+    if (tone.alpha <= 0f) return this
+    // The platform scales shadow colours by its own ambient and spot alphas, so the token's tone goes in at full strength.
+    val colour = tone.copy(alpha = (tone.alpha / .12f).coerceIn(0f, 1f))
+    return shadow(6.dp, shape, clip = false, ambientColor = colour, spotColor = colour)
+}
+
+/**
+ * One destination card (184 dp tall on the wide car screen, a 96-dp row in narrow windows). Settles to .98 while held; no
+ * ripple on the car. By day it is opaque white glass with the phone's drop shadow and no sheen (the day edge token is a dark
+ * hairline, so a sheen drawn from it greys the top, and glass the city shows through reads grey); by night it keeps the
+ * translucent glass with its lit top edge.
+ */
 @Composable internal fun HomeActionCard(spec: HomeCardSpec, modifier: Modifier = Modifier, horizontal: Boolean = false) {
     val shape = RoundedCornerShape(26.dp)
     val description = "${spec.title}, ${spec.subtitle}" + if (spec.badge > 0) ", 확인 필요 ${spec.badge}건" else ""
     val interaction = remember { MutableInteractionSource() }
-    val sheen = Scene.colors.edgeTop
-    Surface(onClick = spec.onClick, shape = shape, color = Scene.glass.copy(alpha = if (Scene.isDay) .88f else .78f), border = Scene.edge, interactionSource = interaction,
-        modifier = modifier.pressable(interaction, .98f).semantics(mergeDescendants = true) { contentDescription = description; role = Role.Button }) {
-        Box(Modifier.background(Brush.verticalGradient(listOf(sheen, Color.Transparent))).pressFill(interaction)) {
+    val day = Scene.isDay
+    val sheen = if (day) null else Brush.verticalGradient(listOf(Scene.colors.edgeTop, Color.Transparent))
+    Surface(onClick = spec.onClick, shape = shape, color = homeCardGlass(translucent = .78f), border = Scene.edge, interactionSource = interaction,
+        modifier = modifier.dayCardShadow(shape).pressable(interaction, .98f).semantics(mergeDescendants = true) { contentDescription = description; role = Role.Button }) {
+        Box(Modifier.then(if (sheen != null) Modifier.background(sheen) else Modifier).pressFill(interaction)) {
             if (horizontal) Row(Modifier.fillMaxWidth().heightIn(min = 96.dp).padding(horizontal = 20.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
                 IconTile(spec.icon, small = true)
@@ -475,19 +519,23 @@ private var homeEntranceDone = false
 
 // ───────────────────────── widgets under the hero ─────────────────────────
 
-/** One glass widget (150 dp, or the 120-dp [compact] row of a short window). A tappable one settles to .98 while held. */
+/**
+ * One glass widget (150 dp, or the 120-dp [compact] row of a short window), on opaque glass by day like the cards above it.
+ * A tappable one settles to .98 while held and carries the day drop shadow of the tappable cards.
+ */
 @Composable private fun HomeWidget(modifier: Modifier, onClick: (() -> Unit)?, description: String, compact: Boolean = false, content: @Composable RowScope.() -> Unit) {
     val shape = RoundedCornerShape(28.dp)
     val interaction = remember { MutableInteractionSource() }
+    val glass = homeCardGlass()
     val inner: @Composable () -> Unit = {
         Row(Modifier.then(if (onClick != null) Modifier.pressFill(interaction) else Modifier).fillMaxWidth().heightIn(min = if (compact) 120.dp else 150.dp)
             .padding(horizontal = if (compact) 24.dp else 30.dp, vertical = if (compact) 16.dp else 24.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (compact) 20.dp else 28.dp), content = content)
     }
     val semantics = Modifier.semantics(mergeDescendants = true) { contentDescription = description }
-    if (onClick != null) Surface(onClick = onClick, shape = shape, color = Scene.glass, border = Scene.edge, interactionSource = interaction,
-        modifier = modifier.pressable(interaction, .98f).then(semantics)) { inner() }
-    else Surface(shape = shape, color = Scene.glass, border = Scene.edge, modifier = modifier.then(semantics)) { inner() }
+    if (onClick != null) Surface(onClick = onClick, shape = shape, color = glass, border = Scene.edge, interactionSource = interaction,
+        modifier = modifier.dayCardShadow(shape).pressable(interaction, .98f).then(semantics)) { inner() }
+    else Surface(shape = shape, color = glass, border = Scene.edge, modifier = modifier.then(semantics)) { inner() }
 }
 
 /**

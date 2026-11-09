@@ -55,16 +55,17 @@ internal fun validIsoDate(value: String?) = value == null || value.isEmpty() || 
 /** Every configured deadline with how far away it is. Nothing here is estimated: a date the manager typed, or kilometres the odometer showed. */
 internal fun careAlerts(care: VehicleCare, odometerKm: Double?, today: LocalDate): List<CareAlert> {
     val out = mutableListOf<CareAlert>()
-    fun dated(kind: CareKind, raw: String?, verb: String) {
+    // [rest] follows the date as written: a particle such as 까지 attaches to it, a word starts with its own space.
+    fun dated(kind: CareKind, raw: String?, rest: String) {
         val due = parseIsoDate(raw) ?: return
         val days = ChronoUnit.DAYS.between(today, due)
         val level = when { days < 0 -> CareLevel.OVERDUE; days <= CARE_SOON_DAYS -> CareLevel.SOON; else -> CareLevel.INFO }
         val title = when { days < 0 -> "${kind.label} ${-days}일 지남"; days == 0L -> "${kind.label} 오늘"; else -> "${kind.label} D-$days" }
-        out += CareAlert(kind, level, title, "${due.monthValue}월 ${due.dayOfMonth}일 $verb", daysLeft = days)
+        out += CareAlert(kind, level, title, "${due.monthValue}월 ${due.dayOfMonth}일$rest", daysLeft = days)
     }
     dated(CareKind.INSPECTION, care.inspectionDue, "까지 검사를 받아야 해요")
-    dated(CareKind.INSURANCE, care.insuranceDue, "만기 · 갱신 확인")
-    dated(CareKind.LEASE, care.leaseEnd, "계약 종료 · 반납·연장 결정")
+    dated(CareKind.INSURANCE, care.insuranceDue, " 만기 · 갱신 확인")
+    dated(CareKind.LEASE, care.leaseEnd, " 계약 종료 · 반납·연장 결정")
     val interval = care.serviceIntervalKm
     val last = care.lastServiceKm
     if (interval != null && interval > 0 && last != null && odometerKm != null) {

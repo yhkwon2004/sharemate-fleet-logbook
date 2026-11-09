@@ -124,4 +124,17 @@ class HomeDashboardTest {
         assertEquals(300.dp, heroMinHeight(500.dp, short = true))
         assertEquals(420.dp, heroMinHeight(900.dp, short = true))
     }
+
+    @Test fun theThirdCardKeepsOneColumnsWidthAtTwoPlusOne() {
+        assertEquals("3열은 한 줄", listOf(listOf<Int?>(0, 1, 2)), homeCardRows(3, 3))
+        // 2 + 1: the lone third card sits under the first with an empty cell beside it, never stretched across the row.
+        assertEquals(listOf(listOf<Int?>(0, 1), listOf(2, null)), homeCardRows(3, 2))
+        assertEquals("한 열은 카드마다 한 줄", listOf(listOf<Int?>(0), listOf(1), listOf(2)), homeCardRows(3, 1))
+        assertEquals(listOf(listOf<Int?>(0, 1), listOf(2, 3)), homeCardRows(4, 2))
+        assertTrue(homeCardRows(0, 3).isEmpty())
+        assertEquals("열 수가 0이면 한 열로", listOf(listOf<Int?>(0), listOf(1)), homeCardRows(2, 0))
+        // The plan the 1.3× full window gets (EXPANDED by width ÷ font scale) is the one that pads the last row.
+        val large = homePlan(carLayout(1292.dp, 1200.dp), 1.3f, 1200.dp)
+        assertEquals(listOf(2, 2), homeCardRows(3, large.cardColumns).map { it.size })
+    }
 }
