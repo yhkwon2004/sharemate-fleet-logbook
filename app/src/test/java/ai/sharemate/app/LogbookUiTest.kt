@@ -226,4 +226,14 @@ class LogbookUiTest {
         assertTrue("작은 글꼴은 1배로 셈", driverChipAvatar(140.dp, .85f))
         assertTrue("너비 제한 없음", driverChipAvatar(Dp.Infinity, 1f))
     }
+
+    @Test fun theTightestHeaderKeepsTheDriversInitialsInsteadOfEllipses() {
+        assertEquals(DriverChipMode.AVATAR_AND_NAME, driverChipMode(140.dp, 1f))
+        assertEquals("글자 66 + 여백 40", DriverChipMode.NAME, driverChipMode(106.dp, 1f))
+        assertEquals(DriverChipMode.NAME, driverChipMode(139.dp, 1f))
+        assertEquals("말줄임표만 남을 폭에서는 이니셜", DriverChipMode.AVATAR, driverChipMode(105.dp, 1f))
+        assertEquals("좁은 운행기록 헤더(약 58 dp)", DriverChipMode.AVATAR, driverChipMode(58.dp, 1f))
+        assertEquals("1.3배 글꼴은 글자에 더 필요", DriverChipMode.AVATAR, driverChipMode(120.dp, 1.3f))
+        assertEquals(DriverChipMode.NAME, driverChipMode(126.dp, 1.3f))
+    }
 }

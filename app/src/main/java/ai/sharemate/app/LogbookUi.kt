@@ -448,7 +448,26 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
  * ‘지금 운전’ still fits beside them. Narrower, the chip is the text pill of 2.10, 20 dp in: its label ellipsises, then its
  * caption, and the header keeps its one 68-dp row instead of wrapping the caption or squeezing the avatar into an oval.
  */
-internal fun driverChipAvatar(chipMax: Dp, fontScale: Float): Boolean = chipMax >= 74.dp + 66.dp * fontScale.coerceAtLeast(1f)
+internal fun driverChipAvatar(chipMax: Dp, fontScale: Float): Boolean = driverChipMode(chipMax, fontScale) == DriverChipMode.AVATAR_AND_NAME
+
+/** The three ways the header's driver chip draws itself, widest first ([driverChipMode]). */
+internal enum class DriverChipMode { AVATAR_AND_NAME, NAME, AVATAR }
+
+/**
+ * How the header's driver chip draws itself in [chipMax]: the avatar beside ‘지금 운전’ and the name where both fit (74 dp of
+ * avatar and padding plus 66 dp of text at 1×, the text growing with the font); the text pill alone (40 dp of padding plus
+ * the text); and in the tightest header (운행기록 or 월간·Excel in a narrow window, where the assistant button joins the row)
+ * the avatar alone in a 56-dp pill. A pill of ellipses would say nothing; the person's initials still say who is driving,
+ * and the chip keeps its target and its spoken name.
+ */
+internal fun driverChipMode(chipMax: Dp, fontScale: Float): DriverChipMode {
+    val text = 66.dp * fontScale.coerceAtLeast(1f)
+    return when {
+        chipMax >= 74.dp + text -> DriverChipMode.AVATAR_AND_NAME
+        chipMax >= 40.dp + text -> DriverChipMode.NAME
+        else -> DriverChipMode.AVATAR
+    }
+}
 
 /**
  * The header of every page, spanning the rail: the brand mark and the five tabs with their counts at the start; at the rail's
@@ -466,19 +485,21 @@ internal fun driverChipAvatar(chipMax: Dp, fontScale: Float): Boolean = chipMax 
         val interaction = remember { MutableInteractionSource() }
         if (showDriver) Surface(onClick = onDriver, shape = RoundedCornerShape(50), color = Scene.glass, border = Scene.edge, interactionSource = interaction,
             modifier = modifier.heightIn(min = 56.dp).pressable(interaction, .98f).semantics { contentDescription = "지금 운전 ${driver?.label ?: "미선택"}, 바꾸기" }) {
-            // The person's avatar (the one the picker and 설정 › 직원 show) sits 12 dp in, concentric with the pill's round end,
-            // where the header leaves the chip room for it ([driverChipAvatar]). The pill's 56-dp minimum still reaches the row.
+            // The person's avatar (the one the picker and 설정 › 직원 show) sits 12 dp in, concentric with the pill's round end;
+            // the chip keeps what the header leaves it ([driverChipMode]). The pill's 56-dp minimum still reaches the row.
             BoxWithConstraints(propagateMinConstraints = true) {
-                val avatar = driverChipAvatar(maxWidth, LocalDensity.current.fontScale)
-                Row(Modifier.padding(start = if (avatar) 12.dp else 20.dp, end = 20.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (avatar) DriverAvatar(driver, 32.dp)
+                val mode = driverChipMode(maxWidth, LocalDensity.current.fontScale)
+                if (mode == DriverChipMode.AVATAR) Box(Modifier.padding(12.dp), contentAlignment = Alignment.Center) { DriverAvatar(driver, 32.dp) }
+                else Row(Modifier.padding(start = if (mode == DriverChipMode.AVATAR_AND_NAME) 12.dp else 20.dp, end = 20.dp, top = 6.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (mode == DriverChipMode.AVATAR_AND_NAME) DriverAvatar(driver, 32.dp)
                     Column {
-                        // One line each: in the tightest header the caption ellipsises too, rather than wrapping and growing the row.
+                        // One line each: in a tight header the caption ellipsises too, rather than wrapping and growing the row. The
+                        // name alone (the department is in the spoken label and in the picker): it is what tells the drivers apart.
                         Text("지금 운전", style = MaterialTheme.typography.labelSmall, color = Scene.textSecondary, maxLines = 1, softWrap = false,
                             overflow = TextOverflow.Ellipsis)
-                        Text(driver?.label ?: "직원 선택", style = MaterialTheme.typography.labelLarge, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.widthIn(max = if (wide) 230.dp else 140.dp))
+                        Text(driver?.let { it.name.ifBlank { it.label } } ?: "직원 선택", style = MaterialTheme.typography.labelLarge, color = Scene.text, maxLines = 1,
+                            overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = if (wide) 230.dp else 140.dp))
                     }
                 }
             }
