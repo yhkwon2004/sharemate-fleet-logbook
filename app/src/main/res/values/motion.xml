@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        The window animation of a car dialog that fades only (spec C): the platform's dialog style fades and slides, so the
+        driver picker sets this on its window instead (and none at all under reduced motion).
+    -->
+    <style name="CarDialogFade">
+        <item name="android:windowEnterAnimation">@anim/car_dialog_fade_in</item>
+        <item name="android:windowExitAnimation">@anim/car_dialog_fade_out</item>
+    </style>
+</resources>
