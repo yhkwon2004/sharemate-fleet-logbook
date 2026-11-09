@@ -1,5 +1,6 @@
 package ai.sharemate.app
 
+import androidx.compose.ui.unit.dp
 import org.junit.Assert.*
 import org.junit.Test
 import java.time.LocalDateTime
@@ -123,5 +124,13 @@ class PhoneExpensesTest {
         assertEquals(0L, totals[ExpenseType.TOLL]); assertEquals(0L, totals[ExpenseType.MAINTENANCE]); assertEquals(0L, totals[ExpenseType.OTHER])
         assertEquals("합계는 운행 경비 합과 같음", listOf(a, b).sumOf { it.expenseWon }, totals.values.sum())
         assertTrue(expenseTypeTotals(emptyList()).values.all { it == 0L })
+    }
+
+    @Test fun theListEndsAboveTheAddButtonAndTheTabBar() {
+        assertEquals("버튼 56 + 여백 20 + 12", 88.dp, expenseFabClearance(20.dp))
+        assertEquals("여백이 넓은 창에서는 버튼도 그만큼 위에", 100.dp, expenseFabClearance(32.dp))
+        // Before 2.10's fix the shell padded the tab by the bar and the list kept 104 dp for the button; it now adds the bar itself.
+        assertEquals(92.dp + 104.dp, tabScrollBottom(92.dp, extra = expenseFabClearance(20.dp)))
+        assertEquals("연결 전에는 버튼이 없음", 92.dp + 16.dp, tabScrollBottom(92.dp))
     }
 }

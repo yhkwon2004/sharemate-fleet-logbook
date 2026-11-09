@@ -142,4 +142,52 @@ class PhoneReservationsUiTest {
         assertEquals("never below the row", 1f, nowLineTarget(1.4f), 0f)
         assertEquals("never above it", 0f, nowLineTarget(-0.2f), 0f)
     }
+
+    @Test fun onlyADayWithNothingBookedFrom6To24ShowsTheHourGrid() {
+        assertTrue(timelineIsFree(emptyList(), today, zone))
+        assertTrue("06:00 전에 끝나는 예약만 있으면 격자", timelineIsFree(listOf(booking("early", kim, at(4, 3), at(4, 5))), today, zone))
+        assertTrue("06:00 정각에 끝나는 예약도", timelineIsFree(listOf(booking("dawn", kim, at(4, 0), at(4, 6))), today, zone))
+        assertFalse(timelineIsFree(listOf(booking("a", kim, at(4, 10), at(4, 11))), today, zone))
+        assertFalse("전날 밤부터 07:00까지", timelineIsFree(listOf(booking("night", lee, at(3, 22), at(4, 7))), today, zone))
+        assertFalse("23:30에 시작", timelineIsFree(listOf(booking("late", lee, at(4, 23, 30), at(5, 1))), today, zone))
+    }
+
+    @Test fun theHourGridOffersEveryHourStillOpen() {
+        val later = freeHourChips(today.plusDays(2), at(4, 9, 10), zone)
+        assertEquals((TIMELINE_FIRST_HOUR..TIMELINE_LAST_HOUR).toList(), later.map { it.hour })
+        assertTrue("다른 날은 정시부터", later.all { it.start == it.hour * 60 })
+        // Today at 09:10 the hour under way offers its half; at 09:31 it has gone too.
+        val now = at(4, 9, 10)
+        val todays = freeHourChips(today, now, zone)
+        assertEquals(FreeHourChip(9, 570), todays.first()); assertEquals(FreeHourChip(23, 1380), todays.last()); assertEquals(15, todays.size)
+        assertEquals("09:30 정각은 아직 열려 있음", FreeHourChip(9, 570), freeHourChips(today, at(4, 9, 30), zone).first())
+        assertEquals(FreeHourChip(10, 600), freeHourChips(today, at(4, 9, 31), zone).first())
+        assertEquals("새벽에는 06:00부터 전부", 18, freeHourChips(today, at(4, 5), zone).size)
+        assertEquals(listOf(FreeHourChip(23, 1410)), freeHourChips(today, at(4, 23, 10), zone))
+        assertTrue("23:30이 지나면 남은 시간 없음", freeHourChips(today, at(4, 23, 31), zone).isEmpty())
+        assertTrue(freeHourChips(today.minusDays(1), now, zone).isEmpty())
+        // A chip fills the form exactly as a tap on the free row of that hour does.
+        todays.forEach { chip -> assertEquals(chip.start, slotFromHour(chip.hour, today, emptyList(), now, zone).first) }
+    }
+
+    @Test fun pastHoursFoldIntoOneLine() {
+        assertEquals("06:00–09:00 · 지난 시간", pastHoursText(6, 9))
+        assertEquals("06:00–24:00 · 지난 시간", pastHoursText(TIMELINE_FIRST_HOUR, TIMELINE_LAST_HOUR + 1))
+    }
+
+    @Test fun fourHourChipsARowWhenFourFitOtherwiseThree() {
+        assertEquals("세로 휴대폰 패널", 4, freeHourColumns(335.dp, 1f))
+        assertEquals("64 × 4 + 8 × 3", 4, freeHourColumns(280.dp, 1f))
+        assertEquals(3, freeHourColumns(279.dp, 1f))
+        assertEquals("가로 휴대폰의 왼쪽 칸", 3, freeHourColumns(222.dp, 1f))
+        assertEquals("1.3배 글자", 3, freeHourColumns(335.dp, 1.3f))
+        assertEquals(4, freeHourColumns(360.dp, 1.3f))
+        assertEquals("작은 글자에서도 최소 폭은 그대로", 4, freeHourColumns(335.dp, .85f))
+        assertEquals(3, freeHourColumns(279.dp, .85f))
+    }
+
+    @Test fun theDateStripRunsUnderTheGutters() {
+        assertEquals("한 줄: 양쪽 여백까지", 20.dp to 20.dp, stripBleed(phoneLayout(411.dp, 900.dp).gutter, bookingTwoPane(phoneLayout(411.dp, 900.dp))))
+        assertEquals("양쪽 칸: 끝은 신청서 칸에 닿음", 32.dp to 0.dp, stripBleed(phoneLayout(800.dp, 411.dp).gutter, bookingTwoPane(phoneLayout(800.dp, 411.dp))))
+    }
 }

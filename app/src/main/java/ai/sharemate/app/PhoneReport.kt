@@ -121,7 +121,8 @@ internal fun tripsOfDriver(trips: List<Trip>, drivers: List<Driver>, driverId: S
     val swapForward = pageSwap(forward = true)
     val swapBack = pageSwap(forward = false)
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-        Column(Modifier.contentWidth().fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = tokens.gutter).padding(bottom = 24.dp),
+        // The scroll runs on under the floating tab bar; its last line comes to rest above it.
+        Column(Modifier.contentWidth().fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = tokens.gutter).padding(bottom = phoneTabScrollBottom()),
             verticalArrangement = Arrangement.spacedBy(tokens.cardGap + 4.dp)) {
             MonthRow(month, today, onMonth)
             // The stepper stays; the cards page sideways to the month that was chosen (a snap under reduced motion).
@@ -383,7 +384,8 @@ internal fun tripsOfDriver(trips: List<Trip>, drivers: List<Driver>, driverId: S
     val totals = remember(trips) { logbookTotals(trips) }
     val reimbursement = if (driver != null && data.profile.reimbursePerKmWon > 0) reimbursements(trips, data.profile.reimbursePerKmWon).sumOf { it.amountWon } else null
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-        Column(Modifier.contentWidth().fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = tokens.gutter).padding(bottom = 24.dp),
+        // Like the tabs: the trips scroll on under the floating tab bar when one is showing, and the last comes to rest above it.
+        Column(Modifier.contentWidth().fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = tokens.gutter).padding(bottom = phoneTabScrollBottom()),
             verticalArrangement = Arrangement.spacedBy(tokens.cardGap + 4.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = onBack, modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "현황으로 돌아가기" }) {
