@@ -145,7 +145,7 @@ internal fun starFade(entering: Boolean, leaving: Boolean, t: Float): Float {
  * [entering] marks a skyline arriving through a scene change (its orb rises into place), [leaving] one on its way out.
  */
 @Composable internal fun Skyline(phase: ScenePhase, modifier: Modifier = Modifier, horizonAt: Float = .62f, heightScale: Float = 1f, orbAt: Offset = Offset(.53f, .40f),
-    entering: Boolean = false, leaving: Boolean = false) {
+    entering: Boolean = false, leaving: Boolean = false, showOrb: Boolean = true, showClouds: Boolean = true) {
     val scene = remember { skylineScene() }
     val p = paintFor(phase)
     // One clock per crossfade, read only inside the draw so the cached paths never rebuild; nothing moves under reduced motion.
@@ -232,12 +232,13 @@ internal fun starFade(entering: Boolean, leaving: Boolean, t: Float): Float {
             if (starAlpha > 0f) scene.stars.forEach { (x, y, a) -> drawCircle(Color.White.copy(alpha = (a * starAlpha).coerceAtMost(1f)), radius = 1.2f + a, center = Offset(w * x, h * y)) }
             // The sun or the moon rests just above the skyline, right of the search bar so it never sits behind text or chips;
             // during a scene change it rises the last 8 % of the sky height into place (or sinks away).
-            translate(top = lift) {
+            // [showOrb] false leaves the sun and the moon out where the page above would cover or crowd them (dimmed panes).
+            if (showOrb) translate(top = lift) {
                 drawCircle(orbHalo, radius = haloRadius, center = orb)
                 if (orbDisc != null) drawCircle(orbDisc, radius = ht * p.orbRadius, center = orb) else drawCircle(p.orb, radius = ht * p.orbRadius, center = orb)
                 p.orbShade?.let { drawCircle(it, radius = ht * .030f, center = orb + Offset(ht * .012f, -ht * .006f)) }
             }
-            p.clouds?.let { fill ->
+            if (showClouds) p.clouds?.let { fill ->
                 p.cloudShade?.let { shade -> translate(top = cloudShadeOffset) { drawPath(clouds, shade) } }
                 drawPath(clouds, fill)
             }
@@ -313,7 +314,7 @@ private class SkyLedger { var changes = 0 }
  * car (.62, .21), clear of the hero haze; the phone passes its own.
  */
 @Composable internal fun HomeBackdrop(modifier: Modifier = Modifier, horizonAt: Float = .52f, heightScale: Float = .72f, moonAt: Offset = Offset(.62f, .21f),
-    leftScrim: Boolean = true) {
+    leftScrim: Boolean = true, showOrb: Boolean = true, showClouds: Boolean = true) {
     val colors = Scene.colors
     val day = colors.isDay
     val haze = colors.haze
@@ -328,7 +329,8 @@ private class SkyLedger { var changes = 0 }
     val entering = remember(phase) { ledger.changes++ > 0 }
     Box(modifier) {
         Crossfade(phase, Modifier.matchParentSize(), animationSpec = if (reduce) snap() else tween(crossfadeMs, easing = LinearEasing), label = "sky-phase") { shown ->
-            Skyline(shown, Modifier.fillMaxSize(), horizonAt, heightScale, moonAt, entering = entering && shown == phase, leaving = shown != phase)
+            Skyline(shown, Modifier.fillMaxSize(), horizonAt, heightScale, moonAt, entering = entering && shown == phase, leaving = shown != phase,
+                showOrb = showOrb, showClouds = showClouds)
         }
         Spacer(Modifier.matchParentSize().drawWithCache {
             // The hero column ends 720 dp past the gutter on the car (never past 60 % of the window); the phone greeting ends about half-way to the horizon.
@@ -344,5 +346,6 @@ private class SkyLedger { var changes = 0 }
 /** The backdrop at [level] (1 on home, dimmed elsewhere, 0 hidden), fading on the page clock inside its own recomposition scope. */
 @Composable internal fun SkyLayer(level: Float, modifier: Modifier = Modifier) {
     val alpha by animateFloatAsState(level, if (LocalReduceMotion.current) snap() else tween(MOTION_PAGE_MS), label = "sky")
-    if (level > 0f || alpha > 0f) HomeBackdrop(modifier.graphicsLayer { this.alpha = alpha })
+    // The sun and the moon belong to the home; on the dimmed panes they would sit under controls, so they stay out there.
+    if (level > 0f || alpha > 0f) HomeBackdrop(modifier.graphicsLayer { this.alpha = alpha }, showOrb = level >= 1f)
 }

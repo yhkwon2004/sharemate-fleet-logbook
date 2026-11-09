@@ -79,6 +79,13 @@ internal fun phoneLayout(width: Dp, height: Dp = 800.dp): LayoutTokens {
 val LocalLayout = compositionLocalOf { carLayout(1680.dp) }
 
 /**
+ * The height the phone's floating tab bar (or the gesture bar in landscape) covers at the bottom of a tab. The shell no longer
+ * pads its content by the bar; each tab adds this as the bottom content padding of its own scroll, so content scrolls under
+ * the glass bar instead of ending on a hard line above it. Zero outside the phone shell.
+ */
+val LocalNavInset = compositionLocalOf { 0.dp }
+
+/**
  * Measures the window once and provides the matching tokens to [content]; the shell calls this at its root. The width
  * is divided by the font scale before the class is chosen (see the file comment); gutters and maxima stay in raw dp.
  */
