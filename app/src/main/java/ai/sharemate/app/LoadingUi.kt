@@ -63,20 +63,33 @@ internal const val MOTION_SWEEP_FIRST_MS = 600
 internal const val MOTION_SWEEP_MS = 320
 internal const val MOTION_SWEEP_DELAY_MS = 120
 
+/** The rings and bars that have already made their first sweep in this process, by key (spec C: a first appearance never replays). */
+internal object IntroducedSweeps {
+    private val keys = mutableSetOf<String>()
+    @Synchronized fun seen(key: String): Boolean = key in keys
+    @Synchronized fun mark(key: String) { keys += key }
+}
+
 /**
  * A 0..1 progress that sweeps to [target]: from empty over 600 ms the first time (starting 120 ms after the card lands),
  * from the previous value over 320 ms after that; the exact value at once under reduced motion. Read the state inside a
  * `progress = { }` lambda or a draw lambda so only the bar redraws while it moves.
+ *
+ * Give [key] a stable name for the ring (e.g. "home-month-ring"): once that ring has swept in this process it starts at its
+ * value when the page is shown again (returning to 홈, switching a view) instead of replaying the first sweep from empty.
  */
-@Composable internal fun sweepProgress(target: Float): State<Float> {
+@Composable internal fun sweepProgress(target: Float, key: String? = null): State<Float> {
     val reduce = LocalReduceMotion.current
     val clamped = target.coerceIn(0f, 1f)
-    val value = remember { Animatable(if (reduce) clamped else 0f) }
-    var landed by remember { mutableStateOf(false) }
+    val introduced = key != null && IntroducedSweeps.seen(key)
+    val value = remember { Animatable(if (reduce || introduced) clamped else 0f) }
+    var landed by remember { mutableStateOf(introduced) }
     LaunchedEffect(clamped, reduce) {
+        key?.let(IntroducedSweeps::mark)
         if (reduce) { value.snapTo(clamped); return@LaunchedEffect }
         val first = !landed
         landed = true
+        if (!first && value.value == clamped) return@LaunchedEffect
         value.animateTo(clamped, if (first) tween(MOTION_SWEEP_FIRST_MS, delayMillis = MOTION_SWEEP_DELAY_MS, easing = FastOutSlowInEasing)
             else tween(MOTION_SWEEP_MS, easing = FastOutSlowInEasing))
     }

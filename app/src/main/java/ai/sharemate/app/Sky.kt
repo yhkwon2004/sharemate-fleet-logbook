@@ -22,6 +22,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.translate
@@ -175,7 +176,8 @@ internal fun starFade(entering: Boolean, leaving: Boolean, t: Float): Float {
  * By day it draws only the clouds that lie wholly right of [cloudsClearOf], where the content column ends.
  */
 @Composable internal fun Skyline(phase: ScenePhase, modifier: Modifier = Modifier, horizonAt: Float = .62f, heightScale: Float = 1f, orbAt: Offset = Offset(.53f, .40f),
-    entering: Boolean = false, leaving: Boolean = false, showOrb: Boolean = true, showClouds: Boolean = true, cloudsClearOf: Dp = 0.dp) {
+    entering: Boolean = false, leaving: Boolean = false, showOrb: Boolean = true, showClouds: Boolean = true, cloudsClearOf: Dp = 0.dp,
+    orbAlpha: () -> Float = { 1f }) {
     val scene = remember { skylineScene() }
     val p = paintFor(phase)
     // One clock per crossfade, read only inside the draw so the cached paths never rebuild; nothing moves under reduced motion.
@@ -263,11 +265,16 @@ internal fun starFade(entering: Boolean, leaving: Boolean, t: Float): Float {
             if (starAlpha > 0f) scene.stars.forEach { (x, y, a) -> drawCircle(Color.White.copy(alpha = (a * starAlpha).coerceAtMost(1f)), radius = 1.2f + a, center = Offset(w * x, h * y)) }
             // The sun or the moon rests just above the skyline, right of the search bar so it never sits behind text or chips;
             // during a scene change it rises the last 8 % of the sky height into place (or sinks away).
-            // [showOrb] false leaves the sun and the moon out where the page above would cover or crowd them (dimmed panes).
-            if (showOrb) translate(top = lift) {
+            // [showOrb] false leaves the sun and the moon out where the page above would cover or crowd them; [orbAlpha] fades them
+            // with the page instead (read here, in the draw, so a fade never rebuilds the cached paths).
+            val orbA = if (showOrb) orbAlpha().coerceIn(0f, 1f) else 0f
+            if (orbA > 0f) translate(top = lift) {
+                val layer = Paint().apply { alpha = orbA }
+                drawContext.canvas.saveLayer(Rect(orb.x - haloRadius, orb.y - haloRadius, orb.x + haloRadius, orb.y + haloRadius), layer)
                 drawCircle(orbHalo, radius = haloRadius, center = orb)
                 if (orbDisc != null) drawCircle(orbDisc, radius = ht * p.orbRadius, center = orb) else drawCircle(p.orb, radius = ht * p.orbRadius, center = orb)
                 p.orbShade?.let { drawCircle(it, radius = ht * .030f, center = orb + Offset(ht * .012f, -ht * .006f)) }
+                drawContext.canvas.restore()
             }
             if (showClouds) p.clouds?.let { fill ->
                 p.cloudShade?.let { shade -> translate(top = cloudShadeOffset) { drawPath(clouds, shade) } }
@@ -345,7 +352,7 @@ private class SkyLedger { var changes = 0 }
  * and stay off the phone, whose sky is mostly haze: there they read as smudges beside the header icons.
  */
 @Composable internal fun HomeBackdrop(modifier: Modifier = Modifier, horizonAt: Float = .52f, heightScale: Float = .72f, moonAt: Offset = Offset(.62f, .21f),
-    leftScrim: Boolean = true, showOrb: Boolean = true, showClouds: Boolean = true) {
+    leftScrim: Boolean = true, showOrb: Boolean = true, showClouds: Boolean = true, orbAlpha: () -> Float = { 1f }) {
     val colors = Scene.colors
     val day = colors.isDay
     val haze = colors.haze
@@ -365,7 +372,7 @@ private class SkyLedger { var changes = 0 }
     Box(modifier) {
         Crossfade(phase, Modifier.matchParentSize(), animationSpec = if (reduce) snap() else tween(crossfadeMs, easing = LinearEasing), label = "sky-phase") { shown ->
             Skyline(shown, Modifier.fillMaxSize(), horizonAt, heightScale, moonAt, entering = entering && shown == phase, leaving = shown != phase,
-                showOrb = showOrb, showClouds = showClouds && !compact, cloudsClearOf = columnEnd)
+                showOrb = showOrb, showClouds = showClouds && !compact, cloudsClearOf = columnEnd, orbAlpha = orbAlpha)
         }
         Spacer(Modifier.matchParentSize().drawWithCache {
             // The hero column ends 720 dp past the gutter on the car (never past 60 % of the window).
@@ -380,6 +387,7 @@ private class SkyLedger { var changes = 0 }
 /** The backdrop at [level] (1 on home, dimmed elsewhere, 0 hidden), fading on the page clock inside its own recomposition scope. */
 @Composable internal fun SkyLayer(level: Float, modifier: Modifier = Modifier) {
     val alpha by animateFloatAsState(level, if (LocalReduceMotion.current) snap() else tween(MOTION_PAGE_MS), label = "sky")
-    // The sun and the moon belong to the home; on the dimmed panes they would sit under controls, so they stay out there.
-    if (level > 0f || alpha > 0f) HomeBackdrop(modifier.graphicsLayer { this.alpha = alpha }, showOrb = level >= 1f)
+    // The sun and the moon belong to the home; on the dimmed panes they would sit under controls, so they fade out with the
+    // page (fully gone at the panes' .34) instead of popping on the first frame of the tab change.
+    if (level > 0f || alpha > 0f) HomeBackdrop(modifier.graphicsLayer { this.alpha = alpha }, orbAlpha = { ((alpha - .34f) / .66f).coerceIn(0f, 1f) })
 }
