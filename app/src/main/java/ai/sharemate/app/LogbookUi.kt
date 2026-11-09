@@ -29,6 +29,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
@@ -180,15 +181,29 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     var logMonth by rememberSaveable { mutableStateOf<String?>(null) }
     // The day keys on which the driver already answered "오늘도 … 님이 운전하나요?"; one set for the hero and the top bar.
     var driverConfirmed by rememberSaveable { mutableStateOf("") }
+    // The parked pages composed right now, kept by the page host. A page stays composed for about 260 ms after the driver leaves
+    // it (pageSwap), and 운행기록 stays composed under the assistant sheet. removeState on a composed page detaches its registry
+    // from pageStates for the rest of that composition: nothing it holds is saved again, not when it leaves, when a drive takes
+    // the screen or when the activity is rebuilt. key(logGen) and key(reportGen) already start such an instance fresh, so goLog
+    // and goReport drop a page's saved state only while the page is gone.
+    val composedPages = remember { mutableSetOf<Int>() }
+    val dropPageState: (Int) -> Unit = { page -> if (page !in composedPages) pageStates.removeState(page) }
     // Bumped by every goLog so the log page starts fresh even when its old instance is still fading out.
     var logGen by rememberSaveable { mutableIntStateOf(0) }
     // The log page keeps its own filter, month and selection while the driver browses; a button that opens it on something
     // specific drops that saved state first, so the list shows what the button promised.
     val goLog: (Int, YearMonth?, String?) -> Unit = { filter, month, tripId ->
-        pageStates.removeState(1)
+        dropPageState(1)
         logGen++
         logFilter = filter; logMonth = month?.toString(); expenseTripId = tripId; tab = 1
     }
+    // 월간·Excel keeps its own period, unit and view the same way. Every button that opens it on a month (the home close card,
+    // the banner, 정보 내보내기, the month widget) drops that state first, so it lands on 월간 and the Excel view of that month;
+    // the header tab and a return to it keep what the driver left there.
+    var reportMonth by rememberSaveable { mutableStateOf<String?>(null) }
+    // Bumped by every goReport so 월간·Excel starts fresh even while its old instance is still fading out (as logGen).
+    var reportGen by rememberSaveable { mutableIntStateOf(0) }
+    val goReport: (YearMonth) -> Unit = { m -> dropPageState(2); reportGen++; reportMonth = m.toString(); tab = 2 }
     // The local assistant: rules over the real log, standing in for Gleo until the voice integration is approved.
     var assistant by rememberSaveable { mutableStateOf(false) }
     var assistantText by rememberSaveable { mutableStateOf<String?>(null) }
@@ -334,12 +349,14 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                                     val swapBack = pageSwap(forward = false)
                                     AnimatedContent(targetState = tab, modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp, bottom = 20.dp),
                                         transitionSpec = { if (targetState > initialState) swapForward else swapBack }, label = "parked-page") { page ->
+                                      // Tells goLog and goReport which pages are still composed (see composedPages).
+                                      DisposableEffect(page) { composedPages += page; onDispose { composedPages -= page } }
                                       pageStates.SaveableStateProvider(page) {
                                         when (page) {
-                                            0 -> DrivePane(state, now, act, repository, openDriver, requestPermissions, { tab = 4 }, { tab = it }, openLog,
+                                            0 -> DrivePane(state, now, act, repository, openDriver, requestPermissions, { tab = 4 }, { tab = it }, openLog, goReport,
                                                 { assistant = true }, snoozes, bannerCharges, { bannerCharges = it })
                                             1 -> key(logGen) { LogPane(state, now, act, repository, openDriver, expenseTripId, logFilter, logMonth) }
-                                            2 -> ReportPane(state, now, pendingExportName != null, export, act, repository, { tab = 4 }, { tab = 0 }) { month -> openLog(1, month) }
+                                            2 -> key(reportGen) { ReportPane(state, now, pendingExportName != null, export, act, repository, { tab = 4 }, { tab = 0 }, initialMonth = reportMonth) { month -> openLog(1, month) } }
                                             3 -> VehiclePane(state, now, act, repository, goSettings = { tab = 4 })
                                             // Saved-settings confirmations ride the bar; a modal is kept for text the driver must read, such as a file path.
                                             else -> SettingsPane(state, act, repository, { tutorial = true }, { phrase -> assistantText = phrase; assistant = true }) { text -> if (text.contains('\n')) info = text else followUp(FollowUp(text)) }
@@ -645,11 +662,14 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
  * The car home (2.10): a city hero in the scene's light with the greeting, the assistant entry and three destinations
  * (차량 정보 · 운행일지 확인 · 정보 내보내기); under it whatever the car is waiting on, one card at a time in the order the
  * moment demands (safety, then money the car measured, then paperwork, then the manager's deadlines); then today and
- * this month as two widgets, and the one-tap incident row. Laid out by [homePlan] for the window's class and height.
+ * this month as two widgets, and the one-tap incident row. Laid out by [homePlan] for the window's class and height. Every way
+ * into 월간·Excel from here ([openReport]) names the month it opens on: the close card's and the banner's, the month
+ * 정보 내보내기 names, this month for the month widget.
  */
 @Composable private fun DrivePane(state: TripLogState, now: Long, act: Act, repository: TripLogRepository,
     openDriver: (String?) -> Unit, requestPermissions: () -> Unit, goSettings: () -> Unit, navigate: (Int) -> Unit, openLog: (Int, YearMonth?) -> Unit,
-    assistant: () -> Unit, snoozes: MutableState<Set<String>>, banner: List<CardCharge> = emptyList(), onBanner: (List<CardCharge>) -> Unit = {}) {
+    openReport: (YearMonth) -> Unit, assistant: () -> Unit, snoozes: MutableState<Set<String>>, banner: List<CardCharge> = emptyList(),
+    onBanner: (List<CardCharge>) -> Unit = {}) {
     val layout = LocalLayout.current
     val wide = layout.expanded
     val data = state.data
@@ -665,7 +685,7 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
             answers = stackAnswers) { task ->
             when (task.kind) {
                 TaskKind.MONTH_CLOSE -> monthCloseTarget(data, today, zone)?.let {
-                    MonthCloseCard(it, onIssues = { openLog(1, it.month) }, onReviews = { navigate(0) }, onExport = { navigate(2) }, exporting = false, act = act, repository = repository)
+                    MonthCloseCard(it, onIssues = { openLog(1, it.month) }, onReviews = { navigate(0) }, onExport = { openReport(it.month) }, exporting = false, act = act, repository = repository)
                 }
                 TaskKind.CARE -> CareDueTask(state, now, act, repository, snoozed = snoozes.value, onSnoozed = { snoozes.value = it })
                 else -> {}
@@ -686,7 +706,7 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
     val cards = listOf(
         HomeCardSpec("차량 정보", lines.vehicle, R.drawable.ic_vehicle, openIncidents(data).size) { navigate(3) },
         HomeCardSpec("운행일지 확인", lines.log, R.drawable.ic_journal, lines.logPending) { openLog(if (lines.logPending > 0) 1 else 0, YearMonth.from(today)) },
-        HomeCardSpec("정보 내보내기", lines.export, R.drawable.ic_export, 0) { navigate(2) },
+        HomeCardSpec("정보 내보내기", lines.export, R.drawable.ic_export, 0) { openReport(lines.exportMonth) },
     )
     val demoControls: @Composable () -> Unit = {
         if (data.profile.demoMode) DemoControls { act { repository.ingestCardEvents(listOf(demoCardApproval(repository.state.value.data, System.currentTimeMillis()))) } }
@@ -695,12 +715,13 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
     val entrance = rememberHomeEntrance()
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val plan = homePlan(layout, LocalDensity.current.fontScale, maxHeight)
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(layout.sectionGap)) {
+        val scroll = rememberScrollState()
+        Column(Modifier.fillMaxSize().fadingTopEdge(scroll).verticalScroll(scroll), verticalArrangement = Arrangement.spacedBy(layout.sectionGap)) {
             // The hero grows with its text (a permission button, a second greeting line); the change reflows over 260 ms.
             HomeHero(state, now, plan, assistant, requestPermissions, demoControls, cards, Modifier.animateContentSize(enterSpec(260)), entrance = entrance)
             MatchedBanner(banner, onShow = { onBanner(emptyList()); openLog(2, YearMonth.from(today)) }, onDismiss = { onBanner(emptyList()) })
             NextReservationLine(data = state.data, now = now)
-            if (!closeCardShown) MonthCloseBannerHost(data, now, onOpen = { navigate(2) })
+            if (!closeCardShown) MonthCloseBannerHost(data, now, onOpen = openReport)
             // The stack and the widgets share one slot and the stack carries the section gap under it, so the stack unfolds and
             // folds away together with its gap (260 ms, a snap under reduced motion) and the widgets move up smoothly behind it.
             Column(Modifier.fillMaxWidth()) {
@@ -708,7 +729,7 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
                     exit = fadeOut(enterSpec(160)) + shrinkVertically(enterSpec(260)), label = "task-stack") {
                     taskStack(Modifier.padding(bottom = layout.sectionGap))
                 }
-                HomeWidgets(state, now, sideBySide = plan.widgetsSideBySide, compact = plan.compactWidgets) { navigate(2) }
+                HomeWidgets(state, now, sideBySide = plan.widgetsSideBySide, compact = plan.compactWidgets) { openReport(YearMonth.from(today)) }
             }
             // A charge whose card approval is still on its way: the strip says so and offers to type it now.
             hiddenPendingCharge(data, now, prompt.value)?.let { waiting ->
@@ -853,10 +874,7 @@ internal fun logEmptyCopy(filter: Int, month: YearMonth, monthTrips: Int, employ
     val employeeLabel = employeeName ?: "전체 직원"
     val previousMonth = { month = period.minusMonths(1).toString(); selectedId = null }
     val stepper: @Composable RowScope.() -> Unit = {
-        MonthStepButton(forward = false, description = "이전 달", onClick = previousMonth)
-        Text("${period.year}년 ${period.monthValue}월", style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center, maxLines = 1,
-            modifier = Modifier.widthIn(min = 180.dp).semantics { heading() })
-        MonthStepButton(forward = true, description = "다음 달", enabled = period < thisMonth) { month = period.plusMonths(1).toString(); selectedId = null }
+        PeriodStepper(reportStepperCopy(ReportPeriod(period, false), localDate(now)), period < thisMonth, previousMonth) { month = period.plusMonths(1).toString(); selectedId = null }
     }
     val employeeItems: @Composable ColumnScope.(() -> Unit) -> Unit = { close ->
         ChipMenuItem("전체 직원") { employeeFilter = null; selectedId = null; close() }
@@ -925,10 +943,18 @@ internal fun logEmptyCopy(filter: Int, month: YearMonth, monthTrips: Int, employ
     }
 }
 
+/** The car's period stepper (운행기록, 월간·Excel): 64-dp glass arrows around a heading TalkBack re-reads when it changes. */
+@Composable private fun RowScope.PeriodStepper(copy: StepperCopy, canForward: Boolean, onBack: () -> Unit, onForward: () -> Unit) {
+    MonthStepButton(forward = false, description = copy.back, onClick = onBack)
+    Text(copy.label, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center, maxLines = 1,
+        modifier = Modifier.widthIn(min = 180.dp).semantics { heading(); liveRegion = LiveRegionMode.Polite })
+    MonthStepButton(forward = true, description = copy.forward, enabled = canForward, onClick = onForward)
+}
+
 /**
- * One arrow of the month stepper, a 64-dp target: a 28-dp chevron on glass with the scene's lit edge. Disabled, the container
+ * One arrow of a [PeriodStepper], a 64-dp target: a 28-dp chevron on glass with the scene's lit edge. Disabled, the container
  * goes transparent and the chevron drops to 38 %, so a dead arrow never reads stronger than a live one. Settles to .98 while
- * held; no ripple on the car. [description] is what TalkBack reads (이전 달 · 다음 달).
+ * held; no ripple on the car. [description] is what TalkBack reads (이전 달 · 다음 해 …), with the reason when the arrow is off.
  */
 @Composable private fun MonthStepButton(forward: Boolean, description: String, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
     val shape = RoundedCornerShape(20.dp)
@@ -1021,7 +1047,8 @@ private class LastShown<T> { var value: T? = null }
     }
     val flagged = issues.map { it.tripId }.toSet()
     val days = trips.reversed().groupBy { localDate(it.startAt) }
-    LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp)) {
+    val list = rememberLazyListState()
+    LazyColumn(modifier.fadingTopEdge(list), state = list, verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp)) {
         days.forEach { (date, list) ->
             item(key = "d$date") {
                 Row(Modifier.fillMaxWidth().padding(top = if (compact) 8.dp else 12.dp, bottom = 4.dp, start = 8.dp, end = 8.dp)) {
@@ -1075,7 +1102,8 @@ private class LastShown<T> { var value: T? = null }
     val trips = data.trips.associateBy { it.id }
     val classify = rememberClassifier(data, act, repository)
     val followUp = LocalFollowUp.current
-    LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    val list = rememberLazyListState()
+    LazyColumn(modifier.fadingTopEdge(list), state = list, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         items(issues, key = { "${it.type}-${it.tripId}" }) { issue ->
             val trip = trips[issue.tripId] ?: return@items
             Panel(padding = 22.dp) {
@@ -1248,6 +1276,105 @@ internal fun excelPreviewHeight(pane: Dp, fontScale: Float = 1f): Dp {
     return (pane - SAVE_BAR_RESERVE - viewHeader).coerceAtLeast(floor)
 }
 
+/**
+ * The one period 월간·Excel shows: [month] under 월간, its year under 연간. Both units keep the same anchor [month]: from
+ * 2026년 11월, 연간 then ‹ shows 2025년, and 월간 again shows 2025년 11월.
+ */
+@Immutable
+internal data class ReportPeriod(val month: YearMonth, val yearly: Boolean)
+
+/** What a car period stepper shows and TalkBack reads: the period's label and the names of its two arrows. */
+@Immutable
+internal data class StepperCopy(val label: String, val back: String, val forward: String)
+
+/** The saved anchor month read back: a value that does not parse, or a month after this one (a clock set back), is this month. */
+internal fun reportPeriod(saved: String, yearly: Boolean, today: LocalDate): ReportPeriod {
+    val thisMonth = YearMonth.from(today)
+    val month = runCatching { YearMonth.parse(saved) }.getOrNull()?.takeIf { it <= thisMonth } ?: thisMonth
+    return ReportPeriod(month, yearly)
+}
+
+/**
+ * The dates [period] covers: the 1st (1 January under 연간) to its last day, cut at [today] while it is still running, so the
+ * start never passes the end. The same ranges as the assistant's 지난달 · 이번 달 · 올해 and Gleo's this_month · this_year.
+ */
+internal fun reportRange(period: ReportPeriod, today: LocalDate): Pair<LocalDate, LocalDate> {
+    val month = minOf(period.month, YearMonth.from(today))
+    val start = if (period.yearly) LocalDate.of(month.year, 1, 1) else month.atDay(1)
+    val end = if (period.yearly) LocalDate.of(month.year, 12, 31) else month.atEndOfMonth()
+    return start to if (end.isAfter(today)) today else end
+}
+
+/** Whether › is live: a month before this one ([canGoForward], the phone's rule) under 월간, a year before this one under 연간. */
+internal fun reportCanGoForward(period: ReportPeriod, today: LocalDate): Boolean =
+    if (period.yearly) period.month.year < today.year else canGoForward(period.month, today)
+
+/** One step: a month under 월간, twelve under 연간, never past this month (› is off there); no floor, as 운행기록 and the phone. */
+internal fun reportStep(period: ReportPeriod, forward: Boolean, today: LocalDate): ReportPeriod {
+    if (forward && !reportCanGoForward(period, today)) return period
+    val months = if (period.yearly) 12L else 1L
+    return period.copy(month = minOf(if (forward) period.month.plusMonths(months) else period.month.minusMonths(months), YearMonth.from(today)))
+}
+
+/** The stepper's label (2026년 10월 · 2026년) and its arrows' TalkBack names; a dead › says why, as the phone's month row does. */
+internal fun reportStepperCopy(period: ReportPeriod, today: LocalDate): StepperCopy {
+    val forward = reportCanGoForward(period, today)
+    return if (period.yearly) StepperCopy("${period.month.year}년", "이전 해", if (forward) "다음 해" else "다음 해 · 아직 오지 않은 해")
+    else StepperCopy("${period.month.year}년 ${period.month.monthValue}월", "이전 달", if (forward) "다음 달" else "다음 달 · 아직 오지 않은 달")
+}
+
+/**
+ * The close card for the period on screen: none under 연간; this month always, so it can say what is still to come; a past
+ * month only while it has something to show (trips, a card question or a close record).
+ */
+internal fun reportCloseStatus(data: TripLogData, period: ReportPeriod, today: LocalDate, zone: ZoneId): MonthStatus? {
+    if (period.yearly) return null
+    val status = monthStatus(data, period.month, zone)
+    return status.takeIf { period.month >= YearMonth.from(today) || it.trips > 0 || it.reviews > 0 || it.closed != null }
+}
+
+/**
+ * Where 정리하러 가기 opens 운행기록: the month of the earliest trip still without a purpose or a driver (oldest first, like
+ * [monthCloseTarget]), else [fallback]. Under 월간 that is the month on screen; under 연간 the first month to tidy.
+ */
+internal fun tidyMonth(trips: List<Trip>, fallback: YearMonth, zone: ZoneId): YearMonth =
+    trips.filter { it.purpose == TripPurpose.UNCLASSIFIED || it.driverId == null }.minByOrNull { it.startAt }
+        ?.let { YearMonth.from(Instant.ofEpochMilli(it.startAt).atZone(zone)) } ?: fallback
+
+/** The workbook's file name: the plate (차량 when blank; anything but letters, digits and hyphens as _) and the exact range, 시연_ first in demo mode. */
+internal fun logbookFileName(profile: FleetProfile, from: LocalDate, to: LocalDate): String {
+    val plate = profile.plateNumber.ifBlank { "차량" }.replace(Regex("[^\\p{L}\\p{N}-]"), "_")
+    return "${if (profile.demoMode) "시연_" else ""}운행기록부_${plate}_${from}_${to}.xlsx"
+}
+
+/**
+ * The 검토 view's headline for a period with [trips] trips and [issues] audit findings. A period without trips (easy to reach
+ * now that the pane steps back through months and years) has nothing to check, rather than "0 items to check".
+ */
+internal fun auditHeadline(trips: Int, issues: Int): String = when {
+    trips == 0 -> "점검할 운행이 없어요"
+    issues == 0 -> "기록 기본 점검 완료"
+    else -> "확인이 필요한 항목 ${issues}개"
+}
+
+/** A year as the tax card names it: 올해 for this one, else 2025년 (as [monthLabel] names a month). */
+private fun yearLabel(year: Int, today: LocalDate): String = if (year == today.year) "올해" else "${year}년"
+
+/** The tax card's eyebrow: the year whose business ratio it applies, 올해 for this one. */
+internal fun taxEyebrow(year: Int, today: LocalDate): String = "비용 참고 · ${yearLabel(year, today)} 업무사용비율 기준"
+
+/**
+ * What the tax card says instead of its figures, or null when it can compute them. A missing annual cost comes first, and only
+ * that state offers 설정에서 입력. With the cost set, a [year] without trips has no business ratio (the card reads the year on
+ * screen, and the stepper has no floor) and no setting can give it one, so the card says that instead of asking for the cost.
+ */
+internal fun taxCardBlocker(cost: Long?, ratio: Double?, year: Int, today: LocalDate): String? = when {
+    cost == null -> "연간 차량 비용을 입력하면 운행기록부의 효과를 계산해요"
+    // In the pattern of logEmptyCopy and monthCloseHeadline ("… 운행 기록이 없어요"): says why there is no figure, asks for nothing.
+    ratio == null -> "${yearLabel(year, today)} 운행 기록이 없어 업무사용비율을 계산할 수 없어요"
+    else -> null
+}
+
 /** The Excel view's save bar (72 dp, max 760), pinned to the bottom of the pane: one line of context and the save action, on glass. */
 @Composable private fun SaveBar(hint: String, modifier: Modifier = Modifier, action: @Composable () -> Unit) {
     Surface(modifier.widthIn(max = EXCEL_VIEW_MAX_WIDTH).fillMaxWidth(), shape = RoundedCornerShape(22.dp), color = Scene.glass, border = Scene.edge) {
@@ -1260,68 +1387,103 @@ internal fun excelPreviewHeight(pane: Dp, fontScale: Float = 1f): Dp {
 }
 
 /**
- * 월간·Excel, one vertical scroll: the period choice (480 wide) with Excel 저장 at the column's right, the month-close card
- * (max 760) while this month is chosen, the four views as 56-dp tabs (max 960), then the view. The Excel view keeps to 760
- * like the month-close card: the preview with its lighter sheet tabs at [excelPreviewHeight] (480 at least), its table paging
- * to the rows that fit, and the save bar (72 dp) pinned to the bottom of the pane while the rest scrolls under it. The two
- * cards of the other views sit side by side from EXPANDED up and stack below it. Both Excel 저장 actions follow one rule
- * ([excelSaveAvailable]).
+ * 월간·Excel, one vertical scroll over one period on screen ([ReportPeriod]: a month under 월간, a year under 연간), stepped
+ * like 운행기록 and never past this month. From EXPANDED up the stepper, 월간 · 연간 (320 wide) and Excel 저장 share one
+ * 64-dp row; below that the stepper has its own row over the other two (480 wide). Then the month-close card (max 760) of
+ * the month on screen ([reportCloseStatus]), the four views as 56-dp tabs (max 960), the range line and the view. The label,
+ * the card, the views, the preview, every Excel 저장 and its file name, and 정리하러 가기 all read the one range
+ * [reportRange] gives. The pane opens on [initialMonth] when a button hands it one, else where the home card, the banner
+ * and the tab badge point ([reportLandingMonth]); after that only the driver moves it. The Excel view keeps to 760 like the
+ * month-close card: the preview with its lighter sheet tabs at [excelPreviewHeight] (480 at least), its table paging to the
+ * rows that fit, and the save bar (72 dp) pinned to the bottom of the pane while the rest scrolls under it. The two cards of
+ * the other views sit side by side from EXPANDED up and stack below it. Every Excel 저장 follows one rule ([excelSaveAvailable]).
  */
 @Composable private fun ReportPane(state: TripLogState, now: Long, exporting: Boolean, saveFile: (String, String, ByteArray) -> Unit,
-    act: Act, repository: TripLogRepository, goSettings: () -> Unit, goHome: () -> Unit, goReview: (YearMonth) -> Unit) {
+    act: Act, repository: TripLogRepository, goSettings: () -> Unit, goHome: () -> Unit, initialMonth: String? = null, goReview: (YearMonth) -> Unit) {
     val layout = LocalLayout.current
     val wide = layout.expanded
     val data = state.data
+    val today = localDate(now)
+    // One anchor month for both units (0 월간, 1 연간), resolved once: a close or a reopen changes the card in place, and the
+    // month moves only when the driver steps.
     var period by rememberSaveable { mutableIntStateOf(0) }
+    var month by rememberSaveable { mutableStateOf(initialMonth?.takeIf { runCatching { YearMonth.parse(it) }.isSuccess }
+        ?: reportLandingMonth(data, today, zone).toString()) }
     var view by rememberSaveable { mutableIntStateOf(2) }
     var confirmExport by remember { mutableStateOf(false) }
-    val today = localDate(now)
-    val from = if (period == 0) today.withDayOfMonth(1) else today.withDayOfYear(1)
-    val trips = tripsIn(data.trips, from, today, zone)
-    val totals = logbookTotals(trips)
-    val yearTotals = logbookTotals(tripsIn(data.trips, today.withDayOfYear(1), today, zone))
+    // Read back clamped to this month, so a clock set back never shows a period that has not begun.
+    val shown = reportPeriod(month, period == 1, today)
+    val step: (Boolean) -> Unit = { forward -> month = reportStep(shown, forward, today).month.toString() }
+    val (from, to) = reportRange(shown, today)
+    // The clock recomposes the pane every second; the period's trips and figures only change with the data and the range.
+    val trips = remember(data.trips, from, to) { tripsIn(data.trips, from, to, zone) }
+    val totals = remember(trips) { logbookTotals(trips) }
+    // The tax card reads the year of the period on screen.
+    val (yearFrom, yearTo) = reportRange(shown.copy(yearly = true), today)
+    val yearTotals = remember(data.trips, yearFrom, yearTo) { logbookTotals(tripsIn(data.trips, yearFrom, yearTo, zone)) }
     val exportRange: (LocalDate, LocalDate) -> Unit = { start, end ->
-        val plate = data.profile.plateNumber.ifBlank { "차량" }.replace(Regex("[^\\p{L}\\p{N}-]"), "_")
-        val name = "${if (data.profile.demoMode) "시연_" else ""}운행기록부_${plate}_${start}_${end}.xlsx"
         val bytes = logbookXlsx(data.copy(profile = data.profile.copy(carModel = data.profile.carModel.ifBlank { state.vehicleModel.orEmpty() })), start, end,
             tripsIn(data.trips, start, end, zone), zone = zone)
-        saveFile(name, XLSX_MIME, bytes)
+        saveFile(logbookFileName(data.profile, start, end), XLSX_MIME, bytes)
     }
-    val export: () -> Unit = { exportRange(from, today) }
-    // The close panel follows the month the home card and the badge point at: last month while it is still open, else this one.
-    val closeStatus = monthCloseTarget(data, today, zone) ?: monthStatus(data, YearMonth.from(today), zone)
-    val closeEnd = closeStatus.month.atEndOfMonth().let { if (it.isAfter(today)) today else it }
-    val exportClose: () -> Unit = { exportRange(closeStatus.month.atDay(1), closeEnd) }
+    val export: () -> Unit = { exportRange(from, to) }
+    // The row's Excel 저장, the card's ③ and the closed card's Excel 저장 all save the range on screen, behind one check.
+    val requestExport: () -> Unit = { if (totals.unclassifiedKm > 0 || trips.any { it.driverId == null }) confirmExport = true else export() }
+    // The same rule as the month-close card's ③: a range without trips has nothing to save, and TalkBack hears why.
+    val canSave = excelSaveAvailable(trips.size)
+    // The close card follows the month on screen: none under 연간, and a past month only with something to show.
+    val closeStatus = remember(data, shown, today) { reportCloseStatus(data, shown, today, zone) }
     val ratio: @Composable (Modifier) -> Unit = { modifier -> RatioCard(totals, modifier, compact = !wide) }
-    val tax: @Composable (Modifier) -> Unit = { modifier -> TaxCard(data.profile, yearTotals, modifier, goSettings) }
+    val tax: @Composable (Modifier) -> Unit = { modifier ->
+        TaxCard(data.profile, yearTotals, taxEyebrow(shown.month.year, today), taxCardBlocker(data.profile.annualCostWon, yearTotals.ratio, shown.month.year, today), modifier, goSettings)
+    }
     val settle: @Composable (Modifier) -> Unit = { modifier -> SettlementCard(trips, data, modifier, goSettings) }
+    // The header's three parts: the stepper (the same one as 운행기록), 월간 · 연간 and Excel 저장, placed per window below.
+    val stepper: @Composable RowScope.() -> Unit = { PeriodStepper(reportStepperCopy(shown, today), reportCanGoForward(shown, today), { step(false) }) { step(true) } }
+    val periodUnit: @Composable (Modifier) -> Unit = { modifier -> Segmented(listOf("월간", "연간"), period, modifier) { period = it } }
+    val save: @Composable (Modifier) -> Unit = { modifier ->
+        LoadingAction("Excel 저장", loading = exporting, modifier = modifier.semantics { if (!canSave) stateDescription = "저장할 운행이 없어요" }, loadingLabel = "만드는 중…",
+            enabled = canSave, onClick = requestExport)
+    }
     val excel = view == 2
     val fontScale = LocalDensity.current.fontScale
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val previewHeight = excelPreviewHeight(maxHeight, fontScale)
         // One scroll for the whole pane; on the Excel view its end keeps clear of the pinned save bar.
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = if (excel) SAVE_BAR_RESERVE else 8.dp),
+        val scroll = rememberScrollState()
+        Column(Modifier.fillMaxSize().fadingTopEdge(scroll).verticalScroll(scroll).padding(bottom = if (excel) SAVE_BAR_RESERVE else 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            // The period row and the month-close card are one block: the card comes with 이번 달 and goes with 올해, the block
-            // reflows over 260 ms (a snap under reduced motion) and an absent card costs no gap.
+            // The header and the month-close card are one block. The header never moves: a step or a unit switch updates it in
+            // place. The card follows the period (none under 연간), and the block reflows over 260 ms when the card comes, goes
+            // or changes height (a snap under reduced motion); an absent card costs no gap.
             Column(Modifier.fillMaxWidth().animateContentSize(enterSpec(260)), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                // 이번 달 · 올해 keeps to 480 at the start of the row; Excel 저장 sits at the column's right.
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                    Segmented(listOf("이번 달", "올해"), period, Modifier.weight(1f, fill = false).widthIn(max = 480.dp)) { period = it }
-                    // The same rule as the month-close card's ③: a range without trips has nothing to save.
-                    LoadingAction("Excel 저장", loading = exporting, modifier = Modifier.padding(start = 16.dp), loadingLabel = "만드는 중…",
-                        enabled = excelSaveAvailable(trips.size)) {
-                        if (totals.unclassifiedKm > 0 || trips.any { it.driverId == null }) confirmExport = true else export()
+                if (wide) Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    stepper()
+                    // 월간 · 연간 takes what the stepper leaves, up to 320; Excel 저장 sits at the column's right.
+                    Box(Modifier.weight(1f)) { periodUnit(Modifier.widthIn(max = 320.dp)) }
+                    save(Modifier)
+                } else {
+                    // The stepper on its own row at the start, as in 운행기록; then 월간 · 연간 (480 at most) and Excel 저장 at the right.
+                    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        stepper()
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        periodUnit(Modifier.weight(1f, fill = false).widthIn(max = 480.dp))
+                        save(Modifier.padding(start = 16.dp))
                     }
                 }
-                if (period == 0) MonthClosePanel(closeStatus, onIssues = { goReview(closeStatus.month) }, onReviews = goHome, onExport = exportClose, exporting = exporting,
-                    act = act, repository = repository, modifier = Modifier.widthIn(max = 760.dp), compact = !wide, editedAfterClose = editedAfterCloseCount(data, closeStatus.month, zone))
+                // One card instance per month: its bar lands at that month's completion, and a close in progress never carries over.
+                closeStatus?.let { s -> key(s.month) {
+                    val edited = remember(data) { editedAfterCloseCount(data, s.month, zone) }
+                    MonthClosePanel(s, onIssues = { goReview(s.month) }, onReviews = goHome, onExport = requestExport, exporting = exporting, act = act, repository = repository,
+                        modifier = Modifier.widthIn(max = 760.dp), compact = !wide, editedAfterClose = edited, today = today, onPrevious = { month = s.month.minusMonths(1).toString() })
+                } }
             }
             Segmented(listOf("운행 현황", "경비·정산", "Excel", "검토"), view, Modifier.widthIn(max = 960.dp)) { view = it }
-            Text("${if (data.profile.demoMode) "시연 데이터 · " else ""}${from} ~ ${today} · ${totals.trips}건", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("${if (data.profile.demoMode) "시연 데이터 · " else ""}${from} ~ ${to} · ${totals.trips}건", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Crossfade(view, Modifier.fillMaxWidth(), animationSpec = pageFade(), label = "report-section") { page ->
                 // The preview has a height of its own in the scroll, and its table pages to the rows that fit in it.
-                if (page == 2) ExcelPreview(data.copy(profile = data.profile.copy(carModel = data.profile.carModel.ifBlank { state.vehicleModel.orEmpty() })), trips, from, today,
+                if (page == 2) ExcelPreview(data.copy(profile = data.profile.copy(carModel = data.profile.carModel.ifBlank { state.vehicleModel.orEmpty() })), trips, from, to,
                     Modifier.widthIn(max = EXCEL_VIEW_MAX_WIDTH).fillMaxWidth().height(previewHeight), compact = !wide, fillHeight = true)
                 else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(layout.cardGap)) {
                     when (page) {
@@ -1332,7 +1494,7 @@ internal fun excelPreviewHeight(pane: Dp, fontScale: Float = 1f): Dp {
                             Panel(Modifier.widthIn(max = 760.dp)) {
                                 Eyebrow("증빙 준비 상태", Scene.brand)
                                 val issues = auditTrips(trips)
-                                Text(if (issues.isEmpty() && trips.isNotEmpty()) "기록 기본 점검 완료" else "확인이 필요한 항목 ${issues.size}개", style = MaterialTheme.typography.titleLarge)
+                                Text(auditHeadline(trips.size, issues.size), style = MaterialTheme.typography.titleLarge)
                                 Muted("직원·운행 목적·계기판 거리의 연결을 점검합니다. Excel 확인사항 시트에서 세부 항목을 볼 수 있어요.")
                                 Muted("국세청 운행기록부 항목 참고 · 제출 전 검토용. 영수증과 세무 요건은 별도로 확인해야 합니다.")
                             }
@@ -1345,7 +1507,8 @@ internal fun excelPreviewHeight(pane: Dp, fontScale: Float = 1f): Dp {
         // The Excel view's own action stays in reach wherever the pane is scrolled: pinned to its bottom while that view is
         // chosen, fading with the view change (a snap under reduced motion).
         AnimatedVisibility(excel, Modifier.align(Alignment.BottomStart), enter = fadeIn(pageFade()), exit = fadeOut(pageFade()), label = "save-bar") {
-            SaveBar("휴대폰 SHAREMATE에서 여는 운행 파일이에요") {
+            // The phone file carries the whole log, whatever period is on screen.
+            SaveBar("휴대폰 SHAREMATE에서 여는 전체 운행 파일이에요") {
                 LoadingAction("휴대폰용 운행파일 저장", loading = exporting, loadingLabel = "만드는 중…", enabled = data.trips.isNotEmpty()) {
                     saveFile("SHAREMATE_운행기록.smlog", LOGBOOK_MIME, TripLogCodec.encode(data.copy(open = null)))
                 }
@@ -1355,7 +1518,7 @@ internal fun excelPreviewHeight(pane: Dp, fontScale: Float = 1f): Dp {
     if (confirmExport) AlertDialog(onDismissRequest = { confirmExport = false }, title = { Text("정리되지 않은 운행이 있어요") },
         text = { Text("미분류 ${kmText(totals.unclassifiedKm)}는 업무용 사용거리에서 제외되고, 사용자 미지정 운행은 ④란이 비어 있게 저장돼요. 그래도 저장할까요?") },
         confirmButton = { DialogButton("저장") { confirmExport = false; export() } },
-        dismissButton = { DialogButton("정리하러 가기") { confirmExport = false; goReview(YearMonth.from(today)) } })
+        dismissButton = { DialogButton("정리하러 가기") { confirmExport = false; goReview(tidyMonth(trips, shown.month, zone)) } })
 }
 
 @Composable private fun EmployeeUsageCard(trips: List<Trip>, data: TripLogData, modifier: Modifier) {
@@ -1415,16 +1578,23 @@ internal fun excelPreviewHeight(pane: Dp, fontScale: Float = 1f): Dp {
     }
 }
 
-@Composable private fun TaxCard(profile: FleetProfile, year: LogbookTotals, modifier: Modifier, goSettings: () -> Unit) {
+/**
+ * The annual cost reference at the business ratio of [year], the totals of the year on screen, which [eyebrow] names
+ * ([taxEyebrow]). While it cannot compute, [blocker] ([taxCardBlocker]) says why: a missing cost comes with the way to enter
+ * it; a year without trips sits above the cost already entered, with no 설정 action, since the form already holds the value.
+ */
+@Composable private fun TaxCard(profile: FleetProfile, year: LogbookTotals, eyebrow: String, blocker: String?, modifier: Modifier, goSettings: () -> Unit) {
     Panel(modifier.fillMaxHeight()) {
-        Eyebrow("비용 참고 · 올해 업무사용비율 기준", Scene.brand)
+        Eyebrow(eyebrow, Scene.brand)
         val cost = profile.annualCostWon
         val ratio = year.ratio
-        if (cost == null || ratio == null) {
-            Text("연간 차량 비용을 입력하면 운행기록부의 효과를 계산해요", style = MaterialTheme.typography.titleMedium)
-            Muted("감가상각비·유류비·보험료·자동차세 등 해당 차량의 연간 비용입니다. 운행기록부가 없으면 차량 1대당 연 1,500만 원까지만 업무용으로 인정돼요.")
-            QuietAction("설정에서 입력", onClick = goSettings)
-        } else {
+        if (blocker != null) {
+            Text(blocker, style = MaterialTheme.typography.titleMedium)
+            if (cost == null) {
+                Muted("감가상각비·유류비·보험료·자동차세 등 해당 차량의 연간 비용입니다. 운행기록부가 없으면 차량 1대당 연 1,500만 원까지만 업무용으로 인정돼요.")
+                QuietAction("설정에서 입력", onClick = goSettings)
+            } else Stat("연간 차량 관련 비용", formatWon(cost))
+        } else if (cost != null && ratio != null) {
             val effect = taxEffect(cost, ratio)
             Stat("연간 차량 관련 비용", formatWon(cost))
             Stat("업무 비율 적용액 · 단순 비교", formatWon(effect.withLogWon), valueColor = MaterialTheme.colorScheme.onTertiaryContainer, large = true)
@@ -1511,7 +1681,8 @@ internal fun settingsFieldColumns(layout: LayoutTokens, fontScale: Float): Int =
         Crossfade(section, Modifier.weight(1f).fillMaxWidth(), animationSpec = pageFade(), label = "settings-section") { page ->
             sections.SaveableStateProvider(page) {
                 // One form column at the start of the rail, 720 at most; the column scrolls, the sub-tabs stay.
-                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                val scroll = rememberScrollState()
+                Column(Modifier.fillMaxSize().fadingTopEdge(scroll).verticalScroll(scroll)) {
                     Box(Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(bottom = 8.dp)) { when (page) { 0 -> profile(); 1 -> drivers(); 2 -> costs(); else -> privacy() } }
                 }
             }

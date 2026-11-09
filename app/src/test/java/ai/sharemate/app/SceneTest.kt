@@ -9,6 +9,7 @@ import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDateTime
@@ -139,6 +140,30 @@ class SceneTest {
         assertEquals(1f, starFade(false, false, .9f), 1e-4f)
     }
 
+    @Test fun theCarSunRestsOnlyInTheFreeSkyRightOfTheColumn() {
+        // The full Pleos window: 1680 wide, the column ends at 72 + 1200, so 408 dp of sky and the orb across its middle.
+        val full = freeSkyOrbAt(1680.dp, 72.dp + 1200.dp)!!
+        assertEquals("빈 하늘의 가운데", 1476f / 1680f, full.x, 1e-4f)
+        assertTrue("내용 열 오른쪽", full.x * 1680f > 1272f)
+        assertEquals("탑보다 높이", FREE_SKY_ORB_Y, full.y, 1e-4f)
+        assertEquals("최소 폭이 딱 남아도 빈 하늘", 1412f / 1552f, freeSkyOrbAt(1552.dp, 1272.dp)!!.x, 1e-4f)
+        assertNull("빈 하늘이 좁은 창에는 해와 달이 없음", freeSkyOrbAt(1360.dp, 48.dp + 1200.dp))
+        assertNull("최대 폭이 없는 열 옆에는 빈 하늘이 없음", freeSkyOrbAt(1000.dp, 32.dp + Dp.Infinity))
+        assertNull(freeSkyOrbAt(0.dp, 0.dp))
+    }
+
+    @Test fun aScrolledPageFadesUnderTheHeaderAndAPageAtRestDoesNot() {
+        assertEquals("멈춘 페이지는 첫 줄을 다 보여 줌", 0f, scrollEdgeStrength(0f, 24f), 1e-4f)
+        assertEquals(.5f, scrollEdgeStrength(12f, 24f), 1e-4f)
+        assertEquals("띠 하나만큼 내려가면 다 흐려짐", 1f, scrollEdgeStrength(400f, 24f), 1e-4f)
+        assertEquals(0f, scrollEdgeStrength(10f, 0f), 1e-4f)
+        assertEquals("다 흐려진 띠의 맨 위는 비어 있음", 0f, scrollEdgeAlpha(0f, 1f), 1e-4f)
+        assertEquals("헤더 바로 밑의 선은 거의 사라짐", .0625f, scrollEdgeAlpha(.25f, 1f), 1e-4f)
+        assertEquals(1f, scrollEdgeAlpha(1f, 1f), 1e-4f)
+        assertEquals("멈춘 페이지에는 띠가 없음", 1f, scrollEdgeAlpha(0f, 0f), 1e-4f)
+        assertEquals(.5f, scrollEdgeAlpha(0f, .5f), 1e-4f)
+    }
+
     @Test fun theDayHazeIsWhiteAndLighterThanTheNightScrim() {
         val day = DaySceneColors
         val night = NightSceneColors
@@ -194,12 +219,20 @@ class SceneTest {
         }
         val boxes = DayClouds.map { dayCloudBox(it, w, h, horizon, ht) }
         for (i in boxes.indices) for (j in i + 1 until boxes.size) assertTrue("구름 $i, $j 는 겹치지 않음", !boxes[i].overlaps(boxes[j]))
-        // The sun at (.62, .21) with its halo (.30 of the tower height) is never under a cloud, and every cloud stays in the window.
-        val sun = Offset(w * .62f, h * .21f)
-        boxes.forEach { b ->
-            assertTrue("해와 햇무리에 닿지 않음", distance(sun, b) > ht * .30f)
-            assertTrue("창 안", b.left >= 0f && b.right <= w && b.top >= 0f)
+        boxes.forEach { b -> assertTrue("창 안", b.left >= 0f && b.right <= w && b.top >= 0f) }
+        // The sun rests where freeSkyOrbAt puts it, and no cloud that is drawn ever reaches its disc plus the margin: on the full
+        // window (all four clouds kept), with a 1.3x font (column ends at 1248) and on the narrowest window that keeps a sun.
+        val clear = ht * .045f + SUN_CLOUD_MARGIN.value
+        listOf(Triple(1680f, 1272f, 4), Triple(1680f, 1248f, 4), Triple(1552f, 1272f, -1)).forEach { (width, columnEnd, expected) ->
+            val at = freeSkyOrbAt(width.dp, columnEnd.dp)!!
+            val sun = Offset(width * at.x, h * at.y)
+            val kept = visibleDayClouds(width, h, horizon, ht, columnEnd, sun, clear)
+            if (expected >= 0) assertEquals("$width/$columnEnd: 네 구름이 해를 비켜 모두 남음", expected, kept.size)
+            kept.forEach { c -> assertTrue("$width/$columnEnd: 구름이 해 위에 그려지지 않음", distance(sun, dayCloudBox(c, width, h, horizon, ht)) > clear) }
+            // Without the sun the same window keeps at least as many clouds: the filter only ever removes.
+            assertTrue(visibleDayClouds(width, h, horizon, ht, columnEnd).size >= kept.size)
         }
+        assertEquals("상자 안의 점은 거리 0", 0f, distanceToBox(Offset(5f, 5f), Rect(0f, 0f, 10f, 10f)), 1e-4f)
         // All four clear the 1200-dp column, which the header chips end with: on the full window (gutter 72, so it ends at
         // 1272) and with a 1.3x font (EXPANDED, gutter 48, ends at 1248).
         listOf(carLayout(1680.dp), carLayout(1680.dp / 1.3f)).forEach { layout ->

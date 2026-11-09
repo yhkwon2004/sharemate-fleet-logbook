@@ -8,7 +8,7 @@ import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.runtime.Composable
@@ -31,6 +31,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.min
 import kotlin.random.Random
 
@@ -73,14 +74,15 @@ private fun skylineScene(): SkyScene {
 /**
  * The four day clouds, placed by hand in the free sky right of the car's 1200-dp content column (x .79–.97 of the width,
  * y .08–.34 of the horizon's height), so none sits behind the header chips, which end with the column. Staggered so no two
- * touch, clear of the sun at (.62, .21) and its halo, and above the towers. Not drawn from the seed, so the stars and the
- * towers stay those of 2.8. A window too narrow for some of them leaves those out ([visibleDayClouds]).
+ * touch and above the towers. The car's sun rests in the same free sky ([freeSkyOrbAt]): on the full window all four clear
+ * its disc, and [visibleDayClouds] leaves out any cloud that would come over it on a narrower one, as it leaves out those that
+ * would reach the column. Not drawn from the seed, so the stars and the towers stay those of 2.8.
  */
 internal val DayClouds = listOf(
     SkyCloud(.83f, .09f, .90f),
     SkyCloud(.95f, .17f, .75f),
     SkyCloud(.81f, .26f, .70f),
-    SkyCloud(.92f, .33f, .95f),
+    SkyCloud(.96f, .30f, .95f),
 )
 
 /** A cloud's size against the towers' height, and how far its underside shade drops (a fraction of the sky's height). */
@@ -96,9 +98,22 @@ internal fun dayCloudBox(cloud: SkyCloud, w: Float, h: Float, horizon: Float, ht
     return Rect(cx - s * .93f, cy - s * .5f, cx + s * .92f, cy + s * .52f + h * CLOUD_SHADE_DROP)
 }
 
-/** The day clouds whose box lies wholly right of [clearOf] px, where the content column ends (pure, unit-tested). */
-internal fun visibleDayClouds(w: Float, h: Float, horizon: Float, ht: Float, clearOf: Float): List<SkyCloud> =
-    DayClouds.filter { dayCloudBox(it, w, h, horizon, ht).left >= clearOf }
+/**
+ * The day clouds whose box lies wholly right of [clearOf] px, where the content column ends, and, while a sun is drawn at
+ * [orb], stays farther than [orbClear] px (its disc and a margin) from its centre: a cloud is never painted over the sun
+ * (pure, unit-tested).
+ */
+internal fun visibleDayClouds(w: Float, h: Float, horizon: Float, ht: Float, clearOf: Float, orb: Offset? = null, orbClear: Float = 0f): List<SkyCloud> =
+    DayClouds.filter { cloud ->
+        val box = dayCloudBox(cloud, w, h, horizon, ht)
+        box.left >= clearOf && (orb == null || distanceToBox(orb, box) > orbClear)
+    }
+
+/** How far [p] lies from the nearest point of [box]; 0 inside it. */
+internal fun distanceToBox(p: Offset, box: Rect): Float = hypot(maxOf(box.left - p.x, 0f, p.x - box.right), maxOf(box.top - p.y, 0f, p.y - box.bottom))
+
+/** The margin a cloud keeps beyond the sun's disc. */
+internal val SUN_CLOUD_MARGIN = 12.dp
 
 /** How one phase paints the scene. */
 private class SkyPaint(
@@ -165,6 +180,29 @@ internal fun orbLift(entering: Boolean, leaving: Boolean, t: Float): Float = whe
     entering -> .08f * (1f - LinearOutSlowInEasing.transform(t.coerceIn(0f, 1f)))
     leaving -> .08f * FastOutLinearInEasing.transform(t.coerceIn(0f, 1f))
     else -> 0f
+}
+
+// ───────────────────────── where the car's sun or moon rests (pure, unit-tested) ─────────────────────────
+
+/** The least sky right of the car's content column that takes the sun or moon clear of it (the full Pleos window keeps 408 dp). */
+internal val FREE_SKY_MIN = 280.dp
+
+/** How high the sun or moon rests in the free sky, as a fraction of the window's height: above the tallest towers' antennas. */
+internal const val FREE_SKY_ORB_Y = .15f
+
+/**
+ * Where the car's sun or moon rests when the window keeps at least [FREE_SKY_MIN] of sky right of a content column ending at
+ * [columnEnd] (the full Pleos window): across the middle of that sky, high enough to clear the towers. Nothing scrolls there,
+ * so no card ever passes over it, and the empty side of the window gets its one point of light. Null when there is no such
+ * sky (a narrower window, a column without a maximum): there every height inside the column belongs to the header, the hero
+ * or the cards (and the header grows with the driver row, the font and the density), so the car leaves the sun and the moon
+ * out and the sky tells day from night by its light alone.
+ */
+internal fun freeSkyOrbAt(windowWidth: Dp, columnEnd: Dp): Offset? {
+    if (windowWidth <= 0.dp || columnEnd.value.isInfinite()) return null
+    val free = windowWidth - columnEnd
+    if (free < FREE_SKY_MIN) return null
+    return Offset(((columnEnd + free / 2) / windowWidth).coerceIn(0f, 1f), FREE_SKY_ORB_Y)
 }
 
 /** How much of the stars shows at [t] of the crossfade: they fade within its first 40 %, in for an arriving night and out for a leaving one. */
@@ -245,10 +283,10 @@ internal fun starFade(entering: Boolean, leaving: Boolean, t: Float): Float {
             }
         }
         // Day clouds: three overlapping ovals per cloud, slightly flattened, drawn before the towers. Only the ones clear of the
-        // content column, so none sits behind the header chips or a card (no free sky, no clouds).
+        // content column, so none sits behind the header chips or a card (no free sky, no clouds), and clear of the sun's disc.
         val clouds = Path().apply {
             p.clouds ?: return@apply
-            visibleDayClouds(w, h, horizon, ht, cloudsClearOf.toPx()).forEach { c ->
+            visibleDayClouds(w, h, horizon, ht, cloudsClearOf.toPx(), orb.takeIf { showOrb }, ht * p.orbRadius + SUN_CLOUD_MARGIN.toPx()).forEach { c ->
                 val cx = w * c.x; val cy = horizon * c.y; val s = ht * CLOUD_SIZE * c.scale
                 addOval(Rect(Offset(cx, cy), s * .5f))
                 addOval(Rect(Offset(cx - s * .55f, cy + s * .12f), s * .38f))
@@ -353,9 +391,12 @@ private class SkyLedger { var changes = 0 }
  * car (.62, .21), clear of the hero haze; the phone passes its own. Without [leftScrim] (the phone home, the sign-in) only the
  * bottom scrim is drawn: the caller lays its own day haze. The day clouds keep to the sky right of the car's content column
  * and stay off the phone, whose sky is mostly haze: there they read as smudges beside the header icons.
+ *
+ * With [freeSkyOrb] (the car) the sun or moon rests only in the free sky right of the column ([freeSkyOrbAt]), where no card
+ * or header ever passes over it; a window without free sky leaves it out.
  */
 @Composable internal fun HomeBackdrop(modifier: Modifier = Modifier, horizonAt: Float = .52f, heightScale: Float = .72f, moonAt: Offset = Offset(.62f, .21f),
-    leftScrim: Boolean = true, showOrb: Boolean = true, showClouds: Boolean = true, orbAlpha: () -> Float = { 1f }) {
+    leftScrim: Boolean = true, showOrb: Boolean = true, showClouds: Boolean = true, orbAlpha: () -> Float = { 1f }, freeSkyOrb: Boolean = false) {
     val colors = Scene.colors
     val day = colors.isDay
     val haze = colors.haze
@@ -372,10 +413,13 @@ private class SkyLedger { var changes = 0 }
     // The first skyline simply appears (never an entrance on launch or on return); one composed later is a scene change.
     val ledger = remember { SkyLedger() }
     val entering = remember(phase) { ledger.changes++ > 0 }
-    Box(modifier) {
+    BoxWithConstraints(modifier) {
+        // The car's orb keeps to the free sky, where nothing scrolls over it; without free sky it is left out.
+        val freeAt = if (freeSkyOrb) freeSkyOrbAt(maxWidth, columnEnd) else null
+        val orbShown = showOrb && (!freeSkyOrb || freeAt != null)
         Crossfade(phase, Modifier.matchParentSize(), animationSpec = if (reduce) snap() else tween(crossfadeMs, easing = LinearEasing), label = "sky-phase") { shown ->
-            Skyline(shown, Modifier.fillMaxSize(), horizonAt, heightScale, moonAt, entering = entering && shown == phase, leaving = shown != phase,
-                showOrb = showOrb, showClouds = showClouds && !compact, cloudsClearOf = columnEnd, orbAlpha = orbAlpha)
+            Skyline(shown, Modifier.fillMaxSize(), horizonAt, heightScale, freeAt ?: moonAt, entering = entering && shown == phase, leaving = shown != phase,
+                showOrb = orbShown, showClouds = showClouds && !compact, cloudsClearOf = columnEnd, orbAlpha = orbAlpha)
         }
         Spacer(Modifier.matchParentSize().drawWithCache {
             // The hero column ends 720 dp past the gutter on the car (never past 60 % of the window).
@@ -387,10 +431,11 @@ private class SkyLedger { var changes = 0 }
     }
 }
 
-/** The backdrop at [level] (1 on home, dimmed elsewhere, 0 hidden), fading on the page clock inside its own recomposition scope. */
+/** The car's backdrop at [level] (1 on home, dimmed elsewhere, 0 hidden), fading on the page clock inside its own recomposition scope. */
 @Composable internal fun SkyLayer(level: Float, modifier: Modifier = Modifier) {
     val alpha by animateFloatAsState(level, if (LocalReduceMotion.current) snap() else tween(MOTION_PAGE_MS), label = "sky")
-    // The sun and the moon belong to the home; on the dimmed panes they would sit under controls, so they fade out with the
-    // page (fully gone at the panes' .34) instead of popping on the first frame of the tab change.
-    if (level > 0f || alpha > 0f) HomeBackdrop(modifier.graphicsLayer { this.alpha = alpha }, orbAlpha = { ((alpha - .34f) / .66f).coerceIn(0f, 1f) })
+    // The sun and the moon belong to the home; on the dimmed panes they fade out with the page (fully gone at the panes' .34)
+    // instead of popping on the first frame of the tab change. On the home they rest in the free sky ([freeSkyOrbAt]).
+    if (level > 0f || alpha > 0f) HomeBackdrop(modifier.graphicsLayer { this.alpha = alpha }, orbAlpha = { ((alpha - .34f) / .66f).coerceIn(0f, 1f) },
+        freeSkyOrb = true)
 }

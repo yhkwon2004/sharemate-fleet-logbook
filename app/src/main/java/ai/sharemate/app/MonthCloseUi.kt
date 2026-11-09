@@ -69,6 +69,13 @@ internal fun monthCloseTarget(data: TripLogData, today: LocalDate, zone: ZoneId)
     return monthStatus(data, YearMonth.from(today), zone).takeIf { it.trips > 0 && it.closed == null }
 }
 
+/**
+ * The month 월간·Excel opens on when no button hands it one: the month the home close card, the banner and the tab badge point
+ * at ([monthCloseTarget]), else this month. The home's and the phone's 정보 내보내기 name and open the same month.
+ */
+internal fun reportLandingMonth(data: TripLogData, today: LocalDate, zone: ZoneId): YearMonth =
+    monthCloseTarget(data, today, zone)?.month ?: YearMonth.from(today)
+
 internal fun monthLabel(month: YearMonth, today: LocalDate): String =
     if (month.year == today.year) "${month.monthValue}월" else "${month.year}년 ${month.monthValue}월"
 
@@ -112,6 +119,29 @@ internal fun monthCloseSteps(status: MonthStatus): List<CloseStep> {
         CloseStep("마감", when { closed != null -> "마감됨 · ${closedStamp(closed.closedAt)}"; status.ready -> "지금 마감할 수 있어요"; noTrips -> "운행이 없어요"; else -> "①·②를 끝내면 열려요" },
             closed != null, idle = noTrips && closed == null),
     )
+}
+
+/**
+ * The close card's headline. A month without trips is still waiting for them only while it runs; a past month says it has no
+ * record, so the card never promises trips to a month that is over (월간·Excel can show any month).
+ */
+internal fun monthCloseHeadline(status: MonthStatus, today: LocalDate): String {
+    val name = monthLabel(status.month, today)
+    val percent = status.percent
+    return when {
+        status.closed != null -> "$name 운행일지 마감됨"
+        percent == null && status.month < YearMonth.from(today) -> "$name 운행 기록이 없어요"
+        percent == null -> "$name 운행이 아직 없어요"
+        else -> "$name 운행일지 ${percent}% 완성"
+    }
+}
+
+/** The line under the close button: what a close means once it is open, else what it waits for; a past month without trips waits for nothing. */
+internal fun monthCloseFootnote(status: MonthStatus, today: LocalDate): String = when {
+    status.ready -> "마감은 이 달이 완성됐다는 표시예요. 마감 후에도 운행은 고칠 수 있고, 고친 기록엔 ‘마감 후 수정’이 붙어요."
+    status.trips == 0 && status.month < YearMonth.from(today) -> "운행이 없는 달은 마감하지 않아도 돼요."
+    status.trips == 0 -> "운행이 기록되면 여기서 마감할 수 있어요."
+    else -> "남은 확인 ${status.issues}건을 끝내면 마감 버튼이 열려요."
 }
 
 internal fun closedStamp(at: Long, zone: ZoneId = ZoneId.systemDefault()): String =
@@ -161,13 +191,16 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
     }
 }
 
-/** [MonthCloseBanner] with its own dismissed month (survives rotation, returns next month). Renders nothing when there is no target. */
-@Composable internal fun MonthCloseBannerHost(data: TripLogData, now: Long, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+/**
+ * [MonthCloseBanner] with its own dismissed month (survives rotation, returns next month). Renders nothing when there is no
+ * target. [onOpen] gets the banner's month, so 월간·Excel opens on the month the line names.
+ */
+@Composable internal fun MonthCloseBannerHost(data: TripLogData, now: Long, onOpen: (YearMonth) -> Unit, modifier: Modifier = Modifier) {
     val today = localDate(now)
     val status = monthCloseTarget(data, today, zone) ?: return
     var dismissed by rememberSaveable { mutableStateOf("") }
     if (dismissed == monthKey(status.month)) return
-    MonthCloseBanner(status, onOpen, { dismissed = monthKey(status.month) }, modifier, today)
+    MonthCloseBanner(status, { onOpen(status.month) }, { dismissed = monthKey(status.month) }, modifier, today)
 }
 
 // ───────────────────────── 월간 패널 ─────────────────────────
@@ -175,10 +208,13 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
 /**
  * The stepper of what is left: ① purposes and drivers, ② card questions, ③ Excel, ④ close. Each open step is a jump to
  * the place that finishes it; ④ opens only when the month is really ready. Closed shows the sign-off and 마감 해제.
- * In the 월간·Excel column the panel keeps to 760 dp at the start; the home card ([compact]) fills its column.
+ * In the 월간·Excel column the panel keeps to 760 dp at the start; the home card ([compact]) fills its column. That column can
+ * show any month, so the headline and the footnote read [today] ([monthCloseHeadline], [monthCloseFootnote]) and a month
+ * without trips offers 이전 달 보기 when [onPrevious] is given. The home card passes neither: its months always have trips.
  */
 @Composable internal fun MonthClosePanel(status: MonthStatus, onIssues: () -> Unit, onReviews: () -> Unit, onExport: () -> Unit, exporting: Boolean,
-    act: Act, repository: TripLogRepository, modifier: Modifier = Modifier, compact: Boolean = false, editedAfterClose: Int = 0, today: LocalDate = LocalDate.now(zone)) {
+    act: Act, repository: TripLogRepository, modifier: Modifier = Modifier, compact: Boolean = false, editedAfterClose: Int = 0, today: LocalDate = LocalDate.now(zone),
+    onPrevious: (() -> Unit)? = null) {
     val followUp = LocalFollowUp.current
     val name = monthLabel(status.month, today)
     val key = monthKey(status.month)
@@ -193,8 +229,8 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
             Spacer(Modifier.weight(1f))
             closed?.let { ClosedChip(it) }
         }
-        Text(when { closed != null -> "$name 운행일지 마감됨"; percent == null -> "$name 운행이 아직 없어요"; else -> "$name 운행일지 ${percent}% 완성" },
-            style = if (compact) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
+        Text(monthCloseHeadline(status, today), style = if (compact) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium,
+            modifier = Modifier.semantics { heading() })
         if (percent != null) LinearProgressIndicator(progress = { progress.value }, modifier = Modifier.fillMaxWidth().height(10.dp)
             .semantics { contentDescription = "완성률 ${percent}퍼센트" }, color = Scene.positive, trackColor = Scene.ringTrack, drawStopIndicator = {})
         if (closed != null) {
@@ -225,8 +261,9 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
                 repository.closeMonth(key)
                 followUp(FollowUp("${name}을 마감했어요", "마감 해제") { repository.reopenMonth(key) })
             }
-            Muted(if (status.ready) "마감은 이 달이 완성됐다는 표시예요. 마감 후에도 운행은 고칠 수 있고, 고친 기록엔 ‘마감 후 수정’이 붙어요."
-                else if (status.trips == 0) "운행이 기록되면 여기서 마감할 수 있어요." else "남은 확인 ${status.issues}건을 끝내면 마감 버튼이 열려요.")
+            Muted(monthCloseFootnote(status, today))
+            // A month without trips has nothing to finish here; the way on is the month before it.
+            if (status.trips == 0) onPrevious?.let { QuietAction("이전 달 보기", onClick = it) }
         }
     }
 }

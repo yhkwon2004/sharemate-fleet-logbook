@@ -287,7 +287,7 @@ internal fun homeCardRows(count: Int, columns: Int): List<List<Int?>> {
 }
 
 @Immutable
-internal data class HomeCardLines(val vehicle: String, val log: String, val logPending: Int, val export: String)
+internal data class HomeCardLines(val vehicle: String, val log: String, val logPending: Int, val export: String, val exportMonth: YearMonth)
 
 /**
  * The 운행기록 tab's own numbers for [month]: its 전체 count and its 점검 필요 count (audit issues over the whole odometer
@@ -304,7 +304,8 @@ internal fun logReview(data: TripLogData, month: YearMonth, zone: ZoneId): LogRe
 /**
  * What each home card says under its title. 차량 정보 leads with a due care deadline, then battery and odometer (a value
  * that is not live is marked 마지막, and a zero or missing reading is left out); 운행일지 확인 counts this month the way the
- * log does; 정보 내보내기 names the month the Excel covers.
+ * log does; 정보 내보내기 names the month the Excel covers, [HomeCardLines.exportMonth], which 월간·Excel then opens on
+ * ([reportLandingMonth], as the phone's card).
  */
 internal fun homeCardLines(data: TripLogData, socPercent: Int?, odometerKm: Double?, odometerLive: Boolean, today: LocalDate, zone: ZoneId,
     snoozedCare: Set<String> = emptySet()): HomeCardLines {
@@ -321,10 +322,10 @@ internal fun homeCardLines(data: TripLogData, socPercent: Int?, odometerKm: Doub
         else -> "${month.monthValue}월 ${review.trips}건 · 모두 확인됨"
     }
     val pending = review.issues
-    val target = monthCloseTarget(data, today, zone)
-    val export = if (target != null && target.month != month) "${monthLabel(target.month, today)} 운행기록부 · 마감 전 저장"
+    val exportMonth = reportLandingMonth(data, today, zone)
+    val export = if (exportMonth != month) "${monthLabel(exportMonth, today)} 운행기록부 · 마감 전 저장"
         else "${month.monthValue}월 운행기록부 · Excel 5개 시트"
-    return HomeCardLines(vehicle, log, pending, export)
+    return HomeCardLines(vehicle, log, pending, export, exportMonth)
 }
 
 @Immutable

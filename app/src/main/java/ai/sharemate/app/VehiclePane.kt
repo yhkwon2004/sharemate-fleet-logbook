@@ -77,7 +77,8 @@ internal fun VehiclePane(state: TripLogState, now: Long, act: Act, repository: T
             if (state.data.profile.phoneSync && state.sync.running) PairingCard(state.sync, now, compact = !layout.twoColumn)
         }
         // Start-anchored: the column keeps to the content maximum (1200 at FULL) and the sky keeps the rest of the window.
-        Column(Modifier.contentWidth().align(Alignment.TopStart).verticalScroll(rememberScrollState()).padding(bottom = tokens.sectionGap),
+        val scroll = rememberScrollState()
+        Column(Modifier.contentWidth().align(Alignment.TopStart).fadingTopEdge(scroll).verticalScroll(scroll).padding(bottom = tokens.sectionGap),
             verticalArrangement = Arrangement.spacedBy(gap)) {
             if (layout.twoColumn) {
                 // The car card sets the height (its drawing is fixed); the info column fills to match with its content at the

@@ -31,6 +31,46 @@ class MonthCloseUiTest {
         assertNull(monthCloseTarget(TripLogData(), LocalDate.of(2026, 11, 28), zone))
     }
 
+    @Test fun theReportOpensWhereTheHomeCardBannerAndBadgePoint() {
+        val data = TripLogData(drivers = listOf(driver), trips = listOf(trip("a", 10, 3), trip("b", 10, 5, TripPurpose.UNCLASSIFIED), trip("c", 11, 2)))
+        val closed = closeMonth(data.copy(trips = data.trips.map { it.copy(purpose = TripPurpose.BUSINESS) }), YearMonth.of(2026, 10), at(11, 1, 9), zone)
+        val december = LocalDateTime.of(2025, 12, 10, 9, 0).atZone(zone).toInstant().toEpochMilli()
+        val lastYear = TripLogData(drivers = listOf(driver), trips = listOf(Trip(id("dec"), december, december + 3_600_000, 100.0, 110.0, driverId = driver.id, purpose = TripPurpose.BUSINESS)))
+        val cases = listOf(
+            Triple(data, LocalDate.of(2026, 11, 3), YearMonth.of(2026, 10)),
+            Triple(closed, LocalDate.of(2026, 11, 3), YearMonth.of(2026, 11)),
+            Triple(closed, LocalDate.of(2026, 11, 25), YearMonth.of(2026, 11)),
+            Triple(lastYear, LocalDate.of(2026, 1, 2), YearMonth.of(2025, 12)),
+            Triple(TripLogData(), LocalDate.of(2026, 11, 9), YearMonth.of(2026, 11)),
+        )
+        cases.forEach { (case, today, expected) ->
+            assertEquals("$today", expected, reportLandingMonth(case, today, zone))
+            // The home's and the phone's 정보 내보내기 open the same month the pane lands on.
+            assertEquals("홈 $today", expected, homeCardLines(case, null, null, false, today, zone).exportMonth)
+            assertEquals("휴대폰 $today", expected, phoneCardLines(case, today, zone).exportMonth)
+        }
+    }
+
+    @Test fun theHeadlineNeverPromisesTripsToAPastMonth() {
+        val today = LocalDate.of(2026, 11, 9)
+        assertEquals("11월 운행이 아직 없어요", monthCloseHeadline(MonthStatus(YearMonth.of(2026, 11), 0, 0, 0, null), today))
+        assertEquals("8월 운행 기록이 없어요", monthCloseHeadline(MonthStatus(YearMonth.of(2026, 8), 0, 0, 0, null), today))
+        assertEquals("2025년 12월 운행 기록이 없어요", monthCloseHeadline(MonthStatus(YearMonth.of(2025, 12), 0, 0, 0, null), today))
+        assertEquals("10월 운행일지 마감됨", monthCloseHeadline(MonthStatus(YearMonth.of(2026, 10), 10, 0, 0, MonthClose("2026-10", at(11, 1, 9), 10, 300.0, 280.0, 45_000)), today))
+        assertEquals("10월 운행일지 50% 완성", monthCloseHeadline(MonthStatus(YearMonth.of(2026, 10), 10, 5, 0, null), today))
+        // A closed month whose trips were deleted keeps the closed branch (§4's "past month, closed" row), not the no-trips line.
+        assertEquals("8월 운행일지 마감됨", monthCloseHeadline(MonthStatus(YearMonth.of(2026, 8), 0, 0, 0, MonthClose("2026-08", at(9, 1, 9), 2, 20.0, 20.0, 0)), today))
+    }
+
+    @Test fun theFootnoteSaysWhatTheCloseButtonWaitsFor() {
+        val today = LocalDate.of(2026, 11, 9)
+        assertEquals("마감은 이 달이 완성됐다는 표시예요. 마감 후에도 운행은 고칠 수 있고, 고친 기록엔 ‘마감 후 수정’이 붙어요.",
+            monthCloseFootnote(MonthStatus(YearMonth.of(2026, 10), 10, 0, 0, null), today))
+        assertEquals("운행이 기록되면 여기서 마감할 수 있어요.", monthCloseFootnote(MonthStatus(YearMonth.of(2026, 11), 0, 0, 0, null), today))
+        assertEquals("운행이 없는 달은 마감하지 않아도 돼요.", monthCloseFootnote(MonthStatus(YearMonth.of(2026, 8), 0, 0, 0, null), today))
+        assertEquals("남은 확인 3건을 끝내면 마감 버튼이 열려요.", monthCloseFootnote(MonthStatus(YearMonth.of(2026, 10), 10, 2, 1, null), today))
+    }
+
     @Test fun theBannerQuotesTheRealDeadlineAndTheRealCount() {
         val open = MonthStatus(YearMonth.of(2026, 11), 10, 2, 1, null)
         assertEquals("11월 마감까지 5일 · 남은 확인 3건", monthCloseBannerText(open, LocalDate.of(2026, 11, 25)))

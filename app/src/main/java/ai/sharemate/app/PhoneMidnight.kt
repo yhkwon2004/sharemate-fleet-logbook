@@ -103,7 +103,8 @@ internal data class PhoneCardLines(val vehicle: String, val log: String, val log
 
 /**
  * Short lines for the four phone cards, from the phone's copy (current mode only). The log count is the 운행 tab's own badge
- * (unclassified trips), so the card and the tab it opens never disagree; the export names the month 현황 opens on.
+ * (unclassified trips), so the card and the tab it opens never disagree; the export names the month 현황 opens on, the one the
+ * car's 월간·Excel lands on too ([reportLandingMonth]).
  */
 internal fun phoneCardLines(data: TripLogData, today: LocalDate, zone: ZoneId, now: Long = today.atTime(12, 0).atZone(zone).toInstant().toEpochMilli(),
     socPercent: Int? = null): PhoneCardLines {
@@ -118,8 +119,7 @@ internal fun phoneCardLines(data: TripLogData, today: LocalDate, zone: ZoneId, n
         monthTrips.isEmpty() -> "${month.monthValue}월 운행 없음"
         else -> "${monthTrips.size}건 · 모두 확인"
     }
-    val target = monthCloseTarget(mirror, today, zone)
-    val exportMonth = if (target != null && target.month != month) target.month else month
+    val exportMonth = reportLandingMonth(mirror, today, zone)
     val export = if (exportMonth != month) "${monthLabel(exportMonth, today)} 마감 전 Excel" else "${month.monthValue}월 Excel"
     val booking = when (val a = vehicleAvailability(mirror, now)) {
         is VehicleAvailability.InUse -> "지금 운행 중"
