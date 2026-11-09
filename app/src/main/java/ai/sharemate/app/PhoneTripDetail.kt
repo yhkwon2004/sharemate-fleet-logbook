@@ -130,7 +130,8 @@ internal fun expenseStillAt(trip: Trip?, index: Int, snapshot: TripExpense): Boo
                 Stat("도착", listOfNotNull(trip.destination, trip.endAddress).distinct().joinToString(" · ").ifBlank { if (trip.open) "기록 중" else "주소 미기록" })
             }
 
-            Eyebrow("운행 목적")
+            // Field labels ("운행 목적", "⑩ 비고") keep the grey of the Stat labels around them; the section labels below take the brand default.
+            Eyebrow("운행 목적", Scene.textSecondary)
             PhonePurposeButtons(current = shownPurpose, enabled = canEdit && !busy) { purpose -> if (purpose != shownPurpose) classify(trip, purpose) }
             Text(if (pendingEdit?.purpose != null) "차량에 보내는 중 · ${pendingEdit.purpose.label}" else purposeSourceLine(trip, history),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
@@ -170,7 +171,7 @@ internal fun expenseStillAt(trip: Trip?, index: Int, snapshot: TripExpense): Boo
                 })
             }
 
-            Eyebrow("⑩ 비고")
+            Eyebrow("⑩ 비고", Scene.textSecondary)
             OutlinedTextField(note, { if (it.length <= 300) note = it }, Modifier.fillMaxWidth(), label = { Text("방문처·업무 내용") }, enabled = paired,
                 supportingText = { Text("${note.length} / 300") }, shape = RoundedCornerShape(14.dp), minLines = 2, colors = sceneTextFieldColors())
             if (paired) PhoneLoadingButton("메모 저장", loading = savingNote, loadingLabel = "보내는 중…", enabled = note.trim() != trip.note, outlined = true, modifier = Modifier.fillMaxWidth()) {

@@ -141,16 +141,18 @@ internal fun fallbackPhoneTokens(width: Dp, height: Dp, fontScale: Float): Layou
 
 /**
  * Outlined text fields in the scene's palette: the outline token at rest (4.1:1 on the day background), the glow when
- * focused, the negative colour for an error, the row fill behind the text; muted and flat when disabled.
+ * focused, the negative colour for an error, the row fill behind the text; muted and flat when disabled. The resting label
+ * and the placeholder sit on that fill, so they take textSecondary (textMuted there is 4.29:1 by day over the rail); the
+ * supporting line under the field stays textMuted, on the card or the rail itself.
  */
 @Composable internal fun sceneTextFieldColors(): TextFieldColors = OutlinedTextFieldDefaults.colors(
     focusedBorderColor = Scene.glow, unfocusedBorderColor = Scene.outline, disabledBorderColor = Scene.divider, errorBorderColor = Scene.negative,
-    focusedLabelColor = Scene.glow, unfocusedLabelColor = Scene.textMuted, disabledLabelColor = Scene.textMuted, errorLabelColor = Scene.negative,
+    focusedLabelColor = Scene.glow, unfocusedLabelColor = Scene.textSecondary, disabledLabelColor = Scene.textMuted, errorLabelColor = Scene.negative,
     focusedTextColor = Scene.text, unfocusedTextColor = Scene.text, disabledTextColor = Scene.textMuted, errorTextColor = Scene.text,
     cursorColor = Scene.glow, errorCursorColor = Scene.negative,
     focusedContainerColor = Scene.fill, unfocusedContainerColor = Scene.fill, disabledContainerColor = Color.Transparent, errorContainerColor = Scene.fill,
     focusedSupportingTextColor = Scene.textMuted, unfocusedSupportingTextColor = Scene.textMuted, disabledSupportingTextColor = Scene.textMuted,
-    errorSupportingTextColor = Scene.negative, focusedPlaceholderColor = Scene.textMuted, unfocusedPlaceholderColor = Scene.textMuted)
+    errorSupportingTextColor = Scene.negative, focusedPlaceholderColor = Scene.textSecondary, unfocusedPlaceholderColor = Scene.textSecondary)
 
 /** How many list rows stagger in on the phone before the rest arrive together (spec C: 8 on the phone, 5 on the car). */
 internal const val PHONE_APPEAR_CAP = 8

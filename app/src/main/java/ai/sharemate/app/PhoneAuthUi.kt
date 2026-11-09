@@ -3,6 +3,7 @@ package ai.sharemate.app
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -64,10 +65,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
@@ -85,6 +93,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlin.math.ceil
+import kotlin.math.min
 
 /*
  * Who uses the phone (2.9): the Google sign-in screen over the city, the three-step first run (내 정보 · 법인차량 등록 ·
@@ -198,6 +208,23 @@ internal fun signInSplit(width: Dp, height: Dp): Boolean = width > height
 /** By day a white haze (.84 → 0) covers the top 55 % of the sign-in art, so the headline reads on it (the raw sky gives 2.8:1). */
 internal const val SIGN_IN_HAZE_FRACTION = .55f
 
+/** By night the base colour at this strength lies over the brand block's sky instead, so no star sits among its words. */
+internal const val SIGN_IN_NIGHT_SCRIM_ALPHA = .70f
+
+/** How far past the brand block's words the night scrim keeps its full strength, and how long it then takes to fade out. */
+private val SIGN_IN_SCRIM_MARGIN = 16.dp
+private val SIGN_IN_SCRIM_FADE = 64.dp
+
+/**
+ * Where the sign-in's night scrim lies at full strength, in the art's px: from the art's top-left corner to [margin] past the
+ * brand block's [words] (in the same px), rounded out to whole pixels so the fades drawn beside it meet it without a seam, and
+ * never past the [art] itself. Null until the words are measured, or when they lie outside the art.
+ */
+internal fun signInNightScrim(words: Rect, art: Size, margin: Float): Rect? {
+    if (words.isEmpty || words.right <= 0f || words.bottom <= 0f || words.left >= art.width || words.top >= art.height) return null
+    return Rect(0f, 0f, ceil(min(words.right + margin, art.width)), ceil(min(words.bottom + margin, art.height)))
+}
+
 /**
  * A choice card's surface: the opaque glass, with the selection fill laid over it when chosen rather than in its place, so the
  * card stays opaque and the day shadow under it never shows through.
@@ -227,9 +254,11 @@ internal fun PhoneSignInScreen(
     onDemo: (() -> Unit)? = null,
 ) {
     var pressed by rememberSaveable { mutableIntStateOf(PRESSED_NONE) }
+    // Where the brand block rests (window px): the art lays its night scrim under these words and nowhere else.
+    val brandBox = remember { mutableStateOf(Rect.Zero) }
     // The brand block: the mark, one headline and one supporting line (text and textSecondary only on the haze).
     val brand: @Composable () -> Unit = {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.onGloballyPositioned { brandBox.value = it.boundsInRoot() }, verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.semantics(mergeDescendants = true) { heading() }) {
                 Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = null, tint = Scene.brand, modifier = Modifier.size(40.dp))
@@ -281,7 +310,7 @@ internal fun PhoneSignInScreen(
             // Each pane pads only its own edges, so the left one does not also reserve the navigation bar on the right.
             Row(Modifier.fillMaxSize()) {
                 Box(Modifier.weight(45f).fillMaxHeight()) {
-                    SignInArt(Modifier.matchParentSize(), horizonAt = .60f)
+                    SignInArt(Modifier.matchParentSize(), horizonAt = .60f, words = { brandBox.value })
                     Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Start + WindowInsetsSides.Bottom))
                         .padding(horizontal = tokens.gutter, vertical = 20.dp)) { brand() }
                 }
@@ -291,7 +320,7 @@ internal fun PhoneSignInScreen(
                 }
             }
         } else Box(Modifier.fillMaxSize()) {
-            SignInArt(Modifier.matchParentSize(), horizonAt = .42f)
+            SignInArt(Modifier.matchParentSize(), horizonAt = .42f, words = { brandBox.value })
             BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing), contentAlignment = Alignment.TopCenter) {
                 Column(Modifier.widthIn(max = columnMax).fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = maxHeight)
                     .padding(horizontal = tokens.gutter, vertical = 20.dp), verticalArrangement = Arrangement.SpaceBetween) {
@@ -305,16 +334,41 @@ internal fun PhoneSignInScreen(
 
 /**
  * The sign-in's city in the current phase, with the base colour taking over under the horizon. By day a white haze (Scene.haze,
- * .84 → 0 over the top 55 %) lies over the sky so the headline reads; by night the backdrop's own scrims stay as built.
- * The haze cross-fades with the scene on the same clock as the sky.
+ * .84 → 0 over the top 55 %) lies over the sky so the headline reads. By night the stars would sit among the words (a star after
+ * '예약' reads as a full stop), so the base colour at .70 lies over the brand block's sky instead ([words], window px; see
+ * [signInNightScrim]) and fades out 64 dp past it, leaving the moon and the city in their own light. The two cross-fade with the
+ * scene on the sky's own crossfade clock (LocalSceneChange, linear); an instant swap under reduced motion.
  */
-@Composable private fun SignInArt(modifier: Modifier = Modifier, horizonAt: Float = .42f) {
+@Composable private fun SignInArt(modifier: Modifier = Modifier, horizonAt: Float = .42f, words: () -> Rect = { Rect.Zero }) {
     val haze = Scene.haze
+    val scrim = Scene.bg.copy(alpha = SIGN_IN_NIGHT_SCRIM_ALPHA)
     val reduce = LocalReduceMotion.current
-    Box(modifier) {
+    val crossfadeMs = LocalSceneChange.current.crossfadeMs
+    val density = LocalDensity.current
+    val margin = with(density) { SIGN_IN_SCRIM_MARGIN.toPx() }
+    val fade = ceil(with(density) { SIGN_IN_SCRIM_FADE.toPx() })
+    // Where the art sits in the window, so the words' window bounds can be read in the art's own px.
+    val origin = remember { mutableStateOf(Offset.Zero) }
+    Box(modifier.onGloballyPositioned { origin.value = it.positionInRoot() }) {
         HomeBackdrop(Modifier.matchParentSize(), horizonAt = horizonAt, heightScale = .30f, moonAt = Offset(.82f, .15f), leftScrim = false)
-        Crossfade(LocalScenePhase.current == ScenePhase.DAY, Modifier.matchParentSize(), animationSpec = if (reduce) snap() else tween(MOTION_SCENE_MS), label = "sign-in-haze") { day ->
+        Crossfade(LocalScenePhase.current == ScenePhase.DAY, Modifier.matchParentSize(), animationSpec = if (reduce) snap() else tween(crossfadeMs, easing = LinearEasing),
+            label = "sign-in-haze") { day ->
             if (day) Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to haze.copy(alpha = .84f), SIGN_IN_HAZE_FRACTION to Color.Transparent)))
+            else Spacer(Modifier.fillMaxSize().drawWithCache {
+                // Full strength over the words, then three soft edges: to the right, below, and round the corner between them.
+                val core = signInNightScrim(words().translate(-origin.value), size, margin)
+                val right = core?.right ?: 0f
+                val bottom = core?.bottom ?: 0f
+                val across = Brush.horizontalGradient(listOf(scrim, Color.Transparent), startX = right, endX = right + fade)
+                val down = Brush.verticalGradient(listOf(scrim, Color.Transparent), startY = bottom, endY = bottom + fade)
+                val corner = Brush.radialGradient(listOf(scrim, Color.Transparent), center = Offset(right, bottom), radius = fade)
+                onDrawBehind {
+                    if (core == null) return@onDrawBehind
+                    drawRect(across, size = Size(right + fade, bottom))
+                    drawRect(down, topLeft = Offset(0f, bottom), size = Size(right, fade))
+                    drawRect(corner, topLeft = Offset(right, bottom), size = Size(fade, fade))
+                }
+            })
         }
     }
 }
@@ -562,7 +616,7 @@ internal fun PhoneOnboarding(
     StepIntro("사용할 법인차량을 등록해요",
         "차량과 연결하면 운행 기록을 실시간으로 받고 예약할 수 있어요. 지금 연결할 수 없다면 차량 정보만 먼저 적어 두고 나중에 연결해도 돼요.")
     if (fleet.vehicles.isNotEmpty()) Panel(color = Scene.glass, padding = 18.dp) {
-        Eyebrow("등록한 차량 · ${fleet.vehicles.size}대", Scene.brand)
+        Eyebrow("등록한 차량 · ${fleet.vehicles.size}대")
         fleet.vehicles.forEach { vehicle -> RegisteredVehicleRow(vehicle) }
     }
     Row(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -572,7 +626,7 @@ internal fun PhoneOnboarding(
     when (mode) {
         VEHICLE_MODE_PAIR -> PhoneConnectCard(pairBusy, pairError, onPair)
         VEHICLE_MODE_MANUAL -> Panel(color = Scene.glass, padding = 20.dp) {
-            Eyebrow("직접 등록", Scene.brand)
+            Eyebrow("직접 등록")
             val plateError = manualVehicleError(plate, model, company)
             Field("차량번호", plate, onPlate, hint = "예: 12가 3456", error = plateError)
             Field("차종", model, onModel, hint = "선택 · ${VEHICLE_MODEL_MAX}자까지")
@@ -603,18 +657,16 @@ internal fun PhoneOnboarding(
 }
 
 /**
- * A large glass choice: lit tile, title and one line; chosen = selection fill (over the opaque glass) + 1.5-dp ring + glow title,
- * never colour alone. .97 press scale.
+ * A large glass choice: lit tile, title and one line, the cards' faint top sheen by night (none by day, [glassSheen]); chosen =
+ * selection fill (over the opaque glass) + 1.5-dp ring + glow title, never colour alone. .97 press scale.
  */
 @Composable private fun ChoiceCard(title: String, detail: String, icon: Int, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(24.dp)
     val source = remember { MutableInteractionSource() }
-    val sheen = Scene.colors.edgeTop
     Surface(shape = shape, color = choiceCardColor(selected, Scene.glass, Scene.selectionFill), border = if (selected) BorderStroke(1.5.dp, Scene.selectionRing) else Scene.edge,
         modifier = modifier.cardShadow(shape).pressable(source).clip(shape)
             .selectable(selected = selected, role = Role.RadioButton, interactionSource = source, indication = LocalIndication.current, onClick = onClick)) {
-        Column(Modifier.background(Brush.verticalGradient(listOf(sheen.copy(alpha = sheen.alpha * .25f), Color.Transparent))).heightIn(min = 136.dp).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.glassSheen(Scene.colors).heightIn(min = 136.dp).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             val tile = RoundedCornerShape(14.dp)
             Box(Modifier.size(44.dp).clip(tile).background(Scene.tile).border(Scene.edge, tile),
                 contentAlignment = Alignment.Center) { Icon(painterResource(icon), null, Modifier.size(22.dp), tint = Scene.onTile) }
@@ -627,7 +679,7 @@ internal fun PhoneOnboarding(
 @Composable private fun DriverStep(drivers: List<Driver>, selected: String?, paired: Boolean, connected: Boolean, onPick: (String) -> Unit) {
     StepIntro("나는 누구인가요?", "차량에 등록된 직원 목록이에요. 나를 골라 두면 이 휴대폰의 계정과 연결돼요.")
     if (drivers.isEmpty()) Panel(color = Scene.glass, padding = 20.dp) {
-        Eyebrow("직원 목록", Scene.brand)
+        Eyebrow("직원 목록")
         Text(driverListNote(paired, connected), style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary,
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
     } else Panel(color = Scene.glass, padding = 12.dp) {
@@ -675,7 +727,7 @@ internal fun PhoneAccountCard(
 ) {
     var confirming by rememberSaveable { mutableStateOf(false) }
     Panel(modifier, color = Scene.glass, padding = 20.dp) {
-        Eyebrow("계정", Scene.brand)
+        Eyebrow("계정")
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
             modifier = Modifier.semantics(mergeDescendants = true) {}) {
             Avatar(accountInitial(account.name, account.email), 52)

@@ -2,9 +2,10 @@ package ai.sharemate.app
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
@@ -47,10 +48,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -77,13 +76,13 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
@@ -199,6 +198,26 @@ internal fun phoneOrbClear(center: Offset, reach: Float, shapes: Collection<Rect
 internal fun Modifier.reportSkyShape(shape: PhoneSkyShape, onShape: ((PhoneSkyShape, Rect) -> Unit)?): Modifier =
     if (onShape == null) this else onGloballyPositioned { onShape(shape, it.boundsInRoot()) }
 
+/**
+ * What a text's words cover (root px): its [box] cut back to the furthest line end in [lineRights] (px from the box's left).
+ * A soft-wrapped Text measures as wide as its constraint, so a two-line greeting's box runs under the sun or moon even when
+ * both lines end well before it. Until the lines are known, the box itself.
+ */
+internal fun phoneInkRect(box: Rect, lineRights: List<Float>): Rect {
+    val end = lineRights.maxOrNull() ?: return box
+    return Rect(box.left, box.top, (box.left + end).coerceIn(box.left, box.right), box.bottom)
+}
+
+/** A reported text's line ends (px from its left), kept from its layout for its positioning; plain fields, so nothing recomposes. */
+private class SkyInk {
+    var lineRights: List<Float> = emptyList()
+    fun record(layout: TextLayoutResult) { lineRights = List(layout.lineCount) { layout.getLineRight(it) } }
+}
+
+/** [reportSkyShape] for a text: where its lines end ([phoneInkRect]), from the line ends [ink] kept at its last layout. */
+private fun Modifier.reportSkyInk(shape: PhoneSkyShape, onShape: ((PhoneSkyShape, Rect) -> Unit)?, ink: SkyInk): Modifier =
+    if (onShape == null) this else onGloballyPositioned { onShape(shape, phoneInkRect(it.boundsInRoot(), ink.lineRights)) }
+
 // ───────────────────────── glass card helpers ─────────────────────────
 
 /** The drop shadow under a tappable glass card: Scene.shadow, which is transparent by night so nothing is drawn there. */
@@ -219,10 +238,16 @@ internal fun shadowedGlassAlpha(shadow: Color, alpha: Float): Float = if (shadow
 @Composable @ReadOnlyComposable internal fun shadowedGlass(alpha: Float = .88f): Color =
     Scene.glass.copy(alpha = shadowedGlassAlpha(Scene.shadow, alpha))
 
-/** The faint top sheen of a glass card, from the scene's lit edge rather than a fixed white. */
-@Composable private fun cardSheen(): Brush {
-    val edge = Scene.colors.edgeTop
-    return Brush.verticalGradient(listOf(edge.copy(alpha = edge.alpha * .25f), Color.Transparent))
+/**
+ * The top stop of a glass card's sheen: the scene's lit edge at a quarter by night; none by day, where the edge token is a navy
+ * hairline and a sheen drawn from it greys the white card's top (the car's HomeActionCard draws none by day either).
+ */
+internal fun glassSheenTop(colors: SceneColors): Color? = if (colors.isDay) null else colors.edgeTop.let { it.copy(alpha = it.alpha * .25f) }
+
+/** The faint top sheen of a glass card by night ([glassSheenTop]; pass `Scene.colors`); by day the card stays plain white glass. */
+internal fun Modifier.glassSheen(colors: SceneColors): Modifier {
+    val top = glassSheenTop(colors) ?: return this
+    return background(Brush.verticalGradient(listOf(top, Color.Transparent)))
 }
 
 // ───────────────────────── home hero ─────────────────────────
@@ -244,7 +269,8 @@ internal fun shadowedGlassAlpha(shadow: Color, alpha: Float): Float = if (shadow
 
 /**
  * The greeting block: the date in the brand tone, one headline that cross-fades when it changes, and the link line. [onShape]
- * gets each line's resting box (root px; as wide as its words), so the shell can keep the sun or moon beside them, never under them.
+ * gets each line's resting box (root px; only as wide as its words reach, [phoneInkRect], even when a line wraps), so the shell
+ * can keep the sun or moon beside them, never under them.
  */
 @Composable internal fun PhoneHomeGreeting(data: TripLogData, link: PhoneLink, paired: Boolean, now: Long, modifier: Modifier = Modifier,
     onBottom: ((Float) -> Unit)? = null, headlineLines: Int = 2, onShape: ((PhoneSkyShape, Rect) -> Unit)? = null) {
@@ -260,25 +286,33 @@ internal fun shadowedGlassAlpha(shadow: Color, alpha: Float): Float = if (shadow
             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.clearAndSetSemantics {}.reportSkyShape(PhoneSkyShape.DATE, onShape))
         GreetingText(homeGreeting(at.hour, driver?.name, open != null), maxLines = headlineLines, onShape = onShape)
         // No live region here: the distance in this line changes on every poll while driving; the link badge announces state.
+        val subtitleInk = remember { SkyInk() }
         Text(phoneSubtitle(paired, link.connected, open), style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary,
-            modifier = Modifier.reportSkyShape(PhoneSkyShape.SUBTITLE, onShape))
+            onTextLayout = { subtitleInk.record(it) }, modifier = Modifier.reportSkyInk(PhoneSkyShape.SUBTITLE, onShape, subtitleInk))
     }
 }
 
-/** The headline swaps with a 220 ms cross-fade and a 4 dp lift when its words change (a new employee, a trip starting); a snap under reduced motion. */
+/**
+ * The headline swaps with a 220 ms cross-fade and a 4 dp lift when its words change (a new employee, a trip starting), and its
+ * height follows on the same clock, unclipped so the lift never cuts the words; all of it snaps under reduced motion.
+ */
 @Composable private fun GreetingText(text: String, modifier: Modifier = Modifier, maxLines: Int = 2, onShape: ((PhoneSkyShape, Rect) -> Unit)? = null) {
     val reduce = LocalReduceMotion.current
     val lift = with(LocalDensity.current) { 4.dp.roundToPx() }
     val color = Scene.text
     AnimatedContent(targetState = text, modifier = modifier, label = "greeting", transitionSpec = {
-        if (reduce) fadeIn(snap()) togetherWith fadeOut(snap())
-        else (fadeIn(tween(MOTION_ENTER_MS, easing = FastOutSlowInEasing)) + slideInVertically(tween(MOTION_ENTER_MS, easing = FastOutSlowInEasing)) { lift }) togetherWith
-            (fadeOut(tween(140, easing = FastOutSlowInEasing)) + slideOutVertically(tween(MOTION_ENTER_MS, easing = FastOutSlowInEasing)) { -lift })
+        val swap = if (reduce) fadeIn(snap()) togetherWith fadeOut(snap())
+            else (fadeIn(tween(MOTION_ENTER_MS, easing = FastOutSlowInEasing)) + slideInVertically(tween(MOTION_ENTER_MS, easing = FastOutSlowInEasing)) { lift }) togetherWith
+                (fadeOut(tween(140, easing = FastOutSlowInEasing)) + slideOutVertically(tween(MOTION_ENTER_MS, easing = FastOutSlowInEasing)) { -lift })
+        swap using SizeTransform(clip = false) { _, _ -> if (reduce) snap() else tween(MOTION_ENTER_MS, easing = FastOutSlowInEasing) }
     }) { value ->
-        // The slot stays full width; the words keep their own width so the sun or moon can tell where they end. Only the arriving headline reports.
+        // The slot stays full width. Only the arriving headline reports, and it reports where its lines end: wrapped to two lines
+        // the Text is as wide as the column, which would keep the sun or moon away all afternoon.
+        val ink = remember { SkyInk() }
         Text(value, style = MaterialTheme.typography.headlineMedium, color = color, fontWeight = FontWeight.Bold, maxLines = maxLines, overflow = TextOverflow.Ellipsis,
+            onTextLayout = { ink.record(it) },
             modifier = Modifier.fillMaxWidth().wrapContentWidth(Alignment.Start).semantics { heading() }
-                .reportSkyShape(PhoneSkyShape.HEADLINE, onShape.takeIf { value == text }))
+                .reportSkyInk(PhoneSkyShape.HEADLINE, onShape.takeIf { value == text }, ink))
     }
 }
 
@@ -338,7 +372,7 @@ private class PhoneCard(val title: String, val subtitle: String, val icon: Int, 
                 DigitChange(card.subtitle, style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, maxLines = 2)
             }
         }
-        val gloss = Modifier.fillMaxWidth().background(cardSheen())
+        val gloss = Modifier.fillMaxWidth().glassSheen(Scene.colors)
         if (vertical) Column(gloss.heightIn(min = 120.dp).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { tile(); lines() }
         else Row(gloss.heightIn(min = 84.dp).padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             tile()
@@ -406,10 +440,10 @@ private class PhoneCard(val title: String, val subtitle: String, val icon: Int, 
 
 /**
  * The two widgets' one layout, so their labels line up across the row: 16-dp padding, the label at the top left and the value
- * 6 dp under it; an optional [trailing] part (the month ring) sits centred at the end. The cards' top sheen lies under it.
+ * 6 dp under it; an optional [trailing] part (the month ring) sits centred at the end. The cards' night sheen lies under it.
  */
 @Composable private fun WidgetBody(label: String, modifier: Modifier = Modifier, trailing: (@Composable () -> Unit)? = null, value: @Composable () -> Unit) {
-    Row(modifier.fillMaxHeight().heightIn(min = 120.dp).background(cardSheen()).padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(modifier.fillMaxHeight().heightIn(min = 120.dp).glassSheen(Scene.colors).padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(label, style = MaterialTheme.typography.labelMedium, color = Scene.textMuted)
             value()
@@ -418,30 +452,27 @@ private class PhoneCard(val title: String, val subtitle: String, val icon: Int, 
     }
 }
 
+/** The phone month ring's name for [sweepProgress]: once it has swept in this process, returning to 홈 shows it at its value. */
+private const val PHONE_MONTH_RING_KEY = "phone-month-ring"
+
 /**
- * The month's completion as a small ring: the sweep eases from the previous value to the new one (600 ms the first time, starting
- * 120 ms after the card lands; 320 ms later) and the label cross-fades instead of counting. Decorative for TalkBack; the widget speaks the numbers.
+ * The month's completion as a small ring: the shared [sweepProgress] eases it from the previous value to the new one (600 ms the
+ * first time, starting 120 ms after the card lands; 320 ms later; never replayed on a return to 홈) and the label cross-fades
+ * instead of counting. Decorative for TalkBack; the widget speaks the numbers.
  */
 @Composable private fun PhoneRing(percent: Int?, color: Color, diameter: Dp, thickness: Dp) {
     val track = Scene.ringTrack
     val accent = Scene.accent
     val text = Scene.text
-    val reduce = LocalReduceMotion.current
-    val target = (percent ?: 0).coerceIn(0, 100).toFloat()
-    val sweep = remember { Animatable(0f) }
-    val first = remember { mutableStateOf(true) }
-    LaunchedEffect(target, reduce) {
-        if (reduce) { sweep.snapTo(target); return@LaunchedEffect }
-        if (first.value) { first.value = false; delay(120); sweep.animateTo(target, tween(600, easing = FastOutSlowInEasing)) }
-        else sweep.animateTo(target, tween(320, easing = FastOutSlowInEasing))
-    }
+    val sweep = sweepProgress((percent ?: 0).coerceIn(0, 100) / 100f, key = PHONE_MONTH_RING_KEY)
     Box(Modifier.size(diameter).clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
         Spacer(Modifier.matchParentSize().drawBehind {
             val stroke = thickness.toPx()
             val inset = stroke / 2
             val arc = Size(size.width - stroke, size.height - stroke)
             drawArc(track, -90f, 360f, false, Offset(inset, inset), arc, style = Stroke(stroke))
-            val degrees = 360f * sweep.value / 100f
+            // The sweep is read here, in the draw, so only the ring redraws while it moves.
+            val degrees = 360f * sweep.value
             if (degrees > 0f) drawArc(Brush.sweepGradient(listOf(accent, color, accent)), -90f, degrees, false, Offset(inset, inset), arc, style = Stroke(stroke, cap = StrokeCap.Round))
         })
         DigitChange(percent?.let { "$it%" } ?: "—", style = MaterialTheme.typography.labelLarge.copy(fontFeatureSettings = "tnum"), color = text, fontWeight = FontWeight.Bold)
@@ -477,7 +508,8 @@ private val NavItemShape = RoundedCornerShape(24.dp)
 
 /**
  * The phone's five tabs as one floating glass pill, 72 dp tall with 10-dp margins, no wider than 560 dp and centred: the lit
- * pill (selection fill + 1.5-dp ring) glides to the chosen tab on the page clock while the icon and label tint with it.
+ * pill (selection fill + 1.5-dp ring) glides to the chosen tab on the page clock while the icon and label tint with it. The
+ * pages scroll on under it, so it is opaque glass by day (no words ghost through the tab labels) and .94 glass by night.
  */
 @Composable internal fun PhoneGlassNav(tabs: List<NavTab>, selected: Int, modifier: Modifier = Modifier, onSelect: (Int) -> Unit) {
     val shape = RoundedCornerShape(36.dp)
@@ -485,7 +517,7 @@ private val NavItemShape = RoundedCornerShape(24.dp)
     val fill = Scene.selectionFill
     val ring = Scene.selectionRing
     Box(modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 14.dp, vertical = 10.dp), contentAlignment = Alignment.Center) {
-        Surface(shape = shape, color = Scene.glass.copy(alpha = .94f), border = Scene.edge, modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().cardShadow(shape)) {
+        Surface(shape = shape, color = shadowedGlass(.94f), border = Scene.edge, modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().cardShadow(shape)) {
             BoxWithConstraints(Modifier.fillMaxWidth().padding(6.dp).height(60.dp)) {
                 val n = tabs.size.coerceAtLeast(1)
                 val tabWidth = (maxWidth - gap * (n - 1)) / n
@@ -499,7 +531,7 @@ private val NavItemShape = RoundedCornerShape(24.dp)
     }
 }
 
-/** Landscape on a phone: the same tabs as an 80-dp glass rail at the start, the lit pill gliding up and down. */
+/** Landscape on a phone: the same tabs as an 80-dp glass rail at the start, the lit pill gliding up and down; opaque by day, .94 by night. */
 @Composable internal fun PhoneGlassRail(tabs: List<NavTab>, selected: Int, modifier: Modifier = Modifier, onSelect: (Int) -> Unit) {
     val shape = RoundedCornerShape(28.dp)
     val gap = 4.dp
@@ -507,7 +539,7 @@ private val NavItemShape = RoundedCornerShape(24.dp)
     val fill = Scene.selectionFill
     val ring = Scene.selectionRing
     Box(modifier.fillMaxHeight().padding(start = 10.dp, top = 10.dp, bottom = 10.dp), contentAlignment = Alignment.Center) {
-        Surface(shape = shape, color = Scene.glass.copy(alpha = .94f), border = Scene.edge, modifier = Modifier.width(80.dp).cardShadow(shape)) {
+        Surface(shape = shape, color = shadowedGlass(.94f), border = Scene.edge, modifier = Modifier.width(80.dp).cardShadow(shape)) {
             Box(Modifier.padding(6.dp).width(68.dp)) {
                 val y by animateDpAsState((item + gap) * selected.coerceIn(0, tabs.lastIndex.coerceAtLeast(0)), tabColorSpec(), label = "rail-pill")
                 Box(Modifier.offset { IntOffset(0, y.roundToPx()) }.fillMaxWidth().height(item).clip(NavItemShape).background(fill).border(1.5.dp, ring, NavItemShape))
@@ -610,20 +642,24 @@ private val NavItemShape = RoundedCornerShape(24.dp)
 
 /**
  * The phone home's backdrop: the city low behind the greeting and the cards (horizon at 40 %, towers at 30 % scale), fading into
- * the base colour before the task list. The sun or the moon sits at [orbAt] (phoneOrbAt: the free sky right of the greeting) and
- * only while [showOrb]: the shell passes it on the home tab when the orb touches none of the words, the cards or the header icons.
+ * the base colour before the task list. The sun or the moon sits at [orbAt] (phoneOrbAt: the free sky right of the greeting) at
+ * [orbAlpha], read in the sky's draw: the shell fades it in on the home tab when it touches none of the words, the cards or the
+ * header icons, and out with the page otherwise ([showOrb] false leaves it out altogether).
  * By night the scrim comes in from the left as built; by day a white haze (Scene.haze) runs down from the top, .88 → .76 at the
  * greeting's bottom ([hazeTo], root px; a quarter of the height until measured) → clear 120 dp lower, so the greeting reads on
- * white rather than on the sky. The two cross-fade with the phase.
+ * white rather than on the sky. The two cross-fade with the phase, on the sky's own crossfade clock (LocalSceneChange, linear).
  */
-@Composable internal fun PhoneHomeBackdrop(modifier: Modifier = Modifier, hazeTo: Float = 0f, showOrb: Boolean = true, orbAt: Offset = Offset(.90f, .175f)) {
+@Composable internal fun PhoneHomeBackdrop(modifier: Modifier = Modifier, hazeTo: Float = 0f, showOrb: Boolean = true, orbAt: Offset = Offset(.90f, .175f),
+    orbAlpha: () -> Float = { 1f }) {
     val haze = Scene.haze
     val bg = Scene.bg
     val reduce = LocalReduceMotion.current
+    val crossfadeMs = LocalSceneChange.current.crossfadeMs
     val fade = with(LocalDensity.current) { 120.dp.toPx() }
     Box(modifier) {
-        HomeBackdrop(Modifier.matchParentSize(), horizonAt = .40f, heightScale = PHONE_SKY_TOWERS, moonAt = orbAt, leftScrim = false, showOrb = showOrb)
-        Crossfade(LocalScenePhase.current == ScenePhase.DAY, Modifier.matchParentSize(), animationSpec = if (reduce) snap() else tween(MOTION_SCENE_MS), label = "phone-haze") { day ->
+        HomeBackdrop(Modifier.matchParentSize(), horizonAt = .40f, heightScale = PHONE_SKY_TOWERS, moonAt = orbAt, leftScrim = false, showOrb = showOrb, orbAlpha = orbAlpha)
+        Crossfade(LocalScenePhase.current == ScenePhase.DAY, Modifier.matchParentSize(), animationSpec = if (reduce) snap() else tween(crossfadeMs, easing = LinearEasing),
+            label = "phone-haze") { day ->
             if (day) Spacer(Modifier.fillMaxSize().drawWithCache {
                 val end = phoneHazeEnd(hazeTo, size.height)
                 val brush = Brush.verticalGradient(0f to haze.copy(alpha = .88f), end / (end + fade) to haze.copy(alpha = .76f), 1f to Color.Transparent, startY = 0f, endY = end + fade)

@@ -1,5 +1,6 @@
 package ai.sharemate.app
 
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -173,6 +174,26 @@ class PhoneReservationsUiTest {
     @Test fun pastHoursFoldIntoOneLine() {
         assertEquals("06:00–09:00 · 지난 시간", pastHoursText(6, 9))
         assertEquals("06:00–24:00 · 지난 시간", pastHoursText(TIMELINE_FIRST_HOUR, TIMELINE_LAST_HOUR + 1))
+    }
+
+    @Test fun pastHoursLoseTheirFillButNeverDimABooking() {
+        listOf(DaySceneColors, NightSceneColors).forEach { scene ->
+            val pastFree = hourRowStyle(scene, booked = false, mine = false, first = false, past = true)
+            assertEquals("지난 빈 시간: 채움 없음", Color.Transparent, pastFree.fill)
+            assertEquals("‘지난 시간’은 흐린 글자(AA)", scene.textMuted, pastFree.text)
+            assertNull(pastFree.edge)
+            val pastBooking = hourRowStyle(scene, booked = true, mine = false, first = true, past = true)
+            assertEquals(Color.Transparent, pastBooking.fill)
+            assertEquals("지난 예약도 예약자는 본문 색", scene.text, pastBooking.text)
+            assertEquals("지난 예약도 첫 줄 테두리는 그대로", scene.brand.copy(alpha = .5f), pastBooking.edge)
+            assertEquals("이어지는 줄은 보조 색", scene.textSecondary, hourRowStyle(scene, booked = true, mine = false, first = false, past = true).text)
+            val free = hourRowStyle(scene, booked = false, mine = false, first = false, past = false)
+            assertEquals(scene.fill, free.fill); assertEquals(scene.textSecondary, free.text)
+            val mine = hourRowStyle(scene, booked = true, mine = true, first = true, past = false)
+            assertEquals(scene.selectionFill, mine.fill); assertEquals(scene.selectionRing, mine.edge); assertEquals(scene.text, mine.text)
+            val other = hourRowStyle(scene, booked = true, mine = false, first = false, past = false)
+            assertEquals(scene.brand.copy(alpha = .16f), other.fill); assertNull("이어지는 줄은 테두리 없음", other.edge)
+        }
     }
 
     @Test fun fourHourChipsARowWhenFourFitOtherwiseThree() {

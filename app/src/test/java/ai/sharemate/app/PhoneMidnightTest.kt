@@ -5,6 +5,8 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
@@ -129,5 +131,27 @@ class PhoneMidnightTest {
         val moonReach = phoneOrbReach(411.dp).value
         assertTrue(phoneOrbClear(moon, moonReach, listOf(Rect(754f, 44f, 834f, 68f), Rect(479f, 92f, 834f, 360f))))
         assertFalse("좁은 가로 창에서 설정 아이콘에 닿으면 숨김", phoneOrbClear(Offset(850f * .93f, 49f), moonReach, listOf(Rect(722f, 44f, 802f, 68f))))
+    }
+
+    @Test fun aWrappedHeadlineReportsWhereItsWordsEnd() {
+        // 11:00–18:00 with a name: "오늘도 안전한 운행 / 되세요, Kim Jiwoo 님" on the 411 × 914 dp phone. Wrapped, the Text is as wide
+        // as the column (20–391); its two lines end 172 and 210 dp from its left.
+        val center = Offset(411f * .90f, 914f * .175f)
+        val reach = phoneOrbReach(914.dp).value
+        val box = Rect(20f, 117f, 391f, 189f)
+        val ink = phoneInkRect(box, listOf(172f, 210f))
+        assertEquals("가장 긴 줄의 끝까지", Rect(20f, 117f, 230f, 189f), ink)
+        assertFalse("상자째로 재면 해가 늘 숨음", phoneOrbClear(center, reach, listOf(box)))
+        assertTrue("글자가 끝나는 곳까지만 재면 해가 보임", phoneOrbClear(center, reach, listOf(ink)))
+        assertFalse("1.15× 글꼴처럼 줄이 해 앞까지 오면 숨김", phoneOrbClear(center, reach, listOf(phoneInkRect(box, listOf(172f, 340f)))))
+        assertEquals("줄을 아직 모르면 상자 그대로", box, phoneInkRect(box, emptyList()))
+        assertEquals("상자 밖으로는 나가지 않음", 391f, phoneInkRect(box, listOf(400f)).right, 0f)
+    }
+
+    @Test fun glassCardsHaveNoSheenByDay() {
+        assertNull("낮: 테두리 토큰이 남색이라 흰 카드 윗부분이 회색이 됨", glassSheenTop(DaySceneColors))
+        val night = glassSheenTop(NightSceneColors)
+        assertNotNull(night)
+        assertEquals("밤: 빛나는 테두리의 1/4", NightSceneColors.edgeTop.alpha * .25f, night!!.alpha, 1f / 255)
     }
 }
