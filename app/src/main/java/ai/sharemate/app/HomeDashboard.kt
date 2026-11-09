@@ -503,9 +503,10 @@ private var homeEntranceDone = false
 
 /**
  * The glass of the home's cards and widgets: opaque [Scene.glass] by day, so neither the towers nor the bridge show through
- * the white; by night the scene's glass at [translucent] (null keeps the token's own alpha), as built.
+ * the white; by night the scene's glass at [translucent] (null keeps the token's own alpha), as built. The 지금 column's
+ * tiles and its driver card ([DriverNowCard]) take it at .78.
  */
-@Composable private fun homeCardGlass(translucent: Float? = null): Color {
+@Composable internal fun homeCardGlass(translucent: Float? = null): Color {
     val glass = Scene.glass
     return when {
         Scene.isDay -> glass.copy(alpha = 1f)

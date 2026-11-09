@@ -119,12 +119,6 @@ import java.util.UUID
 private const val NOW_FOLD_MS = 200
 
 /**
- * The 지금 column's tile glass (HomeDashboard's `homeCardGlass(.78)`): opaque by day, so the towers never show through the
- * white, and the night glass at .78.
- */
-@Composable private fun nowCardGlass(): Color = Scene.glass.copy(alpha = if (Scene.isDay) 1f else .78f)
-
-/**
  * 지금 운전, the card at the top of the 지금 column (2.11): who drives now, and today's question while [driverConfirmDue] asks
  * it. By default the label, avatar 64 · name over department · 바꾸기, then [driverStatusLine]; TalkBack hears the block as one
  * heading ([driverNowDescription]). While the question is due, a divider and "오늘도 … 님이 운전하나요?" join with 네 and
@@ -146,7 +140,8 @@ private const val NOW_FOLD_MS = 200
     val question = remember { MutableTransitionState(due != null) }
     question.targetState = due != null
     val reduce = LocalReduceMotion.current
-    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = nowCardGlass(), contentColor = Scene.text, border = Scene.edge) {
+    // The 지금 column's tile glass: opaque by day, so the towers never show through the white, and the night glass at .78.
+    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = homeCardGlass(translucent = .78f), contentColor = Scene.text, border = Scene.edge) {
         Column(Modifier.padding(22.dp)) {
             when {
                 data.drivers.isEmpty() -> NowCardPrompt("등록된 직원이 없어요", "운행기록부 ④ 사용자 칸에 들어갈 부서와 성명을 등록해 주세요.", "직원 추가", openDrivers)

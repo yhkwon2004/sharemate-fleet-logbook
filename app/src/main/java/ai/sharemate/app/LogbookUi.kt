@@ -31,7 +31,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -103,7 +102,6 @@ import java.time.YearMonth
 import java.time.ZoneId
 import java.util.Date
 import java.util.Locale
-import java.util.UUID
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 
@@ -387,10 +385,11 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                                             }
                                           }
                                         }
-                                        // Who is driving, the next booking, today and this month. Until the driver card lands, the daily question
-                                        // fills its slot.
+                                        // Who is driving (asking today's question while it is due, on the same answered days as the narrow
+                                        // window's row), the next booking, today and this month. The card's 직원 추가 opens 설정 › 직원.
                                         if (columns.split) NowColumn(state, now,
-                                            driverCard = { modifier -> DriverConfirmRow(state, now, openDriver, driverConfirmed, { driverConfirmed = it }, modifier) },
+                                            driverCard = { modifier -> DriverNowCard(state, now, driverConfirmed, { driverConfirmed = it }, openPicker = { openDriver(null) },
+                                                openDrivers = { goSettings(1) }, modifier = modifier) },
                                             openVehicle = { tab = 3 }, openMonth = { goReport(YearMonth.from(localDate(now))) },
                                             modifier = Modifier.width(columns.side).fillMaxHeight().padding(top = 8.dp, bottom = 20.dp))
                                     }
@@ -409,7 +408,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
             }
         }
         // Inside the follow-up provider, so the picker's confirmations and their undo reach the shell's bar.
-        if (pickingDriver && !blocked) DriverPicker(state.data, driverFor, act, repository, { pickingDriver = false }) { pickingDriver = false; goSettings(1) }
+        if (pickingDriver && !blocked) DriverPicker(state.data, driverFor, act, repository, { pickingDriver = false }, now) { pickingDriver = false; goSettings(1) }
       }
         AssistantSheet(open = assistant && !blocked && state.loaded, onDismiss = { assistant = false; assistantText = null }, data = state.data, now = now,
             writer = assistantWriter, act = act, followUp = followUp, onOpenTrip = { tripId ->
@@ -459,10 +458,15 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
         val interaction = remember { MutableInteractionSource() }
         if (showDriver) Surface(onClick = onDriver, shape = RoundedCornerShape(50), color = Scene.glass, border = Scene.edge, interactionSource = interaction,
             modifier = modifier.heightIn(min = 56.dp).pressable(interaction, .98f).semantics { contentDescription = "지금 운전 ${driver?.label ?: "미선택"}, 바꾸기" }) {
-            Column(Modifier.padding(horizontal = 20.dp, vertical = 6.dp)) {
-                Text("지금 운전", style = MaterialTheme.typography.labelSmall, color = Scene.textSecondary)
-                Text(driver?.label ?: "직원 선택", style = MaterialTheme.typography.labelLarge, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = if (wide) 230.dp else 140.dp))
+            // The person's avatar (the one the picker and 설정 › 직원 show) sits 12 dp in, concentric with the pill's round end.
+            Row(Modifier.padding(start = 12.dp, end = 20.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                DriverAvatar(driver, 32.dp)
+                Column {
+                    Text("지금 운전", style = MaterialTheme.typography.labelSmall, color = Scene.textSecondary)
+                    Text(driver?.label ?: "직원 선택", style = MaterialTheme.typography.labelLarge, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = if (wide) 230.dp else 140.dp))
+                }
             }
         }
     }
