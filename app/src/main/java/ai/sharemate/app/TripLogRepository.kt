@@ -112,6 +112,9 @@ class TripLogRepository private constructor(context: Context) {
     private var chargingSince: Long? = null
     private var chargingSocFrom: Int? = null
     private var settledAt = 0L
+    // The booking in effect the last time the car was parked ([bookingDriverSwitch] switches once per booking). In memory
+    // only: after a restart a booking still in effect switches once more.
+    private var appliedBookingId: String? = null
     private val zone: ZoneId get() = ZoneId.systemDefault()
 
     fun clearError() = mutableState.update { it.copy(error = null) }
@@ -127,9 +130,10 @@ class TripLogRepository private constructor(context: Context) {
         var next = data
         var finishedId: String? = null
         // A booking whose window has opened makes its booker the current employee while the car is parked, so the trip that
-        // follows is recorded under the right name without anyone touching the screen.
-        val booked = if (data.open == null) activeReservation(data, sample.at)?.driverId?.takeIf { id -> data.drivers.any { it.id == id } } else null
-        if (booked != null && booked != data.currentDriverId) next = next.copy(currentDriverId = booked)
+        // follows is recorded under the right name without anyone touching the screen. It does so once per booking, so a driver
+        // picked by hand during the booking stays picked instead of being switched back by the next parked sample.
+        bookingDriverSwitch(data, sample.at, appliedBookingId)?.let { next = next.copy(currentDriverId = it.driverId) }
+        if (data.open == null) appliedBookingId = activeReservation(data, sample.at)?.id
         advanceTrip(data.open, stored, next.currentDriverId) { UUID.randomUUID().toString() }.forEach { change ->
             next = when (change) {
                 is TripChange.Started -> next.copy(open = change.trip)
@@ -278,8 +282,15 @@ class TripLogRepository private constructor(context: Context) {
         }
     }
 
-    /** Undo for [removeDriver]; keeps the id so trips that still reference it line up again. */
-    suspend fun restoreDriver(driver: Driver) = saveDriver(driver)
+    /**
+     * Undo for [removeDriver]: the driver returns at [index] of the list ([restoredDrivers]) with the same id, so trips that
+     * still reference it line up again, and drives again when [wasCurrent] and nobody has been chosen since.
+     */
+    suspend fun restoreDriver(driver: Driver, index: Int = Int.MAX_VALUE, wasCurrent: Boolean = false) = mutate { data ->
+        if (data.drivers.any { it.id == driver.id }) return@mutate data
+        require(data.drivers.size < MAX_DRIVERS) { "직원은 50명까지 등록할 수 있어요." }
+        data.copy(drivers = restoredDrivers(data.drivers, driver, index), currentDriverId = data.currentDriverId ?: driver.id.takeIf { wasCurrent })
+    }
 
     suspend fun deleteIncident(id: String) {
         val orphaned = state.value.data.incidents.firstOrNull { it.id == id }?.photos.orEmpty()
@@ -373,7 +384,7 @@ class TripLogRepository private constructor(context: Context) {
     }
 
     suspend fun setTripDriver(id: String, driverId: String) = mutate { data ->
-        val driver = data.drivers.firstOrNull { it.id == driverId } ?: throw IllegalArgumentException("사용자를 다시 선택해 주세요.")
+        val driver = data.drivers.firstOrNull { it.id == driverId } ?: throw IllegalArgumentException("직원을 다시 선택해 주세요.")
         data.editTrip(id) { trip -> if (trip.driverId == driverId) trip else withHistory(trip.copy(driverId = driverId), "사용자 ${driver.label}", System.currentTimeMillis()) }
     }
 
@@ -436,20 +447,20 @@ class TripLogRepository private constructor(context: Context) {
 
     suspend fun saveDriver(driver: Driver) = mutate { data ->
         require(driver.name.isNotBlank() && driver.name.length <= 30 && driver.department.length <= 30) { "부서·성명은 30자 이하로 입력해 주세요." }
-        require(data.drivers.size < 50 || data.drivers.any { it.id == driver.id }) { "사용자는 50명까지 등록할 수 있어요." }
+        require(data.drivers.size < MAX_DRIVERS || data.drivers.any { it.id == driver.id }) { "직원은 50명까지 등록할 수 있어요." }
         val drivers = if (data.drivers.any { it.id == driver.id }) data.drivers.map { if (it.id == driver.id) driver else it } else data.drivers + driver
         data.copy(drivers = drivers, currentDriverId = data.currentDriverId ?: driver.id)
     }
 
     suspend fun removeDriver(id: String) = mutate { data ->
         // The logbook's ④ user column must stay filled, so users with trips can be renamed but not removed.
-        require(data.trips.none { it.driverId == id } && data.open?.driverId != id) { "운행 기록이 있는 사용자는 삭제할 수 없어요. 부서·성명을 수정해 주세요." }
+        require(data.trips.none { it.driverId == id } && data.open?.driverId != id) { "운행 기록이 있는 직원은 삭제할 수 없어요. 부서와 성명은 고칠 수 있어요." }
         data.copy(drivers = data.drivers.filterNot { it.id == id }, currentDriverId = data.currentDriverId.takeIf { it != id })
     }
 
     /** The chosen user applies to new trips and to a trip already being recorded. */
     suspend fun selectDriver(id: String) = mutate { data ->
-        require(data.drivers.any { it.id == id }) { "사용자를 다시 선택해 주세요." }
+        require(data.drivers.any { it.id == id }) { "직원을 다시 선택해 주세요." }
         data.copy(currentDriverId = id, open = data.open?.copy(driverId = id))
     }
 

@@ -81,8 +81,9 @@ internal data class StackKey(val kind: TaskKind?, val finishedId: String?, val r
     val showsCard: Boolean get() = kind != null || finishedId != null || reclassifyId != null
 }
 
-private fun Set<String>.joined() = joinToString(",")
-private fun String.toIdSet() = split(',').filter { it.isNotBlank() }.toSet()
+/** Ids or day keys kept as one saveable string (the stack's answers, the shell's answered days): joined by commas, and split back. */
+internal fun Set<String>.joined() = joinToString(",")
+internal fun String.toIdSet() = split(',').filter { it.isNotBlank() }.toSet()
 
 /**
  * The card the task stack shows, from what it reads. First the purpose question reopened from the finished-trip card
@@ -226,17 +227,15 @@ internal class ParkedStackAnswers(dismissed: String = "", reclassifyId: String? 
     }
 }
 
-/** The quiet end of the stack: today's driver and numbers, and a promise about the next trip only the signal can keep. */
+/** The quiet end of the stack: today's driver (the avatar used everywhere) and numbers, and a promise about the next trip only the signal can keep. */
 @Composable internal fun AllDoneCard(data: TripLogData, now: Long, signal: SignalStatus, modifier: Modifier = Modifier) {
     val driver = data.drivers.firstOrNull { it.id == data.currentDriverId }
     Panel(modifier) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Box(Modifier.size(60.dp).clip(CircleShape).background(Scene.rail), contentAlignment = Alignment.Center) {
-                Text(driver?.name?.take(1) ?: "–", style = MaterialTheme.typography.headlineSmall, color = Scene.text, modifier = Modifier.clearAndSetSemantics {})
-            }
+            DriverAvatar(driver, 60.dp)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 // A field label inside the card, not a section label.
-                Eyebrow("현재 이용 직원", Scene.textSecondary)
+                Eyebrow("지금 운전하는 직원", Scene.textSecondary)
                 Text(driver?.label ?: "직원을 선택해 주세요", style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
@@ -403,7 +402,8 @@ internal class ParkedStackAnswers(dismissed: String = "", reclassifyId: String? 
 private const val MOTION_FOLD_MS = 200
 
 /**
- * One question a day under the employee chip: "오늘도 영업1팀 김서연 님이 운전하나요?" with the current driver as the default.
+ * One question a day under the header, in a window without the 지금 column (where [DriverNowCard] asks it): the avatar and
+ * "오늘도 김서연 님이 운전하나요?" ([driverQuestion]: the person, not the department) with the current driver as the default.
  * "네" writes nothing and remembers today; "다른 직원" opens the picker. Both count as an answer, so the row does not
  * come back for the newly chosen driver. See [driverConfirmDue] for when the question is worth asking at all.
  * [confirmed] holds the day keys already answered; the shell owns it so the home hero and the other tabs ask once a day between them.
@@ -428,10 +428,13 @@ private const val MOTION_FOLD_MS = 200
         label = "driver-confirm") {
         val answer = { onConfirmed((dates + dateKey(now, zone)).joined()) }
         Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = Scene.glass, contentColor = Scene.text, border = Scene.edge) {
-            BoxWithConstraints(Modifier.padding(start = 18.dp, end = 10.dp, top = 8.dp, bottom = 8.dp)) {
+            BoxWithConstraints(Modifier.padding(start = 12.dp, end = 10.dp, top = 8.dp, bottom = 8.dp)) {
                 val question: @Composable (Modifier) -> Unit = { place ->
-                    Text("오늘도 ${driver.label} 님이 운전하나요?", style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                        modifier = place.semantics { heading() })
+                    Row(place, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        DriverAvatar(driver, 40.dp)
+                        Text(driverQuestion(driver), style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false).semantics { heading() })
+                    }
                 }
                 val buttons: @Composable () -> Unit = {
                     PrimaryAction("네", Modifier.heightIn(min = 56.dp), onClick = answer)

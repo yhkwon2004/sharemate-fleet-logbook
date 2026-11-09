@@ -789,8 +789,8 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
 @Composable internal fun SetupCard(data: TripLogData, goSettings: () -> Unit, pickDriver: () -> Unit) {
     val steps = listOf(
         "법인·차량 정보" to (data.profile.companyName.isNotBlank() && data.profile.plateNumber.isNotBlank()),
-        "운전자(사용자) 등록" to data.drivers.isNotEmpty(),
-        "현재 사용자 선택" to (data.currentDriverId != null),
+        "직원 등록" to data.drivers.isNotEmpty(),
+        "지금 운전하는 직원 선택" to (data.currentDriverId != null),
     )
     Panel {
         Eyebrow("시작 설정 · ${steps.count { it.second }}/${steps.size}", Scene.brand)
@@ -809,7 +809,7 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             PrimaryAction("설정 열기", Modifier.weight(1f), onClick = goSettings)
-            if (data.drivers.isNotEmpty() && data.currentDriverId == null) QuietAction("사용자 선택", Modifier.weight(1f), onClick = pickDriver)
+            if (data.drivers.isNotEmpty() && data.currentDriverId == null) QuietAction("운전자 선택", Modifier.weight(1f), onClick = pickDriver)
         }
     }
 }
@@ -1232,23 +1232,13 @@ private class LastShown<T> { var value: T? = null }
         keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Next) }, onDone = { keyboard?.hide(); focus.clearFocus() }))
 }
 
-@Composable internal fun DriverPicker(data: TripLogData, tripId: String?, act: Act, repository: TripLogRepository, dismiss: () -> Unit, goSettings: () -> Unit) {
-    val current = if (tripId == null) data.currentDriverId else (data.trips.firstOrNull { it.id == tripId } ?: data.open)?.driverId
-    AlertDialog(onDismissRequest = dismiss, title = { Text(if (tripId == null) "지금 운전하는 사용자" else "이 운행의 사용자") }, text = {
-        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (data.drivers.isEmpty()) Text("등록된 사용자가 없어요. 설정에서 부서·성명을 추가해 주세요.")
-            data.drivers.forEach { driver ->
-                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).selectable(selected = driver.id == current, role = Role.RadioButton) {
-                    act { if (tripId == null) repository.selectDriver(driver.id) else repository.setTripDriver(tripId, driver.id) }; dismiss()
-                }.heightIn(min = 64.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected = driver.id == current, onClick = null)
-                    Text(driver.label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(start = 12.dp))
-                }
-            }
-            if (tripId == null) Text("새 운행부터 적용되고, 기록 중인 운행에도 반영돼요.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }, confirmButton = { DialogButton("닫기", onClick = dismiss) }, dismissButton = { DialogButton("사용자 관리", onClick = goSettings) })
-}
+/**
+ * The driver picker (2.11) for the person driving now ([tripId] null) or for one trip: avatar cards that commit in one tap
+ * with undo on the follow-up bar; [goSettings] is its 직원 추가·관리. Drawn by [DriverPickerDialog]; [now] dates the cards'
+ * booking and last-drive lines.
+ */
+@Composable internal fun DriverPicker(data: TripLogData, tripId: String?, act: Act, repository: TripLogRepository, dismiss: () -> Unit,
+    now: Long = System.currentTimeMillis(), goSettings: () -> Unit) = DriverPickerDialog(data, tripId, act, repository, dismiss, now, goSettings)
 
 // ───────────────────────── 리포트 ─────────────────────────
 
@@ -1536,7 +1526,7 @@ internal fun taxCardBlocker(cost: Long?, ratio: Double?, year: Int, today: Local
             }
             HorizontalDivider(color = Scene.divider)
         }
-        Muted("이용 직원은 상단에서 선택하고, 이전 기록은 운행 상세에서 수정할 수 있어요.")
+        Muted("운전하는 직원은 ‘지금 운전’에서 바꾸고, 지난 운행은 운행 상세에서 고칠 수 있어요.")
     }
 }
 
@@ -1723,38 +1713,8 @@ internal fun settingsFieldColumns(layout: LayoutTokens, fontScale: Float): Int =
 }
 
 @Composable private fun DriversCard(data: TripLogData, act: Act, repository: TripLogRepository, twoColumns: Boolean = false) {
-    val followUp = LocalFollowUp.current
-    var department by remember { mutableStateOf("") }
-    var name by remember { mutableStateOf("") }
-    var editing by remember { mutableStateOf<Driver?>(null) }
-    Panel {
-        Eyebrow("사용자 · ④ 부서와 성명", Scene.brand)
-        if (data.drivers.isEmpty()) Muted("차량을 이용하는 직원을 등록하세요. 운행마다 사용자가 기록됩니다.")
-        data.drivers.forEach { driver ->
-            Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically) {
-                Row(Modifier.weight(1f).clip(RoundedCornerShape(18.dp)).selectable(selected = driver.id == data.currentDriverId, role = Role.RadioButton) {
-                    act { repository.selectDriver(driver.id) }
-                }.heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected = driver.id == data.currentDriverId, onClick = null, modifier = Modifier.padding(start = 8.dp))
-                    Text(driver.label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f).padding(start = 12.dp))
-                }
-                TextButton(onClick = { editing = driver; department = driver.department; name = driver.name },
-                    modifier = Modifier.heightIn(min = 56.dp).semantics { contentDescription = "${driver.label} 수정" }) { Text("수정") }
-                TextButton(onClick = { act { repository.removeDriver(driver.id); followUp(FollowUp("${driver.name} 님을 삭제했어요", "실행 취소") { repository.restoreDriver(driver) }) } },
-                    modifier = Modifier.heightIn(min = 56.dp).semantics { contentDescription = "${driver.label} 삭제" }) { Text("삭제", color = Scene.negative) }
-            }
-        }
-        SideBySide(twoColumns, 12.dp, { modifier -> Field("부서", department, { if (it.length <= 30) department = it }, modifier) }) { modifier ->
-            Field("성명", name, { if (it.length <= 30) name = it }, modifier)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            PrimaryAction(if (editing == null) "사용자 추가" else "수정 저장", Modifier.weight(1f), enabled = name.isNotBlank()) {
-                val driver = Driver(editing?.id ?: UUID.randomUUID().toString(), department.trim(), name.trim())
-                act { repository.saveDriver(driver); department = ""; name = ""; editing = null }
-            }
-            if (editing != null) QuietAction("취소") { editing = null; department = ""; name = "" }
-        }
-    }
+    // 설정 › 직원 (2.11): the list and its editor, side by side once the card is 960 dp wide; see DriverManager.
+    DriverManager(data, act, repository, twoColumns = twoColumns)
 }
 
 @Composable private fun CostCard(saved: FleetProfile, act: Act, repository: TripLogRepository, showInfo: (String) -> Unit, twoColumns: Boolean = false) {
@@ -1790,9 +1750,7 @@ internal fun settingsFieldColumns(layout: LayoutTokens, fontScale: Float): Int =
         SwitchRow("출발·도착 주소 저장", "끄면 계기판 거리와 시각만 남기고 내비 주소는 저장하지 않아요.", saved.storeAddresses) { value ->
             act { repository.updateProfile(saved.copy(storeAddresses = value)) }
         }
-        SwitchRow("출발 전 운전자 확인", "직원이 2명 이상이면 하루 한 번 현재 운전자가 맞는지 물어요 · 기본 켜짐", saved.confirmDriverDaily) { value ->
-            act { repository.updateProfile(saved.copy(confirmDriverDaily = value)) }
-        }
+        // 출발 전 운전자 확인 lives with the people it asks about, in 설정 › 직원 (DriverManager), since 2.11.
         SwitchRow("자동 완성 · 기본 켜짐", "반복 도착지의 목적과 카드 결제 비용을 사람 손 없이 채웁니다. 자동으로 들어간 항목은 ‘자동 분류’·‘카드 자동 매칭’으로 표시되고 언제든 되돌릴 수 있어요. 끄면 정차 후 직접 확인해요.", saved.autopilot) { value ->
             act { repository.updateProfile(saved.copy(autopilot = value)) }
         }
