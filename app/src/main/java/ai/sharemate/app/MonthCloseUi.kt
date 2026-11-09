@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
@@ -55,9 +54,6 @@ import java.time.temporal.ChronoUnit
 
 internal const val MONTH_CLOSE_BANNER_DAY = 25
 internal const val SEALED_EDIT_MARK = "마감된 달의 기록 수정"
-
-/** The month-close card keeps to this width in the 월간·Excel column (spec B). */
-internal val MONTH_CLOSE_MAX_WIDTH = 760.dp
 
 // ───────────────────────── pure helpers ─────────────────────────
 
@@ -208,9 +204,10 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
 /**
  * The stepper of what is left: ① purposes and drivers, ② card questions, ③ Excel, ④ close. Each open step is a jump to
  * the place that finishes it; ④ opens only when the month is really ready. Closed shows the sign-off and 마감 해제.
- * In the 월간·Excel column the panel keeps to 760 dp at the start; the home card ([compact]) fills its column. That column can
- * show any month, so the headline and the footnote read [today] ([monthCloseHeadline], [monthCloseFootnote]) and a month
- * without trips offers 이전 달 보기 when [onPrevious] is given. The home card passes neither: its months always have trips.
+ * The panel fills its column, in 월간·Excel (since 2.11) as on the home card ([compact]); its sentences keep to the reading
+ * measure, so a wide page never stretches a line of text. That column can show any month, so the headline and the footnote
+ * read [today] ([monthCloseHeadline], [monthCloseFootnote]) and a month without trips offers 이전 달 보기 when [onPrevious]
+ * is given. The home card passes neither: its months always have trips.
  */
 @Composable internal fun MonthClosePanel(status: MonthStatus, onIssues: () -> Unit, onReviews: () -> Unit, onExport: () -> Unit, exporting: Boolean,
     act: Act, repository: TripLogRepository, modifier: Modifier = Modifier, compact: Boolean = false, editedAfterClose: Int = 0, today: LocalDate = LocalDate.now(zone),
@@ -223,7 +220,7 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
     // The completion bar sweeps from the previous value to the new one (spec C); TalkBack hears the real figure. Keyed per place
     // (the home card, the 월간 column), so a bar that already swept starts where it stood when its page comes back.
     val progress = sweepProgress((percent ?: 0) / 100f, key = if (compact) "home-close-bar" else "report-close-bar")
-    Panel(if (compact) modifier else modifier.widthIn(max = MONTH_CLOSE_MAX_WIDTH), padding = if (compact) 22.dp else LocalLayout.current.panelPadding) {
+    Panel(modifier, padding = if (compact) 22.dp else LocalLayout.current.panelPadding) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Eyebrow(if (compact) "월 마감 · ${status.trips}건" else "MONTH CLOSE · ${status.trips}건", Scene.brand)
             Spacer(Modifier.weight(1f))
@@ -239,7 +236,8 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
                 Stat("총주행", kmText(closed.totalKm), Modifier.weight(1f))
                 Stat("경비", formatWon(closed.expenseWon), Modifier.weight(1f))
             }
-            Muted(if (editedAfterClose > 0) "마감 후 수정된 운행 ${editedAfterClose}건 · 운행기록에 ‘마감 후 수정’으로 표시돼요" else "마감 후 고친 운행은 ‘마감 후 수정’으로 표시돼요. 기록을 잠그지는 않아요.")
+            Muted(if (editedAfterClose > 0) "마감 후 수정된 운행 ${editedAfterClose}건 · 운행기록에 ‘마감 후 수정’으로 표시돼요" else "마감 후 고친 운행은 ‘마감 후 수정’으로 표시돼요. 기록을 잠그지는 않아요.",
+                Modifier.readingWidth())
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 QuietAction("마감 해제", Modifier.weight(1f)) {
                     act {
@@ -261,7 +259,7 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
                 repository.closeMonth(key)
                 followUp(FollowUp("${name}을 마감했어요", "마감 해제") { repository.reopenMonth(key) })
             }
-            Muted(monthCloseFootnote(status, today))
+            Muted(monthCloseFootnote(status, today), Modifier.readingWidth())
             // A month without trips has nothing to finish here; the way on is the month before it.
             if (status.trips == 0) onPrevious?.let { QuietAction("이전 달 보기", onClick = it) }
         }

@@ -44,8 +44,11 @@ import java.util.Locale
 /** The row-number column of the preview table. */
 private val ROW_NUMBER_WIDTH = 48.dp
 
-/** The Excel view's measure on the car (spec B): the preview, its sheet tabs and the save bar under it, like the month-close card. */
-internal val EXCEL_VIEW_MAX_WIDTH = 760.dp
+/**
+ * The Excel view's measure on the car: none since 2.11. The preview, its sheet tabs and the save bar fill the page column
+ * like the month-close card, so a wide window shows more of the sheet's columns before it scrolls sideways.
+ */
+internal val EXCEL_VIEW_MAX_WIDTH = Dp.Infinity
 
 /** The car's Excel preview never gets less height than this; a shorter pane scrolls further instead of squeezing the table. */
 internal val EXCEL_PREVIEW_MIN_HEIGHT = 480.dp
@@ -91,7 +94,7 @@ internal fun previewCell(value: Any): String = when (value) {
 
 /**
  * A read-only data preview of the same five sheets that Excel export writes (운행·직원·경비·차량관리·확인). The sheets are
- * text tabs ([SheetTabs], max 760), a lighter level than the view tabs above the preview. The table keeps its row number and
+ * text tabs ([SheetTabs]), a lighter level than the view tabs above the preview. The table keeps its row number and
  * first column pinned while the rest scrolls sideways (spec B); a row opens its full contents.
  *
  * The preview never scrolls vertically itself; the page around it does. With [fillHeight] (the car's 월간·Excel) [modifier]

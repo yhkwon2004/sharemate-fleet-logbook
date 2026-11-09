@@ -14,12 +14,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /*
- * Layout tokens (2.10): the screen is not filled edge to edge. Content keeps to a readable width with the backdrop
- * breathing around it, gutters grow with the window, and the same rules hold when the window changes shape. Classes are
+ * Layout tokens (2.10, 2.11): gutters grow with the window, and the same rules hold when the window changes shape. Classes are
  * chosen on the width divided by the font scale, so larger text gets the layout of a narrower window: a 1.3x font on the
  * full Pleos window (1680 / 1.3 = 1292 dp) is EXPANDED, not FULL, which gives the five-tab pill and the bigger text the room
- * they need. Gutters and maxima stay in raw dp, and EXPANDED caps the column at 1200 dp like FULL, so on that window the
- * column still ends there and the sky keeps the rest.
+ * they need. Gutters and maxima stay in raw dp. Since 2.11 the car's rail takes the whole window between the gutters: a
+ * 1200-dp column left a third of the full window as empty sky, so on a wide, tall window the rail splits into the page
+ * column and the 지금 column instead ([carColumns]). The whitespace lives inside the layout: the gutters, the gap between
+ * the two columns and the 720-dp reading measure. The phone still centres a capped column.
  */
 
 enum class WidthClass { COMPACT, MEDIUM, EXPANDED, FULL }
@@ -32,7 +33,7 @@ data class LayoutTokens(
     val heightClass: HeightClass,
     /** The space between the window edge and any content. */
     val gutter: Dp,
-    /** The widest a block of content gets; the rest of the window stays backdrop. */
+    /** The widest a block of content gets; the rest of the window stays backdrop. Infinite on the car, whose rail fills the window. */
     val contentMax: Dp,
     /** The widest a column of reading text (a greeting, a sentence) gets. */
     val readingMax: Dp,
@@ -42,7 +43,10 @@ data class LayoutTokens(
     val sectionGap: Dp,
     /** Padding inside a glass panel. */
     val panelPadding: Dp,
-    /** True on the car: a capped column sits at the start gutter and the sky keeps the rest; false centres it (phone). */
+    /**
+     * True on the car, in every class: content starts at the start gutter, and the flag is also the car's mark for its touch
+     * rules (no ripple, 56-dp dialog buttons, the .98 press). False on the phone, which centres its column.
+     */
     val startAnchored: Boolean,
 ) {
     val compact get() = widthClass == WidthClass.COMPACT
@@ -58,18 +62,45 @@ internal fun heightClassFor(height: Dp): HeightClass = when {
 }
 
 /**
- * The car's classes: a narrow split window, a medium one, a wide one, and the full Pleos window (1680 dp at 160 dpi).
- * EXPANDED and FULL cap the column at 1200 dp from the start gutter; on EXPANDED that only shows when the raw window is wider
- * than the cap and its gutters, as the full window is at a 1.3x font.
+ * The car's classes: a narrow split window, a medium one, a wide one, and the full Pleos window (1680 dp at 160 dpi). In
+ * every class the rail runs from gutter to gutter (no content maximum); on a wide, tall window [carColumns] splits it into
+ * the page column and the 지금 column, so the right of the window carries the driver's now instead of empty sky.
  */
 internal fun carLayout(width: Dp, height: Dp = 1200.dp): LayoutTokens {
     val h = heightClassFor(height)
     return when {
         width < 760.dp -> LayoutTokens(WidthClass.COMPACT, h, gutter = 20.dp, contentMax = Dp.Infinity, readingMax = 560.dp, cardGap = 12.dp, sectionGap = 20.dp, panelPadding = 22.dp, startAnchored = true)
         width < 1100.dp -> LayoutTokens(WidthClass.MEDIUM, h, gutter = 32.dp, contentMax = Dp.Infinity, readingMax = 640.dp, cardGap = 16.dp, sectionGap = 24.dp, panelPadding = 26.dp, startAnchored = true)
-        width < 1400.dp -> LayoutTokens(WidthClass.EXPANDED, h, gutter = 48.dp, contentMax = 1200.dp, readingMax = 720.dp, cardGap = 20.dp, sectionGap = 28.dp, panelPadding = 28.dp, startAnchored = true)
-        else -> LayoutTokens(WidthClass.FULL, h, gutter = 72.dp, contentMax = 1200.dp, readingMax = 720.dp, cardGap = 24.dp, sectionGap = 32.dp, panelPadding = 28.dp, startAnchored = true)
+        width < 1400.dp -> LayoutTokens(WidthClass.EXPANDED, h, gutter = 48.dp, contentMax = Dp.Infinity, readingMax = 720.dp, cardGap = 20.dp, sectionGap = 28.dp, panelPadding = 28.dp, startAnchored = true)
+        else -> LayoutTokens(WidthClass.FULL, h, gutter = 72.dp, contentMax = Dp.Infinity, readingMax = 720.dp, cardGap = 24.dp, sectionGap = 32.dp, panelPadding = 28.dp, startAnchored = true)
     }
+}
+
+/** The 지금 column's width at a 1× font: room for who is driving, the next booking, today and this month. */
+internal val NOW_COLUMN_WIDTH = 392.dp
+
+/** The least effective width (dp ÷ font scale) the page column keeps beside the 지금 column: the hero's cards and the panes need it. */
+private val PAGE_COLUMN_MIN = 780.dp
+
+/** How the car rail divides: the [page] column the five pages slide in, and the [side] 지금 column [gap] beside it (none: 0). */
+@Immutable
+internal data class CarColumns(val page: Dp, val side: Dp, val gap: Dp) {
+    val split: Boolean get() = side > 0.dp
+}
+
+/**
+ * Splits the car [rail] (its width between the gutters) into the page column and the 지금 column, on a wide, tall window
+ * only: EXPANDED or FULL, never SHORT, where the height belongs to the page. The column grows with the font (392 dp × the
+ * scale, held to 1–1.3×) and sits a section gap from the page, and it is kept only while the page keeps [PAGE_COLUMN_MIN] of
+ * effective width. Otherwise the page takes the whole rail: 1112 · 32 · 392 at 1680 dp, 832 at 1400, none under 1296.
+ */
+internal fun carColumns(layout: LayoutTokens, rail: Dp, fontScale: Float): CarColumns {
+    val whole = CarColumns(rail, 0.dp, 0.dp)
+    if (!layout.expanded || layout.short) return whole
+    val side = NOW_COLUMN_WIDTH * fontScale.coerceIn(1f, 1.3f)
+    val gap = layout.sectionGap
+    val page = rail - gap - side
+    return if (page / fontScale.coerceAtLeast(1f) >= PAGE_COLUMN_MIN) CarColumns(page, side, gap) else whole
 }
 
 /** The phone's classes: a phone in portrait, a phone in landscape or a small tablet, a tablet. Content is centred. */

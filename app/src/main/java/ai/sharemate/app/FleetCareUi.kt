@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
@@ -209,10 +208,12 @@ internal fun careLevelState(level: CareLevel) = when (level) { CareLevel.OVERDUE
 
 /**
  * Where the manager types the deadlines. Dates are yyyy-MM-dd with the error under the field while typing; the odometer
- * button fills the last-service field from the live sample so nobody copies a seven-digit number by hand. The form keeps
- * to 720 dp at the start of its column (spec B).
+ * button fills the last-service field from the live sample so nobody copies a seven-digit number by hand. The card fills
+ * what the settings page gives it ([modifier]: the 720-dp form column, or half the page beside the profile card) and lays
+ * its fields in [columns] columns: one beside another card, two in the wide form column ([careFieldColumns]).
  */
-@Composable internal fun CareSettingsCard(state: TripLogState, act: Act, repository: TripLogRepository, now: Long = System.currentTimeMillis()) {
+@Composable internal fun CareSettingsCard(state: TripLogState, act: Act, repository: TripLogRepository, modifier: Modifier = Modifier,
+    columns: Int = careFieldColumns(LocalLayout.current, LocalDensity.current.fontScale), now: Long = System.currentTimeMillis()) {
     val saved = state.data.care
     val followUp = LocalFollowUp.current
     val today = localDate(now)
@@ -227,9 +228,7 @@ internal fun careLevelState(level: CareLevel) = when (level) { CareLevel.OVERDUE
     val updated = VehicleCare(inspection.trim().ifBlank { null }, insurance.trim().ifBlank { null }, lease.trim().ifBlank { null },
         interval.toIntOrNull(), lastKm.toDoubleOrNull(), lastServiceAt = if (lastChanged) (if (lastKm.isBlank()) null else now) else saved.lastServiceAt)
     val changed = updated.copy(lastServiceAt = saved.lastServiceAt) != saved
-    val tokens = LocalLayout.current
-    val columns = careFieldColumns(tokens, LocalDensity.current.fontScale)
-    Panel(Modifier.widthIn(max = 720.dp), padding = tokens.panelPadding) {
+    Panel(modifier, padding = LocalLayout.current.panelPadding) {
         Eyebrow("차량 관리 기한")
         Text("검사·보험·리스·정비 알림", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
         Muted("등록된 날짜 기준으로만 알려요 · 자동 조회는 하지 않아요. 30일 전부터 홈과 차량 탭에 알림이 떠요.")

@@ -25,6 +25,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -35,19 +36,25 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
@@ -66,20 +73,26 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.isTraversalGroup
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.traversalIndex
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toSize
@@ -91,10 +104,11 @@ import java.util.Locale
 
 /**
  * The car home, 2.10: a city hero in the current scene's light that greets the driver, a search-style entry to the
- * assistant, three glass cards (차량 정보 · 운행일지 확인 · 정보 내보내기), and two widgets that say how today and this month
- * stand. Every number on it is read from the log or the vehicle; nothing is decorative except the skyline itself. The
- * block keeps to the layout classes of [LocalLayout] (a 1200-dp column at FULL, cards 3 across, widgets 2 across) and
- * the motion rules of Motion.kt: press feedback, a gliding selection pill, numbers that cross-fade instead of counting.
+ * assistant, three glass cards (차량 정보 · 운행일지 확인 · 정보 내보내기), and how today and this month stand. Every number on
+ * it is read from the log or the vehicle; nothing is decorative except the skyline itself. The block keeps to the layout
+ * classes of [LocalLayout] (cards 3 across, widgets 2 across) and the motion rules of Motion.kt: press feedback, a gliding
+ * selection pill, numbers that cross-fade instead of counting. 2.11: on a wide, tall window today, this month and the next
+ * booking move to the 지금 column beside the page ([NowColumn]), and the sun or moon rests in the sky the hero leaves free.
  */
 
 // ───────────────────────── selection pill (tabs and segments) ─────────────────────────
@@ -257,19 +271,35 @@ internal fun homeShowsLiveTrip(data: TripLogData): Boolean = data.open?.let { it
  * column wide, [homeCardRows]), one 96-dp row per card in narrow windows; the widgets sit side by side from EXPANDED up
  * (and on one 120-dp row in a short window, [compactWidgets]);
  * a short window hides the eyebrow, moves the clock into the header and keeps the hero to [heroMin].
+ * [widgetsInColumn]: the 지금 column stands beside the page, so today, this month and the next booking live there and leave
+ * the page, and the hero reports the sky it leaves free for the sun or moon.
  */
 @Immutable
 internal data class HomePlan(val cardColumns: Int, val widgetsSideBySide: Boolean, val compactWidgets: Boolean, val showEyebrow: Boolean,
-    val clockInHeader: Boolean, val heroMin: Dp)
+    val clockInHeader: Boolean, val heroMin: Dp, val widgetsInColumn: Boolean = false)
 
-internal fun homePlan(layout: LayoutTokens, fontScale: Float, windowHeight: Dp): HomePlan {
+internal fun homePlan(layout: LayoutTokens, fontScale: Float, windowHeight: Dp, nowColumn: Boolean = false): HomePlan {
     val columns = when {
         !layout.expanded -> 1
         layout.full || fontScale <= 1.25f -> 3
         else -> 2
     }
     return HomePlan(cardColumns = columns, widgetsSideBySide = layout.expanded || layout.short, compactWidgets = layout.short,
-        showEyebrow = !layout.short, clockInHeader = layout.short, heroMin = heroMinHeight(windowHeight, layout.short))
+        showEyebrow = !layout.short, clockInHeader = layout.short, heroMin = heroMinHeight(windowHeight, layout.short), widgetsInColumn = nowColumn)
+}
+
+/**
+ * The sky the hero leaves free (pure, unit-tested), in the hero's own px: right of the greeting's reading measure
+ * ([readingWidth] inside [padH]) and above the card row ([cardsHeight] at the bottom inside [padV]), [margin] clear of both
+ * and of the hero's end, from the hero's top. Null when nothing is left, as on a page too narrow beside the reading measure.
+ * Built from sizes, never positions, so neither the entrance lift nor the page slide moves it. The full window gives
+ * (752, 0)–(1080, 386): (824, 92)–(1152, 478) on screen.
+ */
+internal fun heroBand(heroWidth: Float, heroHeight: Float, readingWidth: Float, cardsHeight: Float, padH: Float, padV: Float, margin: Float): Rect? {
+    val left = padH + readingWidth + margin
+    val right = heroWidth - padH - margin
+    val bottom = heroHeight - padV - cardsHeight - margin
+    return if (right > left && bottom > 0f) Rect(left, 0f, right, bottom) else null
 }
 
 /** The hero keeps 70 % of the window between 420 and 600 dp; a short window keeps 55 % from 300 dp. A minimum only: the column grows when a large font needs the room. */
@@ -375,10 +405,12 @@ private var homeEntranceDone = false
 /**
  * The greeting hero: clock, brand line, greeting, the assistant entry and [cards], the three destinations, laid out by
  * [plan]. Grows past [HomePlan.heroMin] when the font scale needs room instead of clipping; the greeting block keeps to the
- * reading width. [entrance] staggers the block in on the first composition of the session only.
+ * reading width. [entrance] staggers the block in on the first composition of the session only. With [onBand] the hero
+ * measures itself and its card row and reports the sky it leaves free ([heroBand], null when there is none).
  */
 @Composable internal fun HomeHero(state: TripLogState, now: Long, plan: HomePlan, onAssistant: () -> Unit, requestPermissions: () -> Unit,
-    demoControls: @Composable () -> Unit, cards: List<HomeCardSpec>, modifier: Modifier = Modifier, entrance: Boolean = false) {
+    demoControls: @Composable () -> Unit, cards: List<HomeCardSpec>, modifier: Modifier = Modifier, entrance: Boolean = false,
+    onBand: ((Rect?) -> Unit)? = null) {
     val data = state.data
     val demo = data.profile.demoMode
     val open = data.open?.takeIf { it.demo == demo }
@@ -386,9 +418,23 @@ private var homeEntranceDone = false
     val hour = Instant.ofEpochMilli(now).atZone(zone).hour
     val layout = LocalLayout.current
     val compact = plan.cardColumns == 1
+    val padH = if (compact) 4.dp else 8.dp
+    val padV = if (compact) 4.dp else 6.dp
+    // Sizes only: a band built from positions would move with the entrance lift and the page slide. They are kept current
+    // even while nobody asks (nothing reads them then), so a band asked for later starts from the hero as it stands.
+    var heroSize by remember { mutableStateOf(IntSize.Zero) }
+    var cardsHeight by remember { mutableIntStateOf(0) }
+    if (onBand != null) {
+        val band = with(LocalDensity.current) {
+            heroBand(heroSize.width.toFloat(), heroSize.height.toFloat(), layout.readingMax.toPx(), cardsHeight.toFloat(), padH.toPx(), padV.toPx(), HERO_SKY_MARGIN.toPx())
+        }
+        val report by rememberUpdatedState(onBand)
+        // Reported once per change; the clock recomposes the hero every second.
+        DisposableEffect(band) { report(band); onDispose {} }
+    }
     // No frame and no chips of its own: the shared header above carries status, employee and tabs on every page, and the
     // hero is laid straight onto the full-screen backdrop ([HomeBackdrop]).
-    Column(modifier.fillMaxWidth().heightIn(min = plan.heroMin).padding(horizontal = if (compact) 4.dp else 8.dp, vertical = if (compact) 4.dp else 6.dp),
+    Column(modifier.onSizeChanged { heroSize = it }.fillMaxWidth().heightIn(min = plan.heroMin).padding(horizontal = padH, vertical = padV),
         verticalArrangement = Arrangement.SpaceBetween) {
         // The clock is plain text on a one-second tick: it never cross-fades (truth does not animate). A short window shows it in the header instead.
         if (!plan.clockInHeader) Appear(index = 0, animate = entrance) {
@@ -418,7 +464,7 @@ private var homeEntranceDone = false
         }
         Appear(Modifier.readingWidth(), index = 2, animate = entrance) { AssistantSearch(onAssistant) }
         Appear(Modifier.fillMaxWidth().padding(top = if (compact) 16.dp else 24.dp), index = 3, animate = entrance) {
-            Column(verticalArrangement = Arrangement.spacedBy(layout.cardGap)) {
+            Column(Modifier.onSizeChanged { cardsHeight = it.height }, verticalArrangement = Arrangement.spacedBy(layout.cardGap)) {
                 // 3 across, or 2 + 1 at a large font: every card keeps the vertical anatomy at one column's width, and an
                 // empty cell holds the place of a missing one so a lone card never stretches across the row.
                 if (plan.cardColumns == 1) cards.forEach { HomeActionCard(it, Modifier.fillMaxWidth(), horizontal = true) }
@@ -679,7 +725,10 @@ private var homeEntranceDone = false
     }
 }
 
-/** Two widgets side by side on the wide classes (2 × 588 at FULL), stacked in a narrow window; one 120-dp row when [compact]. */
+/**
+ * Two widgets side by side on the wide classes where the 지금 column does not stand (2 × 542 on a 1200-dp window), stacked
+ * in a narrow window; one 120-dp row when [compact]. Beside the column, today and this month are its tiles instead.
+ */
 @Composable internal fun HomeWidgets(state: TripLogState, now: Long, sideBySide: Boolean = LocalLayout.current.expanded, compact: Boolean = false, onOpenMonth: () -> Unit) {
     val layout = LocalLayout.current
     if (sideBySide) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(layout.cardGap)) {
@@ -688,5 +737,133 @@ private var homeEntranceDone = false
     } else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(layout.cardGap)) {
         TodayWidget(state, now, Modifier.fillMaxWidth(), compact)
         MonthWidget(state.data, now, onOpenMonth, Modifier.fillMaxWidth(), compact)
+    }
+}
+
+// ───────────────────────── 지금 column (wide car windows) ─────────────────────────
+
+/** The space between the 지금 column's tiles. */
+private val NOW_TILE_GAP = 16.dp
+
+/**
+ * The 지금 column beside the page on a wide, tall car window ([carColumns]): who is driving ([driverCard], handed the modifier
+ * that places it), the next booking, today and this month, one tile each from the top. It stands outside the page change
+ * like the header, so it never slides, and it appears with the shell (no stagger). It scrolls on its own under the same top
+ * edge as the pages, and TalkBack reaches it after the page. Its tiles keep their lines from the data and the day (the
+ * booking line from the minute), because the clock recomposes the column every second.
+ */
+@Composable internal fun NowColumn(state: TripLogState, now: Long, driverCard: @Composable (Modifier) -> Unit, openVehicle: () -> Unit, openMonth: () -> Unit,
+    modifier: Modifier = Modifier) {
+    val scroll = rememberScrollState()
+    // The bottom padding keeps the last tile's day shadow inside the scroll.
+    Column(modifier.semantics { isTraversalGroup = true; traversalIndex = 1f }.fadingTopEdge(scroll).verticalScroll(scroll).padding(bottom = 8.dp)) {
+        // The driver slot carries its own gap, so a card that folds away takes the gap with it.
+        driverCard(Modifier.fillMaxWidth().padding(bottom = NOW_TILE_GAP))
+        Column(verticalArrangement = Arrangement.spacedBy(NOW_TILE_GAP)) {
+            ReservationTile(state.data, now, openVehicle)
+            TodayTile(state, now)
+            MonthTile(state.data, now, openMonth)
+        }
+    }
+}
+
+/**
+ * One tile of the 지금 column: corner 24, padding 22, the home's glass (opaque by day) with the scene's lit edge. A tappable
+ * tile adds the day drop shadow, the .98 settle and the press fill (no ripple on the car), and names its action for TalkBack
+ * ([onClickLabel]). [description] replaces the merged words where the tile's own read badly aloud; [live] makes the tile a
+ * polite live region, so a change TalkBack should hear is announced without a touch.
+ */
+@Composable internal fun NowTile(modifier: Modifier = Modifier, onClick: (() -> Unit)? = null, onClickLabel: String? = null, description: String? = null,
+    live: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
+    val shape = RoundedCornerShape(24.dp)
+    val interaction = remember { MutableInteractionSource() }
+    val noRipple = carNoRipple()
+    val press = if (onClick != null) Modifier.dayCardShadow(shape).pressable(interaction, .98f) else Modifier
+    Surface(modifier.fillMaxWidth().then(press), shape = shape, color = homeCardGlass(translucent = .78f), contentColor = Scene.text, border = Scene.edge) {
+        val tap = if (onClick == null) Modifier else Modifier
+            .clickable(interactionSource = interaction, indication = if (noRipple) null else LocalIndication.current, role = Role.Button,
+                onClickLabel = onClickLabel, onClick = onClick)
+            .pressFill(interaction)
+        Column(tap.semantics(mergeDescendants = true) {
+            description?.let { contentDescription = it }
+            if (live) liveRegion = LiveRegionMode.Polite
+        }.padding(22.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
+    }
+}
+
+/** A tile's label: what the tile is about, in the quiet caption of the home widgets. */
+@Composable private fun NowLabel(text: String) =
+    Text(text, style = MaterialTheme.typography.labelLarge, color = Scene.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+
+/**
+ * 예약: the booking in use or the next one within 24 hours ([nextReservationLine]) beside its dot (glow while in use, brand
+ * before it), or that there is none. A tap opens 차량, where the bookings are listed; a change of line is announced.
+ */
+@Composable private fun ReservationTile(data: TripLogData, now: Long, onOpen: () -> Unit) {
+    // The line names its times to the minute.
+    val minute = now / 60_000
+    val line = remember(data, minute) { nextReservationLine(data, now, zone) }
+    NowTile(onClick = onOpen, onClickLabel = "예약 보기", live = true) {
+        NowLabel("예약")
+        if (line == null) Text("24시간 안에 잡힌 예약이 없어요", style = MaterialTheme.typography.bodyLarge, color = Scene.textSecondary)
+        else Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.padding(top = 8.dp).size(10.dp).clip(CircleShape).background(if (line.active) Scene.glow else Scene.brand))
+            Text(line.text, style = MaterialTheme.typography.bodyLarge, color = if (line.active) Scene.text else Scene.textSecondary,
+                maxLines = 3, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/**
+ * 오늘 운행: [TodayWidget]'s numbers stacked for the column. The distance updates in place while a trip records
+ * ([homeShowsLiveTrip]) and cross-fades between trips; the odometer is live telemetry and simply updates. Not tappable.
+ */
+@Composable private fun TodayTile(state: TripLogState, now: Long) {
+    val data = state.data
+    val today = localDate(now)
+    val overview = drivingOverviewInfo(state, now, true, zone)
+    val finished = remember(data, today) { tripsIn(data.trips.filter { it.demo == data.profile.demoMode }, today, today, zone) }
+    val km = overview.todayKm
+    val odometer = state.live?.odometerKm?.takeIf { overview.fresh }
+    val kmLabel = km?.let { String.format(Locale.KOREA, "%,.1f", it) } ?: "—"
+    val expenses = formatWon(finished.sumOf { it.expenseWon })
+    val spoken = "오늘 운행 ${km?.let(::kmText) ?: "정보 없음"}, 완료 ${finished.size}건, 등록 경비 $expenses, " +
+        "계기판 ${odometer?.let(::kmText) ?: "확인 필요"}"
+    NowTile(description = spoken) {
+        NowLabel("오늘 운행")
+        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val kmStyle = MaterialTheme.typography.displaySmall.copy(fontFeatureSettings = "tnum")
+            if (homeShowsLiveTrip(data)) Text(kmLabel, style = kmStyle, color = Scene.text, maxLines = 1)
+            else DigitChange(kmLabel, style = kmStyle, color = Scene.text)
+            Text("km", style = MaterialTheme.typography.titleMedium, color = Scene.textMuted, modifier = Modifier.padding(bottom = 6.dp))
+        }
+        HorizontalDivider(color = Scene.divider)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            WidgetLine("완료 운행", "${finished.size}건")
+            WidgetLine("등록 경비", expenses)
+            WidgetLine("계기판", odometer?.let(::kmText) ?: "확인 필요", live = true)
+        }
+    }
+}
+
+/**
+ * 이달 운행일지: the month in one word in its tone ([monthWidgetInfo]), where it stands and what the car filled in by itself,
+ * with the completion ring at the end. A tap opens 월간·Excel on this month.
+ */
+@Composable private fun MonthTile(data: TripLogData, now: Long, onOpen: () -> Unit) {
+    val today = localDate(now)
+    val info = remember(data, today) { monthWidgetInfo(data, today, zone) }
+    val color = when (info.tone) { 1 -> Scene.glow; 2 -> Scene.warn; else -> Scene.text }
+    NowTile(onClick = onOpen, onClickLabel = "월간 현황 열기",
+        description = "${info.title} ${info.headline}, ${info.detail}${info.auto?.let { ", $it" }.orEmpty()}") {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                NowLabel(info.title)
+                DigitChange(info.headline, style = MaterialTheme.typography.headlineMedium, color = color, fontWeight = FontWeight.Bold)
+                DigitChange(info.detail, style = MaterialTheme.typography.bodyMedium, color = Scene.textMuted, maxLines = 2)
+                info.auto?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+            }
+            CompletionRing(info.percent, color, diameter = 88.dp, thickness = 8.dp, sweepKey = "home-month-ring")
+        }
     }
 }

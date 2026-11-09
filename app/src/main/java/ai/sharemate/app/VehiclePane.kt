@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -53,13 +54,14 @@ internal fun vehicleSampleFresh(state: TripLogState, now: Long): Boolean {
 internal data class VehiclePaneLayout(val twoColumn: Boolean, val drawingHeight: Dp, val twoUp: Boolean)
 
 /**
- * Spec B (차량): car card 720 + info column 456 with a 420-tall drawing at EXPANDED and FULL, and 2 × 588 under them;
- * one column with a 260 drawing at MEDIUM and below; a SHORT window drops the drawing and keeps the plate and the odometer.
- * [paneWidth] is the pane's own width: the shell's tokens come from the window, and a pane narrower than 1000 dp cannot
- * hold two columns whatever the class says.
+ * Spec B (차량): the car card beside the info column (720 : 456, so 666 + 422 in the 1112-dp page at FULL) with a 420-tall
+ * drawing, and the cards under them two up (2 × 544); one column with a 260 drawing otherwise; a SHORT window drops the
+ * drawing and keeps the plate and the odometer. [paneWidth] is the pane's own width: the shell's tokens come from the window,
+ * and a pane with less than 1000 dp of effective width (its width ÷ [fontScale]) cannot hold two columns whatever the class
+ * says, so a 1.3× font and the 832-dp page of a 1400-dp window stack.
  */
-internal fun vehiclePaneLayout(tokens: LayoutTokens, paneWidth: Dp): VehiclePaneLayout {
-    val twoColumn = tokens.expanded && paneWidth >= 1000.dp
+internal fun vehiclePaneLayout(tokens: LayoutTokens, paneWidth: Dp, fontScale: Float = 1f): VehiclePaneLayout {
+    val twoColumn = tokens.expanded && paneWidth / fontScale.coerceAtLeast(1f) >= 1000.dp
     val drawing = when { tokens.short -> 0.dp; twoColumn -> 420.dp; else -> 260.dp }
     return VehiclePaneLayout(twoColumn, drawing, twoUp = twoColumn)
 }
@@ -68,15 +70,16 @@ internal fun vehiclePaneLayout(tokens: LayoutTokens, paneWidth: Dp): VehiclePane
 @Composable
 internal fun VehiclePane(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, goSettings: (() -> Unit)? = null) {
     val tokens = LocalLayout.current
+    val fontScale = LocalDensity.current.fontScale
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val layout = vehiclePaneLayout(tokens, maxWidth)
+        val layout = vehiclePaneLayout(tokens, maxWidth, fontScale)
         val gap = tokens.cardGap
         val fresh = vehicleSampleFresh(state, now)
         val link: @Composable ColumnScope.() -> Unit = {
             PhoneSyncCard(state, now)
             if (state.data.profile.phoneSync && state.sync.running) PairingCard(state.sync, now, compact = !layout.twoColumn)
         }
-        // Start-anchored: the column keeps to the content maximum (1200 at FULL) and the sky keeps the rest of the window.
+        // The pane fills the page column: the whole rail, or what the 지금 column beside it leaves.
         val scroll = rememberScrollState()
         Column(Modifier.contentWidth().align(Alignment.TopStart).fadingTopEdge(scroll).verticalScroll(scroll).padding(bottom = tokens.sectionGap),
             verticalArrangement = Arrangement.spacedBy(gap)) {
@@ -186,7 +189,7 @@ private fun VehicleDetails(state: TripLogState, fresh: Boolean, now: Long, roomy
                     Eyebrow("차량 정보")
                     Text(if (profile.demoMode) "시연 데이터" else "Pleos SDK · AAOS", style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary)
                 }
-                VehicleInfoRow("현재 직원", driver?.label ?: "직원 미지정")
+                VehicleInfoRow("지금 운전", driver?.label ?: "직원 미지정")
                 VehicleInfoRow(if (sdkModel != null) "차량 수신 차종" else "등록 차종", sdkModel ?: state.data.vehicle.model ?: profile.carModel.ifBlank { "미등록" })
                 validVin(state.data.vehicle.vin)?.let { VehicleInfoRow("차대번호(VIN)", it) }
                 val energy = state.live?.takeIf { it.demo == profile.demoMode && now - it.at in 0..45_000 }

@@ -13,8 +13,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
@@ -27,7 +30,11 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
@@ -39,11 +46,12 @@ import kotlin.random.Random
  * The city across the river, in three lights. One seeded skyline (the same towers every launch, denser and taller to the
  * right so the greeting on the left stays calm) is painted as a clear morning, a dusk with an orange horizon, or a deep
  * night, and [HomeBackdrop] cross-fades between them when the scene changes. Decorative only: no semantics. Nothing here
- * reads the clock: the skyline is still, and the only motion is the one crossfade of a parked scene change.
+ * reads the clock: the skyline is still, and the only motion is the one crossfade of a parked scene change. The car's sun or
+ * moon (2.11) rests in the sky the home's hero leaves free ([heroOrbAt]); it fades as the cards scroll up to it and never moves.
  */
 
 private class SkyTower(val left: Float, val width: Float, val height: Float, val lit: List<Offset>, val crown: Int, val cool: Boolean, val reflect: Float)
-/** One day cloud: its centre as fractions of the width ([x]) and of the horizon's height ([y]), and its size ([scale]). */
+/** One day cloud: its centre as an offset from the hero band's top-left in tower heights ([x], [y]), and its size ([scale]). */
 internal class SkyCloud(val x: Float, val y: Float, val scale: Float)
 private class SkyScene(val stars: List<Triple<Float, Float, Float>>, val far: List<SkyTower>, val near: List<SkyTower>, val ridge: List<Offset>)
 
@@ -72,17 +80,16 @@ private fun skylineScene(): SkyScene {
 }
 
 /**
- * The four day clouds, placed by hand in the free sky right of the car's 1200-dp content column (x .79–.97 of the width,
- * y .08–.34 of the horizon's height), so none sits behind the header chips, which end with the column. Staggered so no two
- * touch and above the towers. The car's sun rests in the same free sky ([freeSkyOrbAt]): on the full window all four clear
- * its disc, and [visibleDayClouds] leaves out any cloud that would come over it on a narrower one, as it leaves out those that
- * would reach the column. Not drawn from the seed, so the stars and the towers stay those of 2.8.
+ * The day clouds of the car's hero band, placed by hand under the sun as offsets from the band's top-left in tower heights,
+ * so a band that grows (a taller hero, a taller window) only ever reveals the next cloud and never moves one. On the full
+ * window the first two show and the third waits for a taller band. The sun keeps to the band's right, where the hero haze
+ * has faded ([heroOrbAt]), so the clouds hang below it in the same strip. Not drawn from the seed, so the stars and the
+ * towers stay those of 2.8.
  */
-internal val DayClouds = listOf(
-    SkyCloud(.83f, .09f, .90f),
-    SkyCloud(.95f, .17f, .75f),
-    SkyCloud(.81f, .26f, .70f),
-    SkyCloud(.96f, .30f, .95f),
+internal val HeroClouds = listOf(
+    SkyCloud(.303f, .204f, .85f),
+    SkyCloud(.220f, .305f, .70f),
+    SkyCloud(.321f, .432f, .60f),
 )
 
 /** A cloud's size against the towers' height, and how far its underside shade drops (a fraction of the sky's height). */
@@ -90,23 +97,24 @@ private const val CLOUD_SIZE = .07f
 private const val CLOUD_SHADE_DROP = .012f
 
 /**
- * The box one day [cloud] covers in a [w] × [h] sky whose horizon is at [horizon] px, with the towers scaled to [ht] px: its
- * three ovals, its flat base and the underside shade below them (pure, unit-tested).
+ * The box one day [cloud] covers when placed from the top-left of [band] in an [h]-px-high sky whose towers are scaled to
+ * [ht] px: its three ovals, its flat base and the underside shade below them (pure, unit-tested).
  */
-internal fun dayCloudBox(cloud: SkyCloud, w: Float, h: Float, horizon: Float, ht: Float): Rect {
-    val cx = w * cloud.x; val cy = horizon * cloud.y; val s = ht * CLOUD_SIZE * cloud.scale
+internal fun heroCloudBox(cloud: SkyCloud, band: Rect, h: Float, ht: Float): Rect {
+    val cx = band.left + ht * cloud.x; val cy = band.top + ht * cloud.y; val s = ht * CLOUD_SIZE * cloud.scale
     return Rect(cx - s * .93f, cy - s * .5f, cx + s * .92f, cy + s * .52f + h * CLOUD_SHADE_DROP)
 }
 
 /**
- * The day clouds whose box lies wholly right of [clearOf] px, where the content column ends, and, while a sun is drawn at
- * [orb], stays farther than [orbClear] px (its disc and a margin) from its centre: a cloud is never painted over the sun
- * (pure, unit-tested).
+ * The hero clouds that are drawn (pure, unit-tested): those whose box lies wholly inside [band]; that start right of
+ * [hazeEnd] less [hazeReach] px, where the hero haze has thinned enough not to wash them out; and that stay farther than
+ * [orbClear] px (the disc and a margin) from the sun at [orb], so a cloud is never painted over it.
  */
-internal fun visibleDayClouds(w: Float, h: Float, horizon: Float, ht: Float, clearOf: Float, orb: Offset? = null, orbClear: Float = 0f): List<SkyCloud> =
-    DayClouds.filter { cloud ->
-        val box = dayCloudBox(cloud, w, h, horizon, ht)
-        box.left >= clearOf && (orb == null || distanceToBox(orb, box) > orbClear)
+internal fun visibleDayClouds(band: Rect, h: Float, ht: Float, hazeEnd: Float, orb: Offset?, orbClear: Float, hazeReach: Float): List<SkyCloud> =
+    HeroClouds.filter { cloud ->
+        val box = heroCloudBox(cloud, band, h, ht)
+        val inside = box.left >= band.left && box.top >= band.top && box.right <= band.right && box.bottom <= band.bottom
+        inside && box.left >= hazeEnd - hazeReach && (orb == null || distanceToBox(orb, box) > orbClear)
     }
 
 /** How far [p] lies from the nearest point of [box]; 0 inside it. */
@@ -114,6 +122,9 @@ internal fun distanceToBox(p: Offset, box: Rect): Float = hypot(maxOf(box.left -
 
 /** The margin a cloud keeps beyond the sun's disc. */
 internal val SUN_CLOUD_MARGIN = 12.dp
+
+/** How far back from the end of the hero haze a day cloud may start; further left the white haze washes it out. */
+internal val CLOUD_HAZE_REACH = 120.dp
 
 /** How one phase paints the scene. */
 private class SkyPaint(
@@ -152,7 +163,7 @@ internal val DaySkyTop = Color(0xFF4F9BE8)
 
 /**
  * A clear morning (2.10 spec, section A): a deep blue overhead that warms to a pale haze at the horizon, a low sun with a
- * wide halo and no rays, four still white clouds, a pale-blue ridge and far towers, near towers in a slate blue that keeps
+ * wide halo and no rays, a few still white clouds, a pale-blue ridge and far towers, near towers in a slate blue that keeps
  * 2.2:1 against the mid sky so the city stays present behind white glass, pale water and a slate bridge without lamp
  * reflections. No stars, no bloom, no red beacons: nothing that reads as night.
  */
@@ -184,26 +195,45 @@ internal fun orbLift(entering: Boolean, leaving: Boolean, t: Float): Float = whe
 
 // ───────────────────────── where the car's sun or moon rests (pure, unit-tested) ─────────────────────────
 
-/** The least sky right of the car's content column that takes the sun or moon clear of it (the full Pleos window keeps 408 dp). */
-internal val FREE_SKY_MIN = 280.dp
-
-/** How high the sun or moon rests in the free sky, as a fraction of the window's height: above the tallest towers' antennas. */
+/** How high the sun or moon prefers to rest, as a fraction of the window's height: above the tallest towers' antennas. */
 internal const val FREE_SKY_ORB_Y = .15f
 
 /**
- * Where the car's sun or moon rests when the window keeps at least [FREE_SKY_MIN] of sky right of a content column ending at
- * [columnEnd] (the full Pleos window): across the middle of that sky, high enough to clear the towers. Nothing scrolls there,
- * so no card ever passes over it, and the empty side of the window gets its one point of light. Null when there is no such
- * sky (a narrower window, a column without a maximum): there every height inside the column belongs to the header, the hero
- * or the cards (and the header grows with the driver row, the font and the density), so the car leaves the sun and the moon
- * out and the sky tells day from night by its light alone.
+ * The room the hero band keeps from the greeting, the hero's end and the card row, and the room the sun or moon keeps inside
+ * the band beyond its disc.
  */
-internal fun freeSkyOrbAt(windowWidth: Dp, columnEnd: Dp): Offset? {
-    if (windowWidth <= 0.dp || columnEnd.value.isInfinite()) return null
-    val free = windowWidth - columnEnd
-    if (free < FREE_SKY_MIN) return null
-    return Offset(((columnEnd + free / 2) / windowWidth).coerceIn(0f, 1f), FREE_SKY_ORB_Y)
+internal val HERO_SKY_MARGIN = 24.dp
+
+/**
+ * The car home's free sky, as the home reports it to the backdrop while the 지금 column stands beside the page: [band] is the
+ * sky the hero leaves free right of the greeting and above the cards ([heroBand]), at the hero's resting place (the page
+ * top never moves while the column is there), and [scroll] is the home's scroll, read only in the sky's draw.
+ */
+@Stable
+internal class HeroSky(val band: Rect, val scroll: () -> Int)
+
+/**
+ * Where the car's sun or moon rests in the hero [band] (pure, unit-tested): as far right as the band's middle or the end of
+ * the hero haze ([hazeEnd]) less its [disc], so it never sits in the white haze over the greeting, and at [preferredY] (above
+ * the towers) or lower if the band starts lower; always [disc] and [margin] inside the band. Null where the band cannot hold
+ * the disc with its margin: too narrow (a 1400-dp window), or too short above the cards. There the car leaves the sun and
+ * the moon out and the sky tells day from night by its light alone.
+ */
+internal fun heroOrbAt(band: Rect, disc: Float, margin: Float, preferredY: Float, hazeEnd: Float): Offset? {
+    val room = disc + margin
+    if (band.width < room * 2) return null
+    val x = maxOf(band.center.x, hazeEnd - disc).coerceIn(band.left + room, band.right - room)
+    val y = maxOf(preferredY, band.top + room)
+    if (y + room > band.bottom) return null
+    return Offset(x, y)
 }
+
+/**
+ * How much of the sun or moon (and the clouds with it) shows after [scroll] px of the home's scroll (pure, unit-tested). The
+ * card row starts [clearance] px below the disc's lower edge and its cloud margin; the orb fades linearly as the cards come
+ * up, so it is gone before a card reaches it and never shows through or above one. Nothing shows without clearance.
+ */
+internal fun heroSkyAlpha(scroll: Float, clearance: Float): Float = if (clearance <= 0f) 0f else (1f - scroll / clearance).coerceIn(0f, 1f)
 
 /** How much of the stars shows at [t] of the crossfade: they fade within its first 40 %, in for an arriving night and out for a leaving one. */
 internal fun starFade(entering: Boolean, leaving: Boolean, t: Float): Float {
@@ -214,11 +244,13 @@ internal fun starFade(entering: Boolean, leaving: Boolean, t: Float): Float {
 /**
  * The decorative hero background for one [phase]: sky, city across the river, bridge, reflections. No semantics.
  * [entering] marks a skyline arriving through a scene change (its orb rises into place), [leaving] one on its way out.
- * By day it draws only the clouds that lie wholly right of [cloudsClearOf], where the content column ends.
+ * By day it draws the clouds of the car's hero band [cloudBand] (in this skyline's px) that [visibleDayClouds] keeps clear
+ * of the band's edges, of the haze that ends at [hazeEnd] and of the sun; no band, no clouds. [orbAlpha] and [cloudAlpha]
+ * are read in the draw only, so a fade or a scroll never rebuilds the cached paths.
  */
 @Composable internal fun Skyline(phase: ScenePhase, modifier: Modifier = Modifier, horizonAt: Float = .62f, heightScale: Float = 1f, orbAt: Offset = Offset(.53f, .40f),
-    entering: Boolean = false, leaving: Boolean = false, showOrb: Boolean = true, showClouds: Boolean = true, cloudsClearOf: Dp = 0.dp,
-    orbAlpha: () -> Float = { 1f }) {
+    entering: Boolean = false, leaving: Boolean = false, showOrb: Boolean = true, showClouds: Boolean = true, cloudBand: Rect? = null, hazeEnd: Float = 0f,
+    orbAlpha: () -> Float = { 1f }, cloudAlpha: () -> Float = { 1f }) {
     val scene = remember { skylineScene() }
     val p = paintFor(phase)
     // One clock per crossfade, read only inside the draw so the cached paths never rebuild; nothing moves under reduced motion.
@@ -282,12 +314,13 @@ internal fun starFade(entering: Boolean, leaving: Boolean, t: Float): Float {
                 t.lit.forEachIndexed { i, pt -> if (i % 4 == 0) addOval(Rect(Offset(left + tw * pt.x, top + th * pt.y), 6f)) }
             }
         }
-        // Day clouds: three overlapping ovals per cloud, slightly flattened, drawn before the towers. Only the ones clear of the
-        // content column, so none sits behind the header chips or a card (no free sky, no clouds), and clear of the sun's disc.
+        // Day clouds: three overlapping ovals per cloud, slightly flattened, drawn before the towers. Only inside the hero band,
+        // so none sits behind the header, the greeting or a card (no band, no clouds), and clear of the haze and the sun's disc.
         val clouds = Path().apply {
             p.clouds ?: return@apply
-            visibleDayClouds(w, h, horizon, ht, cloudsClearOf.toPx(), orb.takeIf { showOrb }, ht * p.orbRadius + SUN_CLOUD_MARGIN.toPx()).forEach { c ->
-                val cx = w * c.x; val cy = horizon * c.y; val s = ht * CLOUD_SIZE * c.scale
+            val band = cloudBand ?: return@apply
+            visibleDayClouds(band, h, ht, hazeEnd, orb.takeIf { showOrb }, ht * p.orbRadius + SUN_CLOUD_MARGIN.toPx(), CLOUD_HAZE_REACH.toPx()).forEach { c ->
+                val cx = band.left + ht * c.x; val cy = band.top + ht * c.y; val s = ht * CLOUD_SIZE * c.scale
                 addOval(Rect(Offset(cx, cy), s * .5f))
                 addOval(Rect(Offset(cx - s * .55f, cy + s * .12f), s * .38f))
                 addOval(Rect(Offset(cx + s * .5f, cy + s * .1f), s * .42f))
@@ -304,10 +337,9 @@ internal fun starFade(entering: Boolean, leaving: Boolean, t: Float): Float {
             drawRect(sky, size = Size(w, horizon))
             drawRect(glow, size = Size(w, horizon))
             if (starAlpha > 0f) scene.stars.forEach { (x, y, a) -> drawCircle(Color.White.copy(alpha = (a * starAlpha).coerceAtMost(1f)), radius = 1.2f + a, center = Offset(w * x, h * y)) }
-            // The sun or the moon rests just above the skyline, right of the search bar so it never sits behind text or chips;
-            // during a scene change it rises the last 8 % of the sky height into place (or sinks away).
-            // [showOrb] false leaves the sun and the moon out where the page above would cover or crowd them; [orbAlpha] fades them
-            // with the page instead (read here, in the draw, so a fade never rebuilds the cached paths).
+            // The sun or the moon rests in sky that nothing covers (the car's hero band, the phone's free corner); during a scene
+            // change it rises the last 8 % of the sky height into place (or sinks away). [showOrb] false leaves the sun and the
+            // moon out where there is no such sky; [orbAlpha] fades them with the page, the scroll and the band instead.
             val orbA = if (showOrb) orbAlpha().coerceIn(0f, 1f) else 0f
             if (orbA > 0f) translate(top = lift) {
                 val layer = Paint().apply { alpha = orbA }
@@ -317,9 +349,10 @@ internal fun starFade(entering: Boolean, leaving: Boolean, t: Float): Float {
                 p.orbShade?.let { drawCircle(it, radius = ht * .030f, center = orb + Offset(ht * .012f, -ht * .006f)) }
                 drawContext.canvas.restore()
             }
-            if (showClouds) p.clouds?.let { fill ->
-                p.cloudShade?.let { shade -> translate(top = cloudShadeOffset) { drawPath(clouds, shade) } }
-                drawPath(clouds, fill)
+            val cloudA = if (showClouds && cloudBand != null) cloudAlpha().coerceIn(0f, 1f) else 0f
+            if (cloudA > 0f) p.clouds?.let { fill ->
+                p.cloudShade?.let { shade -> translate(top = cloudShadeOffset) { drawPath(clouds, shade, alpha = cloudA) } }
+                drawPath(clouds, fill, alpha = cloudA)
             }
             drawPath(ridge, p.ridge)
             drawPath(farBodies, p.farBody)
@@ -362,19 +395,21 @@ internal class SkyScrim(val vertical: Boolean, val stops: List<Pair<Float, Color
 
 /**
  * The scrims that keep text legible over the sky, in painting order (pure, unit-tested). With [leftScrim] (the car home) a
- * lead scrim comes in from the left for the greeting: by night the base colour, as in 2.8; by day a white haze, lighter so
- * the sky shows (.90 → .76 at the hero column's right edge [heroEdge] → 0 at [heroFade] past it). Without it (the phone home
- * and the sign-in) there is no lead scrim at all: those screens lay their own haze over the sky by day, and a second white
- * layer here would wash out the sky and the sun. The bottom scrim is the one built in 2.8, lighter by day, and always
- * settles on the base colour. [heroEdge] and [heroFade] are fractions of the width.
+ * lead scrim comes in from the left for the greeting, full to the hero column's right edge [heroEdge] and gone [heroFade]
+ * past it: by day a white haze, lighter so the sky shows (.90 → .76 → 0); by night the base colour (.92 → .62 → 0), ending
+ * where the day haze does, so it only grows stronger behind the greeting and barely dims the moon in the hero band. Without
+ * it (the phone home and the sign-in) there is no lead scrim at all: those screens lay their own haze over the sky by day,
+ * and a second white layer here would wash out the sky and the sun. The bottom scrim is the one built in 2.8, lighter by
+ * day, and always settles on the base colour. [heroEdge] and [heroFade] are fractions of the width.
  */
 internal fun skyScrims(day: Boolean, leftScrim: Boolean, horizonAt: Float, haze: Color, bg: Color,
     heroEdge: Float = .47f, heroFade: Float = .18f): List<SkyScrim> {
     val clear = haze.copy(alpha = 0f)
+    val fadeEnd = (heroEdge + heroFade).coerceAtMost(1f)
     val lead = when {
         !leftScrim -> null
-        day -> SkyScrim(vertical = false, listOf(0f to haze.copy(alpha = .90f), heroEdge to haze.copy(alpha = .76f), (heroEdge + heroFade).coerceAtMost(1f) to clear))
-        else -> SkyScrim(vertical = false, listOf(0f to haze.copy(alpha = .92f), .38f to haze.copy(alpha = .62f), .74f to clear))
+        day -> SkyScrim(vertical = false, listOf(0f to haze.copy(alpha = .90f), heroEdge to haze.copy(alpha = .76f), fadeEnd to clear))
+        else -> SkyScrim(vertical = false, listOf(0f to haze.copy(alpha = .92f), heroEdge to haze.copy(alpha = .62f), fadeEnd to clear))
     }
     val base = SkyScrim(vertical = true, listOf(0f to haze.copy(alpha = if (day) .25f else .35f), .14f to clear,
         (horizonAt - .04f).coerceAtLeast(.2f) to clear, (horizonAt + .16f).coerceAtMost(.98f) to haze.copy(alpha = if (day) .85f else .90f), 1f to bg))
@@ -383,59 +418,102 @@ internal fun skyScrims(day: Boolean, leftScrim: Boolean, horizonAt: Float, haze:
 
 private class SkyLedger { var changes = 0 }
 
+/** The hero haze's full-strength edge on a [width]-px car backdrop: the hero column's right edge, 720 dp past the gutter and never past 60 % of the window. */
+private fun Density.heroEdgePx(gutter: Dp, width: Float): Float = min(gutter.toPx() + 720.dp.toPx(), width * .6f)
+
+/** How far past the hero column's edge the lead scrim fades out; where it ends, the sun may begin ([heroOrbAt]). */
+private val HERO_HAZE_FADE = 300.dp
+
 /**
  * The whole home screen's background: the city edge to edge in the current scene's light, with the scrims of [skyScrims]
  * so the greeting and the widgets stay legible. A scene change cross-fades the two skylines on the clock of
  * [LocalSceneChange] (600 ms inside the 800 ms fade-through, 360 inside 480 on a tap), the arriving sun or moon rising into
- * place while the leaving one sinks; an instant swap under reduced motion. [moonAt] places the sun by day as well: on the
- * car (.62, .21), clear of the hero haze; the phone passes its own. Without [leftScrim] (the phone home, the sign-in) only the
- * bottom scrim is drawn: the caller lays its own day haze. The day clouds keep to the sky right of the car's content column
- * and stay off the phone, whose sky is mostly haze: there they read as smudges beside the header icons.
+ * place while the leaving one sinks; an instant swap under reduced motion. Without [leftScrim] (the phone home, the sign-in)
+ * only the bottom scrim is drawn: the caller lays its own day haze.
  *
- * With [freeSkyOrb] (the car) the sun or moon rests only in the free sky right of the column ([freeSkyOrbAt]), where no card
- * or header ever passes over it; a window without free sky leaves it out.
+ * The car passes [heroSky]: the sun or moon then rests only in the hero's free band ([heroOrbAt]) while the home reports one
+ * (the 지금 column stands beside the page, so the page top never moves), and the day clouds hang in the same band; with no
+ * band there is no sun, moon or cloud. The band comes in window px and is read in this scope only, never in the shell's.
+ * The phone passes none: its orb rests at [moonAt], and it never draws clouds (its sky is mostly haze, where they read as
+ * smudges beside the header icons).
  */
 @Composable internal fun HomeBackdrop(modifier: Modifier = Modifier, horizonAt: Float = .52f, heightScale: Float = .72f, moonAt: Offset = Offset(.62f, .21f),
-    leftScrim: Boolean = true, showOrb: Boolean = true, showClouds: Boolean = true, orbAlpha: () -> Float = { 1f }, freeSkyOrb: Boolean = false) {
+    leftScrim: Boolean = true, showOrb: Boolean = true, showClouds: Boolean = true, orbAlpha: () -> Float = { 1f }, heroSky: (() -> HeroSky?)? = null) {
     val colors = Scene.colors
     val day = colors.isDay
     val haze = colors.haze
     val bg = colors.bg
-    val compact = LocalCompactApp.current
-    val layout = LocalLayout.current
-    val gutter = layout.gutter
-    // The car's column starts at the gutter and stops at the content maximum; with no maximum it runs to the far gutter, so
-    // no cloud fits beside it.
-    val columnEnd = gutter + layout.contentMax
+    val gutter = LocalLayout.current.gutter
     val reduce = LocalReduceMotion.current
     val phase = LocalScenePhase.current
     val crossfadeMs = LocalSceneChange.current.crossfadeMs
+    val density = LocalDensity.current
     // The first skyline simply appears (never an entrance on launch or on return); one composed later is a scene change.
     val ledger = remember { SkyLedger() }
     val entering = remember(phase) { ledger.changes++ > 0 }
-    BoxWithConstraints(modifier) {
-        // The car's orb keeps to the free sky, where nothing scrolls over it; without free sky it is left out.
-        val freeAt = if (freeSkyOrb) freeSkyOrbAt(maxWidth, columnEnd) else null
-        val orbShown = showOrb && (!freeSkyOrb || freeAt != null)
+    // The band is in window px, and the car's backdrop sits inside the shell's safe-drawing padding: it takes its own origin off.
+    var origin by remember { mutableStateOf(Offset.Zero) }
+    BoxWithConstraints(if (heroSky == null) modifier else modifier.onGloballyPositioned { origin = it.positionInRoot() }) {
+        val w = constraints.maxWidth.toFloat()
+        val h = constraints.maxHeight.toFloat()
+        val sky = heroSky?.invoke()
+        val band = sky?.band?.translate(-origin.x, -origin.y)
+        val hazeEnd = with(density) { heroEdgePx(gutter, w) + HERO_HAZE_FADE.toPx() }
         Crossfade(phase, Modifier.matchParentSize(), animationSpec = if (reduce) snap() else tween(crossfadeMs, easing = LinearEasing), label = "sky-phase") { shown ->
-            Skyline(shown, Modifier.fillMaxSize(), horizonAt, heightScale, freeAt ?: moonAt, entering = entering && shown == phase, leaving = shown != phase,
-                showOrb = orbShown, showClouds = showClouds && !compact, cloudsClearOf = columnEnd, orbAlpha = orbAlpha)
+            val arriving = entering && shown == phase
+            val leaving = shown != phase
+            if (heroSky == null) Skyline(shown, Modifier.fillMaxSize(), horizonAt, heightScale, moonAt, arriving, leaving, showOrb = showOrb, showClouds = false,
+                orbAlpha = orbAlpha)
+            else HeroSkyline(shown, band, sky?.scroll, w, h, horizonAt, heightScale, hazeEnd, arriving, leaving, showOrb, showClouds, orbAlpha)
         }
         Spacer(Modifier.matchParentSize().drawWithCache {
-            // The hero column ends 720 dp past the gutter on the car (never past 60 % of the window).
-            val heroEdge = min(gutter.toPx() + 720.dp.toPx(), size.width * .6f) / size.width
-            val scrims = skyScrims(day, leftScrim, horizonAt, haze, bg, heroEdge = heroEdge, heroFade = 300.dp.toPx() / size.width)
+            val scrims = skyScrims(day, leftScrim, horizonAt, haze, bg, heroEdge = heroEdgePx(gutter, size.width) / size.width,
+                heroFade = HERO_HAZE_FADE.toPx() / size.width)
             val brushes = scrims.map { s -> if (s.vertical) Brush.verticalGradient(*s.stops.toTypedArray()) else Brush.horizontalGradient(*s.stops.toTypedArray()) }
             onDrawBehind { brushes.forEach { drawRect(it) } }
         })
     }
 }
 
-/** The car's backdrop at [level] (1 on home, dimmed elsewhere, 0 hidden), fading on the page clock inside its own recomposition scope. */
-@Composable internal fun SkyLayer(level: Float, modifier: Modifier = Modifier) {
+/** Where the car's sun or moon last rested, the band it rested in and that home's scroll, kept while a band that no longer holds it fades it out. */
+private class OrbRest { var at: Offset? = null; var band: Rect? = null; var scroll: (() -> Int)? = null }
+
+/**
+ * The car's skyline for one [phase]: its sun or moon placed in the hero [band] with this phase's disc ([heroOrbAt]) and the
+ * day clouds in the same band. Both fade with the page ([pageAlpha]), with the home's [scroll] as the cards come up to the
+ * disc ([heroSkyAlpha]), and with the band: a re-measured band that no longer holds the orb leaves it where it last rested and
+ * fades it out over 220 ms (a snap under reduced motion). It never slides. Every alpha is read in the draw only.
+ */
+@Composable private fun HeroSkyline(phase: ScenePhase, band: Rect?, scroll: (() -> Int)?, w: Float, h: Float, horizonAt: Float, heightScale: Float,
+    hazeEnd: Float, entering: Boolean, leaving: Boolean, showOrb: Boolean, showClouds: Boolean, pageAlpha: () -> Float) {
+    val density = LocalDensity.current
+    val margin = with(density) { HERO_SKY_MARGIN.toPx() }
+    val cloudMargin = with(density) { SUN_CLOUD_MARGIN.toPx() }
+    val disc = h * heightScale * paintFor(phase).orbRadius
+    val place = if (showOrb && band != null) heroOrbAt(band, disc, margin, h * FREE_SKY_ORB_Y, hazeEnd) else null
+    val rest = remember { OrbRest() }
+    if (place != null) { rest.at = place; rest.band = band; rest.scroll = scroll }
+    val fit by animateFloatAsState(if (place != null) 1f else 0f, if (LocalReduceMotion.current) snap() else tween(MOTION_PAGE_MS, easing = LinearEasing),
+        label = "orb-fit")
+    val at = rest.at
+    val restBand = rest.band
+    val restScroll = rest.scroll
+    // The card row starts a margin under the band: the orb is gone by the time the cards come up to its disc and cloud margin.
+    val clearance = if (at != null && restBand != null) restBand.bottom + margin - (at.y + disc + cloudMargin) else 0f
+    val alpha = { pageAlpha() * fit * heroSkyAlpha(restScroll?.invoke()?.toFloat() ?: 0f, clearance) }
+    Skyline(phase, Modifier.fillMaxSize(), horizonAt, heightScale, orbAt = if (at != null && w > 0f && h > 0f) Offset(at.x / w, at.y / h) else Offset.Zero,
+        entering = entering, leaving = leaving, showOrb = at != null, showClouds = showClouds, cloudBand = restBand.takeIf { at != null }, hazeEnd = hazeEnd,
+        orbAlpha = alpha, cloudAlpha = alpha)
+}
+
+/**
+ * The car's backdrop at [level] (1 on home, dimmed elsewhere, 0 hidden), fading on the page clock inside its own
+ * recomposition scope. [heroSky] is read only in here, so a re-measured band never recomposes the shell.
+ */
+@Composable internal fun SkyLayer(level: Float, heroSky: () -> HeroSky?, modifier: Modifier = Modifier) {
     val alpha by animateFloatAsState(level, if (LocalReduceMotion.current) snap() else tween(MOTION_PAGE_MS), label = "sky")
     // The sun and the moon belong to the home; on the dimmed panes they fade out with the page (fully gone at the panes' .34)
-    // instead of popping on the first frame of the tab change. On the home they rest in the free sky ([freeSkyOrbAt]).
+    // instead of popping on the first frame of the tab change. On the home they rest in the hero's free band ([heroOrbAt]).
     if (level > 0f || alpha > 0f) HomeBackdrop(modifier.graphicsLayer { this.alpha = alpha }, orbAlpha = { ((alpha - .34f) / .66f).coerceIn(0f, 1f) },
-        freeSkyOrb = true)
+        heroSky = heroSky)
 }

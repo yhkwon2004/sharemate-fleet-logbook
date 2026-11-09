@@ -13,7 +13,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDateTime
-import kotlin.math.hypot
 
 class SceneTest {
     private fun at(month: Int, hour: Int, minute: Int = 0) = LocalDateTime.of(2026, month, 15, hour, minute)
@@ -140,16 +139,53 @@ class SceneTest {
         assertEquals(1f, starFade(false, false, .9f), 1e-4f)
     }
 
-    @Test fun theCarSunRestsOnlyInTheFreeSkyRightOfTheColumn() {
-        // The full Pleos window: 1680 wide, the column ends at 72 + 1200, so 408 dp of sky and the orb across its middle.
-        val full = freeSkyOrbAt(1680.dp, 72.dp + 1200.dp)!!
-        assertEquals("빈 하늘의 가운데", 1476f / 1680f, full.x, 1e-4f)
-        assertTrue("내용 열 오른쪽", full.x * 1680f > 1272f)
-        assertEquals("탑보다 높이", FREE_SKY_ORB_Y, full.y, 1e-4f)
-        assertEquals("최소 폭이 딱 남아도 빈 하늘", 1412f / 1552f, freeSkyOrbAt(1552.dp, 1272.dp)!!.x, 1e-4f)
-        assertNull("빈 하늘이 좁은 창에는 해와 달이 없음", freeSkyOrbAt(1360.dp, 48.dp + 1200.dp))
-        assertNull("최대 폭이 없는 열 옆에는 빈 하늘이 없음", freeSkyOrbAt(1000.dp, 32.dp + Dp.Infinity))
-        assertNull(freeSkyOrbAt(0.dp, 0.dp))
+    @Test fun theCarSunRestsInTheHeroBandOnly() {
+        // The full Pleos window (1680 × 1210 dp at 160 dpi, px = dp): the hero leaves (824, 92)–(1152, 478) free, the day disc is
+        // .72 × 1210 × .045 = 39.2, and the hero haze ends 300 past the hero column's edge (72 + 720 + 300 = 1092).
+        val full = Rect(824f, 92f, 1152f, 478f)
+        val disc = 39.2f
+        val margin = 24f
+        val sun = heroOrbAt(full, disc, margin, preferredY = 1210f * FREE_SKY_ORB_Y, hazeEnd = 1092f)!!
+        assertEquals("헤이즈가 끝난 곳, 띠 안", 1052.8f, sun.x, .01f)
+        assertEquals("탑보다 높이", 181.5f, sun.y, .01f)
+        // A 1.3× font: the 1046-dp page ends the band at 1062, which holds the sun back from the haze's end (48 + 720 + 300).
+        assertEquals("띠 끝에서 멈춤", 998.8f, heroOrbAt(Rect(800f, 92f, 1062f, 508f), disc, margin, 181.5f, 1068f)!!.x, .01f)
+        assertNull("1400 dp 창의 띠는 48 dp뿐이라 해와 달이 없음", heroOrbAt(Rect(752f, 92f, 800f, 478f), disc, margin, 181.5f, 1092f))
+        assertNull("카드 위 하늘이 낮으면 해와 달이 없음", heroOrbAt(full.copy(bottom = 230f), disc, margin, 181.5f, 1092f))
+        assertEquals("띠의 위쪽 여백 아래로", 155.2f, heroOrbAt(full, disc, margin, preferredY = 120f, hazeEnd = 1092f)!!.y, .01f)
+        // Wherever it rests, the disc and its margin stay inside the band.
+        val bands = listOf(full, Rect(800f, 92f, 1062f, 508f), Rect(600f, 40f, 760f, 300f), Rect(824f, 92f, 1400f, 900f), Rect(900f, 200f, 1030f, 330f))
+        bands.forEach { band ->
+            listOf(0f, 900f, 1092f, 2000f).forEach { hazeEnd ->
+                listOf(0f, 120f, 181.5f, 400f).forEach { preferred ->
+                    heroOrbAt(band, disc, margin, preferred, hazeEnd)?.let { at ->
+                        val room = disc + margin
+                        assertTrue("$band $hazeEnd $preferred → $at", at.x - room >= band.left - 1e-3f && at.x + room <= band.right + 1e-3f &&
+                            at.y - room >= band.top - 1e-3f && at.y + room <= band.bottom + 1e-3f)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test fun theSunFadesBeforeACardReachesIt() {
+        assertEquals("멈춘 홈에서는 다 보임", 1f, heroSkyAlpha(0f, 200f), 1e-4f)
+        assertEquals(.5f, heroSkyAlpha(100f, 200f), 1e-4f)
+        assertEquals("카드가 닿을 때 사라짐", 0f, heroSkyAlpha(200f, 200f), 1e-4f)
+        assertEquals(0f, heroSkyAlpha(300f, 200f), 1e-4f)
+        var last = 1f
+        for (scroll in 0..400 step 8) {
+            val alpha = heroSkyAlpha(scroll.toFloat(), 200f)
+            assertTrue("스크롤할수록 옅어지기만 함 ($scroll)", alpha <= last)
+            last = alpha
+        }
+        assertEquals("여유가 없으면 그리지 않음", 0f, heroSkyAlpha(0f, 0f), 1e-4f)
+        assertEquals(0f, heroSkyAlpha(0f, -12f), 1e-4f)
+        // The full window: the cards start 24 under the band (478 + 24), the disc and the cloud margin end at 181.5 + 39.2 + 12,
+        // so the sun is gone after 269.3 px of scroll, when the cards' top edge reaches it.
+        val clearance = 478f + 24f - (181.5f + 39.2f + 12f)
+        assertEquals(269.3f, clearance, .01f)
+        assertEquals(0f, heroSkyAlpha(clearance, clearance), 1e-4f)
     }
 
     @Test fun aScrolledPageFadesUnderTheHeaderAndAPageAtRestDoesNot() {
@@ -181,10 +217,22 @@ class SceneTest {
         assertEquals("그 뒤 300 dp에서 사라짐", .65f, hero.stops[2].first, 1e-3f)
         val left = carNight[0]
         assertTrue(!left.vertical)
-        assertEquals("밤은 그대로", night.bg, left.stops[0].second.copy(alpha = 1f))
+        assertEquals("밤은 바탕색", night.bg, left.stops[0].second.copy(alpha = 1f))
+        assertEquals(0f, left.stops[0].first, 1e-3f)
         assertEquals(.92f, left.stops[0].second.alpha, .005f)
+        assertEquals("히어로 칼럼의 오른쪽 끝", .47f, left.stops[1].first, 1e-3f)
         assertEquals(.62f, left.stops[1].second.alpha, .005f)
-        assertEquals(.74f, left.stops[2].first, 1e-3f)
+        assertEquals("낮 안개와 같은 곳에서 사라짐", .65f, left.stops[2].first, 1e-3f)
+        assertEquals(0f, left.stops[2].second.alpha, .005f)
+        // Behind the greeting the night scrim only grows stronger than 2.10's (.92 at 0, .62 at .38, 0 at .74), so moving the moon
+        // out of the free sky never costs the greeting any contrast; past the hero edge it thins faster, over the moon's band.
+        val before = listOf(0f to .92f, .38f to .62f, .74f to 0f)
+        val now = left.stops.map { it.first to it.second.alpha }
+        for (i in 0..47) {
+            val x = i / 100f
+            assertTrue("x = $x", stopAlpha(now, x) >= stopAlpha(before, x) - 1e-4f)
+        }
+        assertTrue("달이 있는 곳(1053 / 1680)은 덜 어두움", stopAlpha(now, 1053f / 1680f) < stopAlpha(before, 1053f / 1680f))
         assertEquals("낮의 아래 스크림은 더 옅음", .25f, carDay[1].stops[0].second.alpha, .005f)
         assertEquals(.85f, carDay[1].stops[3].second.alpha, .005f)
         assertEquals(.35f, carNight[1].stops[0].second.alpha, .005f)
@@ -209,48 +257,49 @@ class SceneTest {
         }
     }
 
-    @Test fun theDayCloudsKeepToTheFreeSkyRightOfTheColumn() {
-        // The full Pleos window: 1680 × 1210 dp at 160 dpi (px = dp), with the car backdrop's horizon (.52) and tower scale (.72).
-        val w = 1680f; val h = 1210f; val horizon = h * .52f; val ht = h * .72f
-        assertEquals(4, DayClouds.size)
-        DayClouds.forEach { c ->
-            assertTrue("가로 .79–.97: ${c.x}", c.x in .79f..(.97f))
-            assertTrue("세로 .08–.34: ${c.y}", c.y in .08f..(.34f))
+    @Test fun theDayCloudsKeepToTheHeroBandAndOffTheSun() {
+        // The full Pleos window: 1680 × 1210 dp at 160 dpi (px = dp), towers scaled .72, the hero band and the day sun as placed
+        // in theCarSunRestsInTheHeroBandOnly.
+        val h = 1210f; val ht = h * .72f
+        val band = Rect(824f, 92f, 1152f, 478f)
+        val hazeEnd = 1092f
+        val disc = ht * .045f
+        val sun = heroOrbAt(band, disc, HERO_SKY_MARGIN.value, h * FREE_SKY_ORB_Y, hazeEnd)!!
+        val clear = disc + SUN_CLOUD_MARGIN.value
+        val reach = CLOUD_HAZE_REACH.value
+        fun assertDrawable(kept: List<SkyCloud>, inBand: Rect) {
+            val boxes = kept.map { heroCloudBox(it, inBand, h, ht) }
+            boxes.forEach { b ->
+                assertTrue("띠 안: $b", b.left >= inBand.left && b.top >= inBand.top && b.right <= inBand.right && b.bottom <= inBand.bottom)
+                assertTrue("헤이즈가 옅어진 뒤: $b", b.left >= hazeEnd - 120f)
+                assertTrue("해에서 떨어짐: $b", distanceToBox(sun, b) > disc + 12f)
+            }
+            for (i in boxes.indices) for (j in i + 1 until boxes.size) assertTrue("구름 $i, $j 는 겹치지 않음", !boxes[i].overlaps(boxes[j]))
         }
-        val boxes = DayClouds.map { dayCloudBox(it, w, h, horizon, ht) }
-        for (i in boxes.indices) for (j in i + 1 until boxes.size) assertTrue("구름 $i, $j 는 겹치지 않음", !boxes[i].overlaps(boxes[j]))
-        boxes.forEach { b -> assertTrue("창 안", b.left >= 0f && b.right <= w && b.top >= 0f) }
-        // The sun rests where freeSkyOrbAt puts it, and no cloud that is drawn ever reaches its disc plus the margin: on the full
-        // window (all four clouds kept), with a 1.3x font (column ends at 1248) and on the narrowest window that keeps a sun.
-        val clear = ht * .045f + SUN_CLOUD_MARGIN.value
-        listOf(Triple(1680f, 1272f, 4), Triple(1680f, 1248f, 4), Triple(1552f, 1272f, -1)).forEach { (width, columnEnd, expected) ->
-            val at = freeSkyOrbAt(width.dp, columnEnd.dp)!!
-            val sun = Offset(width * at.x, h * at.y)
-            val kept = visibleDayClouds(width, h, horizon, ht, columnEnd, sun, clear)
-            if (expected >= 0) assertEquals("$width/$columnEnd: 네 구름이 해를 비켜 모두 남음", expected, kept.size)
-            kept.forEach { c -> assertTrue("$width/$columnEnd: 구름이 해 위에 그려지지 않음", distance(sun, dayCloudBox(c, width, h, horizon, ht)) > clear) }
-            // Without the sun the same window keeps at least as many clouds: the filter only ever removes.
-            assertTrue(visibleDayClouds(width, h, horizon, ht, columnEnd).size >= kept.size)
-        }
+        val kept = visibleDayClouds(band, h, ht, hazeEnd, sun, clear, reach)
+        assertTrue("구름 둘 이상: ${kept.size}", kept.size >= 2)
+        assertDrawable(kept, band)
+        // A band that grows downward keeps every cloud where it was and may reveal the next one; it never moves one.
+        val taller = band.copy(bottom = band.bottom + 200f)
+        val more = visibleDayClouds(taller, h, ht, hazeEnd, sun, clear, reach)
+        assertTrue("같은 구름이 남음", more.containsAll(kept))
+        kept.forEach { assertEquals("같은 자리", heroCloudBox(it, band, h, ht), heroCloudBox(it, taller, h, ht)) }
+        assertDrawable(more, taller)
+        // Without the sun the filter keeps at least as many: it only ever removes.
+        assertTrue(visibleDayClouds(band, h, ht, hazeEnd, null, clear, reach).size >= kept.size)
+        assertTrue("띠가 없으면 구름도 없음", visibleDayClouds(Rect(824f, 92f, 824f, 92f), h, ht, hazeEnd, null, clear, reach).isEmpty())
         assertEquals("상자 안의 점은 거리 0", 0f, distanceToBox(Offset(5f, 5f), Rect(0f, 0f, 10f, 10f)), 1e-4f)
-        // All four clear the 1200-dp column, which the header chips end with: on the full window (gutter 72, so it ends at
-        // 1272) and with a 1.3x font (EXPANDED, gutter 48, ends at 1248).
-        listOf(carLayout(1680.dp), carLayout(1680.dp / 1.3f)).forEach { layout ->
-            val columnEnd = (layout.gutter + layout.contentMax).value
-            assertEquals("${layout.widthClass}: 네 구름 모두 칼럼 오른쪽", 4, visibleDayClouds(w, h, horizon, ht, columnEnd).size)
-        }
-        // A window whose column fills it has no free sky, so no cloud sits behind the header chips there; a window only just
-        // wide enough for FULL keeps the clouds that fit beside the column and leaves the rest out.
-        val medium = carLayout(1000.dp)
-        assertEquals("빈 하늘이 없으면 구름도 없음", 0, visibleDayClouds(1000f, h, horizon, ht, (medium.gutter + medium.contentMax).value).size)
-        val narrowFull = carLayout(1400.dp)
-        val columnEnd = (narrowFull.gutter + narrowFull.contentMax).value
-        val kept = visibleDayClouds(1400f, h, horizon, ht, columnEnd)
-        assertTrue("칼럼에 걸리는 구름은 빠짐", kept.size < 4)
-        kept.forEach { assertTrue(dayCloudBox(it, 1400f, h, horizon, ht).left >= columnEnd) }
     }
 
-    private fun distance(p: Offset, r: Rect): Float = hypot(maxOf(r.left - p.x, 0f, p.x - r.right), maxOf(r.top - p.y, 0f, p.y - r.bottom))
+    /** The alpha of a horizontal scrim at [x], read linearly between its (fraction, alpha) stops. */
+    private fun stopAlpha(stops: List<Pair<Float, Float>>, x: Float): Float {
+        for (i in 0 until stops.lastIndex) {
+            val (x0, a0) = stops[i]
+            val (x1, a1) = stops[i + 1]
+            if (x <= x1) return if (x <= x0) a0 else a0 + (a1 - a0) * (x - x0) / (x1 - x0)
+        }
+        return stops.last().second
+    }
 
     @Test fun dayTextClearsAaOnWhiteGlass() {
         fun luminance(c: Color): Double {
@@ -326,20 +375,54 @@ class SceneTest {
         assertEquals(WidthClass.EXPANDED, carLayout(1200.dp).widthClass)
         assertEquals(WidthClass.FULL, carLayout(1680.dp).widthClass)
         assertTrue(carLayout(1680.dp).gutter > carLayout(1100.dp).gutter)
-        assertTrue("가장 넓은 창에서도 내용은 1200dp까지", carLayout(1680.dp).contentMax == 1200.dp)
-        // A 1.3x font on the full window: 1680 / 1.3 = 1292 dp is EXPANDED, and the column still stops at 1200 dp from the start
-        // gutter, so the raw 1680-dp window keeps the sky on its right instead of a rail 1584 dp wide.
+        assertEquals("가장 넓은 창에서도 레일은 거터 사이를 채움", Dp.Infinity, carLayout(1680.dp).contentMax)
+        // A 1.3x font on the full window: 1680 / 1.3 = 1292 dp is EXPANDED, and its rail fills the window too (1584 dp between
+        // the gutters); carColumns splits it into the page and the 지금 column.
         val largeFont = carLayout(1680.dp / 1.3f)
         assertEquals("1.3배 글꼴은 EXPANDED", WidthClass.EXPANDED, largeFont.widthClass)
-        assertEquals("큰 글꼴에서도 내용은 1200dp까지", 1200.dp, largeFont.contentMax)
+        assertEquals("큰 글꼴에서도 레일은 창을 채움", Dp.Infinity, largeFont.contentMax)
         assertTrue(largeFont.startAnchored)
         assertEquals("좁은 창은 꽉 채움", Dp.Infinity, carLayout(1000.dp).contentMax)
         assertEquals(Dp.Infinity, carLayout(700.dp).contentMax)
         assertEquals("낮은 창", HeightClass.SHORT, carLayout(1680.dp, 500.dp).heightClass)
-        assertTrue(carLayout(1680.dp).startAnchored && !phoneLayout(411.dp).startAnchored)
+        // startAnchored is the car's flag (no ripple, 56-dp dialog buttons, the .98 press) in every class, and never the phone's.
+        listOf(700.dp, 1000.dp, 1200.dp, 1680.dp).forEach { assertTrue("차량 $it", carLayout(it).startAnchored) }
+        listOf(411.dp, 800.dp, 1024.dp).forEach { assertTrue("휴대폰 $it", !phoneLayout(it).startAnchored) }
         assertEquals(WidthClass.COMPACT, phoneLayout(411.dp).widthClass)
         assertEquals(WidthClass.MEDIUM, phoneLayout(800.dp).widthClass)
         assertEquals(WidthClass.EXPANDED, phoneLayout(1024.dp).widthClass)
+    }
+
+    @Test fun carColumnsSplitTheRailIntoPageAndNow() {
+        // The full window: 1680 less two 72-dp gutters is a 1536-dp rail, split 1112 · 32 · 392.
+        val full = carColumns(carLayout(1680.dp), 1536.dp, 1f)
+        assertEquals(CarColumns(page = 1112.dp, side = 392.dp, gap = 32.dp), full)
+        assertTrue(full.split)
+        assertEquals("1400 dp 창: 페이지 832", 832f, carColumns(carLayout(1400.dp), 1256.dp, 1f).page.value, .01f)
+        // A 1.3x font: EXPANDED (gutter 48, gap 28) on the 1584-dp rail; the column grows with the font.
+        val large = carColumns(carLayout(1680.dp / 1.3f), 1584.dp, 1.3f)
+        assertEquals("지금 열 392 × 1.3", 509.6f, large.side.value, .01f)
+        assertEquals(28f, large.gap.value, .01f)
+        assertEquals("페이지 1046 (805 dp 상당)", 1046.4f, large.page.value, .01f)
+        val edge = carColumns(carLayout(1296.dp), 1200.dp, 1f)
+        assertTrue("페이지가 780이면 나뉨", edge.split)
+        assertEquals(780f, edge.page.value, .01f)
+        assertTrue("779면 하나", !carColumns(carLayout(1295.dp), 1199.dp, 1f).split)
+        // No column on a MEDIUM or SHORT window, on the phone's tokens, or where the font leaves the page too little (1.5x: 697):
+        // the page takes the whole rail.
+        listOf(Triple(carLayout(1000.dp), 936.dp, 1f), Triple(carLayout(1680.dp, 500.dp), 1536.dp, 1f), Triple(phoneLayout(800.dp), 736.dp, 1f),
+            Triple(carLayout(1680.dp / 1.5f), 1584.dp, 1.5f)).forEach { (layout, rail, font) ->
+            val columns = carColumns(layout, rail, font)
+            assertTrue("${layout.widthClass} ${layout.heightClass} ×$font: 하나", !columns.split)
+            assertEquals(rail, columns.page)
+        }
+        // Whenever it splits, page + gap + 지금 is the rail.
+        listOf(Triple(1680.dp, 1536.dp, 1f), Triple(1400.dp, 1256.dp, 1f), Triple(1680.dp / 1.3f, 1584.dp, 1.3f), Triple(1296.dp, 1200.dp, 1f),
+            Triple(1500.dp / 1.15f, 1404.dp, 1.15f)).forEach { (window, rail, font) ->
+            val columns = carColumns(carLayout(window), rail, font)
+            assertTrue("$window ×$font", columns.split)
+            assertEquals(rail.value, (columns.page + columns.gap + columns.side).value, .01f)
+        }
     }
 
     @Test fun theSettingsLineMatchesTheChoice() {

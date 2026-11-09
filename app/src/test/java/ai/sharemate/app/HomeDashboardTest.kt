@@ -130,6 +130,20 @@ class HomeDashboardTest {
         val short = homePlan(carLayout(1680.dp, 500.dp), 1f, 500.dp)
         assertTrue("낮은 창: 위젯 한 줄, 시계는 헤더로, 브랜드 줄 숨김", short.compactWidgets && short.widgetsSideBySide && short.clockInHeader && !short.showEyebrow)
         assertEquals(300.dp, short.heroMin)
+        // Today, this month and the next booking leave the page only for the 지금 column beside it.
+        listOf(full, medium, short, homePlan(carLayout(1292.dp, 1200.dp), 1.3f, 1200.dp)).forEach { assertFalse("지금 열이 없으면 페이지에", it.widgetsInColumn) }
+        val beside = homePlan(carLayout(1680.dp, 1200.dp), 1f, 1200.dp, nowColumn = true)
+        assertTrue("지금 열이 있으면 그 열로", beside.widgetsInColumn)
+        assertEquals("카드와 히어로는 그대로", full.copy(widgetsInColumn = true), beside)
+    }
+
+    @Test fun heroBandLeavesTheSkyRightOfTheGreetingAndAboveTheCards() {
+        // FULL: a 1112-dp page, the hero 600 tall, the greeting's 720 measure inside 8 dp, the 184-dp card row inside 6, 24 clear.
+        assertEquals(Rect(752f, 0f, 1080f, 386f), heroBand(1112f, 600f, 720f, 184f, 8f, 6f, 24f))
+        assertEquals("히어로가 커지면 아래로만 자람", Rect(752f, 0f, 1080f, 486f), heroBand(1112f, 700f, 720f, 184f, 8f, 6f, 24f))
+        assertNull("읽기 폭 옆에 남는 하늘이 없으면 없음", heroBand(760f, 600f, 720f, 184f, 8f, 6f, 24f))
+        assertNull("카드 위에 남는 하늘이 없으면 없음", heroBand(1112f, 200f, 720f, 184f, 8f, 6f, 24f))
+        assertNull("재기 전에는 없음", heroBand(0f, 0f, 720f, 0f, 8f, 6f, 24f))
     }
 
     @Test fun heroMinimumIsAFloorNotACeiling() {

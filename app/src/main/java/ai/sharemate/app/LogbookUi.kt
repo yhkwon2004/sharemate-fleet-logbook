@@ -50,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
@@ -62,6 +63,8 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -204,6 +207,10 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     // Bumped by every goReport so 월간·Excel starts fresh even while its old instance is still fading out (as logGen).
     var reportGen by rememberSaveable { mutableIntStateOf(0) }
     val goReport: (YearMonth) -> Unit = { m -> dropPageState(2); reportGen++; reportMonth = m.toString(); tab = 2 }
+    // 설정 keeps its sub-section here, so a button that opens it on something (설정에서 입력 → 정산·세무, 직원 추가·관리 → 직원)
+    // lands there, and the header's 설정 tab returns to the section the driver left.
+    var settingsSection by rememberSaveable { mutableIntStateOf(0) }
+    val goSettings: (Int) -> Unit = { section -> settingsSection = section; tab = 4 }
     // The local assistant: rules over the real log, standing in for Gleo until the voice integration is approved.
     var assistant by rememberSaveable { mutableStateOf(false) }
     var assistantText by rememberSaveable { mutableStateOf<String?>(null) }
@@ -258,6 +265,13 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
         if (blocked) { pickingDriver = false; tutorial = false; assistant = false; info = null; snackbar.currentSnackbarData?.dismiss(); focus.clearFocus(force = true); keyboard?.hide() }
     }
     val openDriver: (String?) -> Unit = { tripId -> if (!blocked) { driverFor = tripId; pickingDriver = true } }
+    // The home's free sky while the 지금 column stands: the band in the page's own px, and the page slot's resting origin in
+    // the window. Only the sky reads the two (SkyLayer), so a re-measured band or a scroll never recomposes the shell.
+    var paneSky by remember { mutableStateOf<HeroSky?>(null) }
+    var slotOrigin by remember { mutableStateOf(Offset.Zero) }
+    val heroSky = remember { derivedStateOf { paneSky?.let { sky -> HeroSky(sky.band.translate(slotOrigin), sky.scroll) } } }
+    // True while 월간·Excel pins its save bar: the follow-up bar then rides above it instead of covering it.
+    var saveBarUp by remember { mutableStateOf(false) }
     var pendingExportName by rememberSaveable { mutableStateOf<String?>(null) }
     val exportFile = remember { File(context.cacheDir, "pending-logbook-export") }
     val saver = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -316,8 +330,9 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                 // One background layer for every page: the city at full strength on home, dimmed behind the other pages,
                 // moving on the same clock as the page change so the layers never jump.
                 val skyLevel = when { blocked || !state.loaded -> 0f; tab == 0 -> 1f; else -> .34f }
-                // The fade lives in its own scope (SkyLayer), so the 220 ms animation recomposes only the backdrop, not the shell.
-                SkyLayer(skyLevel, Modifier.matchParentSize())
+                // The fade lives in its own scope (SkyLayer), so the 220 ms animation recomposes only the backdrop, not the shell;
+                // so does the home's free sky, which the sky alone reads.
+                SkyLayer(skyLevel, { heroSky.value }, Modifier.matchParentSize())
                 when {
                     // The driving screen and the splash keep the whole window; nothing of the parked shell is composed under them.
                     blocked -> DrivingOverview(state, now, driving.available, Modifier.fillMaxSize())
@@ -334,38 +349,58 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                             NavTab("차량", R.drawable.ic_vehicle, openIncidents(state.data).size),
                             NavTab("설정", R.drawable.ic_tune, 0),
                         )
-                        // The rail: one column inside the gutters, capped at the content maximum and anchored to the start so the
-                        // right of a wide window stays sky with nothing interactive on it. The header, the daily driver question and
-                        // every page share it; the header never appears or disappears between pages, only its lit tab moves.
+                        // The rail fills the window between the gutters. On a wide, tall window it splits into the page column, where
+                        // the five pages slide, and the 지금 column beside it, which stands outside the page change like the header
+                        // ([carColumns]). The header spans the rail and never appears or disappears between pages; only its lit tab moves.
+                        val rail = (maxWidth - layout.gutter * 2).coerceAtMost(layout.contentMax)
+                        val columns = carColumns(layout, rail, LocalDensity.current.fontScale)
                         Box(Modifier.fillMaxSize().padding(horizontal = layout.gutter)) {
                             Box(Modifier.contentWidth().fillMaxHeight().align(if (layout.startAnchored) Alignment.TopStart else Alignment.TopCenter)) {
                                 Column(Modifier.fillMaxSize()) {
                                     TopBar(state, layout, tabs, tab, { tab = it }, { openDriver(null) }, { tutorial = true }, { assistant = true },
-                                        clock = if (layout.short) hm(now) else null)
-                                    // The 네 row folds itself away (200 ms, a snap under reduced motion) once the driver has answered, still
-                                    // showing the question it answered while it folds; the gap under it folds with it.
-                                    DriverConfirmRow(state, now, openDriver, driverConfirmed, { driverConfirmed = it }, Modifier.padding(bottom = 12.dp))
+                                        clock = if (layout.short) hm(now) else null, showDriver = !columns.split)
+                                    // Without the column, the daily question rides under the header. The 네 row folds itself away (200 ms,
+                                    // a snap under reduced motion) once the driver has answered, still showing the question it answered while
+                                    // it folds; the gap under it folds with it.
+                                    if (!columns.split) DriverConfirmRow(state, now, openDriver, driverConfirmed, { driverConfirmed = it }, Modifier.padding(bottom = 12.dp))
                                     val swapForward = pageSwap(forward = true)
                                     val swapBack = pageSwap(forward = false)
-                                    AnimatedContent(targetState = tab, modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp, bottom = 20.dp),
-                                        transitionSpec = { if (targetState > initialState) swapForward else swapBack }, label = "parked-page") { page ->
-                                      // Tells goLog and goReport which pages are still composed (see composedPages).
-                                      DisposableEffect(page) { composedPages += page; onDispose { composedPages -= page } }
-                                      pageStates.SaveableStateProvider(page) {
-                                        when (page) {
-                                            0 -> DrivePane(state, now, act, repository, openDriver, requestPermissions, { tab = 4 }, { tab = it }, openLog, goReport,
-                                                { assistant = true }, snoozes, bannerCharges, { bannerCharges = it })
-                                            1 -> key(logGen) { LogPane(state, now, act, repository, openDriver, expenseTripId, logFilter, logMonth) }
-                                            2 -> key(reportGen) { ReportPane(state, now, pendingExportName != null, export, act, repository, { tab = 4 }, { tab = 0 }, initialMonth = reportMonth) { month -> openLog(1, month) } }
-                                            3 -> VehiclePane(state, now, act, repository, goSettings = { tab = 4 })
-                                            // Saved-settings confirmations ride the bar; a modal is kept for text the driver must read, such as a file path.
-                                            else -> SettingsPane(state, act, repository, { tutorial = true }, { phrase -> assistantText = phrase; assistant = true }) { text -> if (text.contains('\n')) info = text else followUp(FollowUp(text)) }
+                                    Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(columns.gap)) {
+                                        // The slot's resting origin turns the home's band into window px: the slide moves the page inside the
+                                        // slot, never the slot, so the sun does not travel with a page change.
+                                        AnimatedContent(targetState = tab, modifier = Modifier.width(columns.page).fillMaxHeight().padding(top = 8.dp, bottom = 20.dp)
+                                            .onGloballyPositioned { slotOrigin = it.positionInRoot() },
+                                            transitionSpec = { if (targetState > initialState) swapForward else swapBack }, label = "parked-page") { page ->
+                                          // Tells goLog and goReport which pages are still composed (see composedPages).
+                                          DisposableEffect(page) { composedPages += page; onDispose { composedPages -= page } }
+                                          pageStates.SaveableStateProvider(page) {
+                                            when (page) {
+                                                0 -> DrivePane(state, now, act, repository, openDriver, requestPermissions, { goSettings(0) }, { tab = it }, openLog, goReport,
+                                                    { assistant = true }, snoozes, bannerCharges, { bannerCharges = it }, nowColumn = columns.split, onHeroSky = { paneSky = it })
+                                                1 -> key(logGen) { LogPane(state, now, act, repository, openDriver, expenseTripId, logFilter, logMonth) }
+                                                2 -> key(reportGen) { ReportPane(state, now, pendingExportName != null, export, act, repository, { goSettings(2) }, { tab = 0 },
+                                                    initialMonth = reportMonth, onSaveBar = { saveBarUp = it }) { month -> openLog(1, month) } }
+                                                3 -> VehiclePane(state, now, act, repository, goSettings = { goSettings(0) })
+                                                // Saved-settings confirmations ride the bar; a modal is kept for text the driver must read, such as a file path.
+                                                else -> SettingsPane(state, now, act, repository, settingsSection, { settingsSection = it }, { tutorial = true },
+                                                    { phrase -> assistantText = phrase; assistant = true }) { text -> if (text.contains('\n')) info = text else followUp(FollowUp(text)) }
+                                            }
+                                          }
                                         }
-                                      }
+                                        // Who is driving, the next booking, today and this month. Until the driver card lands, the daily question
+                                        // fills its slot.
+                                        if (columns.split) NowColumn(state, now,
+                                            driverCard = { modifier -> DriverConfirmRow(state, now, openDriver, driverConfirmed, { driverConfirmed = it }, modifier) },
+                                            openVehicle = { tab = 3 }, openMonth = { goReport(YearMonth.from(localDate(now))) },
+                                            modifier = Modifier.width(columns.side).fillMaxHeight().padding(top = 8.dp, bottom = 20.dp))
                                     }
                                 }
-                                SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(vertical = 24.dp).widthIn(max = 760.dp)) { data ->
-                                    AnimatedVisibility(visible = true, enter = barEnter(), exit = barExit()) { FollowUpBar(data) }
+                                // The follow-up bar centres on the page column, clear of the 지금 column, and rides above 월간·Excel's save bar.
+                                val overSaveBar = if (tab == 2 && saveBarUp) SAVE_BAR_RESERVE else 0.dp
+                                Box(Modifier.width(columns.page).fillMaxHeight().align(Alignment.BottomStart)) {
+                                    SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(top = 24.dp, bottom = 24.dp + overSaveBar).widthIn(max = 760.dp)) { data ->
+                                        AnimatedVisibility(visible = true, enter = barEnter(), exit = barExit()) { FollowUpBar(data) }
+                                    }
                                 }
                             }
                         }
@@ -373,8 +408,9 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                 }
             }
         }
+        // Inside the follow-up provider, so the picker's confirmations and their undo reach the shell's bar.
+        if (pickingDriver && !blocked) DriverPicker(state.data, driverFor, act, repository, { pickingDriver = false }) { pickingDriver = false; goSettings(1) }
       }
-        if (pickingDriver && !blocked) DriverPicker(state.data, driverFor, act, repository, { pickingDriver = false }) { pickingDriver = false; tab = 4 }
         AssistantSheet(open = assistant && !blocked && state.loaded, onDismiss = { assistant = false; assistantText = null }, data = state.data, now = now,
             writer = assistantWriter, act = act, followUp = followUp, onOpenTrip = { tripId ->
                 assistant = false
@@ -408,22 +444,23 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 }
 
 /**
- * The header of every pane except home (home is the hub: its cards and its 설정 chip lead everywhere). One glass row:
- * the brand mark, the five tabs with their counts, then the recording state, the employee and the assistant. In a narrow
- * window the tabs drop to their own scrolling row.
+ * The header of every page, spanning the rail: the brand mark and the five tabs with their counts at the start; at the rail's
+ * end (over the 지금 column when it stands) the short window's clock, the recording state and the tools. The driver chip
+ * joins them only where there is no 지금 column ([showDriver]), whose top card says who is driving. In a narrow window the
+ * tabs drop to their own scrolling row.
  */
 @Composable private fun TopBar(state: TripLogState, layout: LayoutTokens, tabs: List<NavTab>, selected: Int, onSelect: (Int) -> Unit,
-    onDriver: () -> Unit, onTutorial: () -> Unit, onAssistant: () -> Unit = {}, clock: String? = null) {
+    onDriver: () -> Unit, onTutorial: () -> Unit, onAssistant: () -> Unit = {}, clock: String? = null, showDriver: Boolean = true) {
     val wide = layout.expanded
     val driver = state.data.drivers.firstOrNull { it.id == state.data.currentDriverId }
     // The tutorial is for a car that has not recorded anything yet; once real trips exist it stays reachable from settings.
     val showTutorial = state.data.trips.none { !it.demo }
     val employee: @Composable (Modifier) -> Unit = { modifier ->
         val interaction = remember { MutableInteractionSource() }
-        Surface(onClick = onDriver, shape = RoundedCornerShape(50), color = Scene.glass, border = Scene.edge, interactionSource = interaction,
-            modifier = modifier.heightIn(min = 56.dp).pressable(interaction, .98f).semantics { contentDescription = "이용 직원 ${driver?.label ?: "미선택"}, 변경" }) {
+        if (showDriver) Surface(onClick = onDriver, shape = RoundedCornerShape(50), color = Scene.glass, border = Scene.edge, interactionSource = interaction,
+            modifier = modifier.heightIn(min = 56.dp).pressable(interaction, .98f).semantics { contentDescription = "지금 운전 ${driver?.label ?: "미선택"}, 바꾸기" }) {
             Column(Modifier.padding(horizontal = 20.dp, vertical = 6.dp)) {
-                Text("이용 직원", style = MaterialTheme.typography.labelSmall, color = Scene.textSecondary)
+                Text("지금 운전", style = MaterialTheme.typography.labelSmall, color = Scene.textSecondary)
                 Text(driver?.label ?: "직원 선택", style = MaterialTheme.typography.labelLarge, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.widthIn(max = if (wide) 230.dp else 140.dp))
             }
@@ -456,8 +493,8 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                 mark()
                 GlassTabs(tabs, selected, onSelect, compact = layout.short)
             }
-            // The right cluster takes what the pill leaves of the rail. The employee chip is the one that gives, its label
-            // ellipsising before anything is pushed past the column's edge.
+            // The right cluster takes what the pill leaves of the rail, flush with its end. The driver chip is the one that gives,
+            // its label ellipsising before anything is pushed past the rail's edge.
             Row(Modifier.weight(1f, fill = false).padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 time()
                 StatusPill(state)
@@ -665,11 +702,14 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
  * this month as two widgets, and the one-tap incident row. Laid out by [homePlan] for the window's class and height. Every way
  * into 월간·Excel from here ([openReport]) names the month it opens on: the close card's and the banner's, the month
  * 정보 내보내기 names, this month for the month widget.
+ *
+ * With [nowColumn] (2.11) the next booking and the two widgets live in the 지금 column instead, and the home tells the sky
+ * ([onHeroSky]) where its hero leaves sky free, so the sun or moon can rest there; without the column it reports none.
  */
 @Composable private fun DrivePane(state: TripLogState, now: Long, act: Act, repository: TripLogRepository,
     openDriver: (String?) -> Unit, requestPermissions: () -> Unit, goSettings: () -> Unit, navigate: (Int) -> Unit, openLog: (Int, YearMonth?) -> Unit,
     openReport: (YearMonth) -> Unit, assistant: () -> Unit, snoozes: MutableState<Set<String>>, banner: List<CardCharge> = emptyList(),
-    onBanner: (List<CardCharge>) -> Unit = {}) {
+    onBanner: (List<CardCharge>) -> Unit = {}, nowColumn: Boolean = false, onHeroSky: (HeroSky?) -> Unit = {}) {
     val layout = LocalLayout.current
     val wide = layout.expanded
     val data = state.data
@@ -714,28 +754,41 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
     // The hero block staggers in once per session; a return to the tab or a sync lands in place.
     val entrance = rememberHomeEntrance()
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val plan = homePlan(layout, LocalDensity.current.fontScale, maxHeight)
+        val plan = homePlan(layout, LocalDensity.current.fontScale, maxHeight, nowColumn)
         val scroll = rememberScrollState()
+        // Beside the 지금 column the page top never moves, so the sky the hero leaves free is the sun's: the sky reads the band
+        // and, in its draw only, the scroll that brings the cards up to it. Without the column, or once the home has gone, none;
+        // a column that comes back asks the hero again rather than reuse a band measured on another page width.
+        var band by remember(plan.widgetsInColumn) { mutableStateOf<Rect?>(null) }
+        val reportSky by rememberUpdatedState(onHeroSky)
+        DisposableEffect(plan.widgetsInColumn, band) {
+            reportSky(band?.takeIf { plan.widgetsInColumn }?.let { HeroSky(it) { scroll.value } })
+            onDispose { reportSky(null) }
+        }
         Column(Modifier.fillMaxSize().fadingTopEdge(scroll).verticalScroll(scroll), verticalArrangement = Arrangement.spacedBy(layout.sectionGap)) {
             // The hero grows with its text (a permission button, a second greeting line); the change reflows over 260 ms.
-            HomeHero(state, now, plan, assistant, requestPermissions, demoControls, cards, Modifier.animateContentSize(enterSpec(260)), entrance = entrance)
+            HomeHero(state, now, plan, assistant, requestPermissions, demoControls, cards, Modifier.animateContentSize(enterSpec(260)), entrance = entrance,
+                onBand = if (plan.widgetsInColumn) { measured -> band = measured } else null)
             MatchedBanner(banner, onShow = { onBanner(emptyList()); openLog(2, YearMonth.from(today)) }, onDismiss = { onBanner(emptyList()) })
-            NextReservationLine(data = state.data, now = now)
+            if (!plan.widgetsInColumn) NextReservationLine(data = state.data, now = now)
             if (!closeCardShown) MonthCloseBannerHost(data, now, onOpen = openReport)
-            // The stack and the widgets share one slot and the stack carries the section gap under it, so the stack unfolds and
-            // folds away together with its gap (260 ms, a snap under reduced motion) and the widgets move up smoothly behind it.
+            // The stack and what follows it share one slot and the stack carries the section gap under it, so the stack unfolds
+            // and folds away together with its gap (260 ms, a snap under reduced motion) and the rest moves up smoothly behind it,
+            // with or without the widgets (beside the 지금 column they live there).
             Column(Modifier.fillMaxWidth()) {
                 AnimatedVisibility(stackShown, enter = fadeIn(enterSpec(220)) + expandVertically(enterSpec(260)),
                     exit = fadeOut(enterSpec(160)) + shrinkVertically(enterSpec(260)), label = "task-stack") {
                     taskStack(Modifier.padding(bottom = layout.sectionGap))
                 }
-                HomeWidgets(state, now, sideBySide = plan.widgetsSideBySide, compact = plan.compactWidgets) { openReport(YearMonth.from(today)) }
+                Column(verticalArrangement = Arrangement.spacedBy(layout.sectionGap)) {
+                    if (!plan.widgetsInColumn) HomeWidgets(state, now, sideBySide = plan.widgetsSideBySide, compact = plan.compactWidgets) { openReport(YearMonth.from(today)) }
+                    // A charge whose card approval is still on its way: the strip says so and offers to type it now.
+                    hiddenPendingCharge(data, now, prompt.value)?.let { waiting ->
+                        AutopilotStrip(data, now, waiting = waiting, waitingPrompt = prompt.value, onEnterNow = { prompt.value = ChargePrompt.NOW })
+                    }
+                    IncidentQuickRow(data, act, repository)
+                }
             }
-            // A charge whose card approval is still on its way: the strip says so and offers to type it now.
-            hiddenPendingCharge(data, now, prompt.value)?.let { waiting ->
-                AutopilotStrip(data, now, waiting = waiting, waitingPrompt = prompt.value, onEnterNow = { prompt.value = ChargePrompt.NOW })
-            }
-            IncidentQuickRow(data, act, repository)
         }
     }
 }
@@ -844,15 +897,25 @@ internal fun logEmptyCopy(filter: Int, month: YearMonth, monthTrips: Int, employ
 }
 
 /**
+ * The 운행기록 list's width when the page holds the list beside the detail, else null: the list then fills the page and the
+ * detail opens as a side sheet (pure, unit-tested). Two panes need EXPANDED or wider and 900 dp of effective page (its width
+ * ÷ the font scale); the list takes 48 % of what the [gap] leaves, 522 of the 1112-dp page at FULL (the detail 566). A 1.3×
+ * font (805 effective) and the 832-dp page of a 1400-dp window keep the side sheet.
+ */
+internal fun logListWidth(layout: LayoutTokens, page: Dp, gap: Dp, fontScale: Float): Dp? =
+    if (layout.expanded && page / fontScale.coerceAtLeast(1f) >= 900.dp) (page - gap) * .48f else null
+
+/**
  * 운행기록: the month stepper, the 3-way filter and the totals on one 64-dp row, the employee chip under it, then the list
- * (560 wide at FULL) beside the detail (616). MEDIUM and below keep the full-width list and open the detail as a side sheet;
- * a short window folds the filters into one dropdown chip and trims the rows to 64 dp. When the chosen list is empty the list
- * column holds one glass card that says so (max 560) and the detail panel stays away: there is nothing to pick.
+ * beside the detail where the page holds both ([logListWidth]). Otherwise the list fills the page and the detail opens as a
+ * side sheet, and the header takes the narrow rows; a short window folds the filters into one dropdown chip and trims the
+ * rows to 64 dp. When the chosen list is empty the list column holds one glass card that says so (max 560) and the detail
+ * panel stays away: there is nothing to pick.
  */
 @Composable private fun LogPane(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, openDriver: (String?) -> Unit,
     initialTripId: String?, initialFilter: Int = 0, initialMonth: String? = null) {
     val layout = LocalLayout.current
-    val wide = layout.expanded
+    val fontScale = LocalDensity.current.fontScale
     var month by rememberSaveable { mutableStateOf(initialMonth?.takeIf { runCatching { YearMonth.parse(it) }.isSuccess } ?: YearMonth.from(localDate(now)).toString()) }
     var filter by rememberSaveable(initialFilter) { mutableIntStateOf(initialFilter) }
     var selectedId by rememberSaveable(initialTripId) { mutableStateOf(initialTripId) }
@@ -868,7 +931,6 @@ internal fun logEmptyCopy(filter: Int, month: YearMonth, monthTrips: Int, employ
     val thisMonth = YearMonth.from(localDate(now))
     val periodClock = if (period == thisMonth) now else period.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
     val matchedRows = matchedTripsThisMonth(state.data, zone, period.atDay(1))
-    val filters = logFilterLabels(trips.size, issues.size, matchedRows.size, wide)
     val totalsLine = "총 ${kmText(totals.totalKm)} · 업무 ${ratioText(totals.ratio)} · ${totals.trips}건"
     val employeeName = state.data.drivers.firstOrNull { it.id == employeeFilter }?.label
     val employeeLabel = employeeName ?: "전체 직원"
@@ -880,64 +942,70 @@ internal fun logEmptyCopy(filter: Int, month: YearMonth, monthTrips: Int, employ
         ChipMenuItem("전체 직원") { employeeFilter = null; selectedId = null; close() }
         state.data.drivers.forEach { driver -> ChipMenuItem(driver.label) { employeeFilter = driver.id; selectedId = null; close() } }
     }
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        when {
-            // A short window: the three filters and the employee fold into one 56-dp dropdown chip on the stepper's row.
-            layout.short -> Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                stepper()
-                DropdownChip("${filters[filter]} · $employeeLabel") { close ->
-                    filters.forEachIndexed { index, label -> ChipMenuItem(label) { filter = index; close() } }
-                    HorizontalDivider(color = Scene.divider)
-                    employeeItems(close)
-                }
-                Spacer(Modifier.weight(1f))
-                Muted(totalsLine, maxLines = 1)
-            }
-            wide -> {
-                Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        // The header follows the list: one row over a split page, the narrow rows over a full-width list.
+        val listWidth = logListWidth(layout, maxWidth, layout.cardGap, fontScale)
+        val wide = listWidth != null
+        val filters = logFilterLabels(trips.size, issues.size, matchedRows.size, wide)
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            when {
+                // A short window: the three filters and the employee fold into one 56-dp dropdown chip on the stepper's row.
+                layout.short -> Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     stepper()
-                    // The filter takes what is left of the row, up to 720; the totals sit at the column's right.
-                    Box(Modifier.weight(1f)) { Segmented(filters, filter, Modifier.widthIn(max = 720.dp)) { filter = it } }
+                    DropdownChip("${filters[filter]} · $employeeLabel") { close ->
+                        filters.forEachIndexed { index, label -> ChipMenuItem(label) { filter = index; close() } }
+                        HorizontalDivider(color = Scene.divider)
+                        employeeItems(close)
+                    }
+                    Spacer(Modifier.weight(1f))
                     Muted(totalsLine, maxLines = 1)
                 }
-                DropdownChip("직원: $employeeLabel", content = employeeItems)
-            }
-            else -> {
-                Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    stepper()
-                    if (!layout.compact) { Spacer(Modifier.weight(1f)); Muted(totalsLine, maxLines = 1) }
+                wide -> {
+                    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        stepper()
+                        // The filter takes what is left of the row, up to 720; the totals sit at the page's right.
+                        Box(Modifier.weight(1f)) { Segmented(filters, filter, Modifier.widthIn(max = 720.dp)) { filter = it } }
+                        Muted(totalsLine, maxLines = 1)
+                    }
+                    DropdownChip("직원: $employeeLabel", content = employeeItems)
                 }
-                if (layout.compact) Muted(totalsLine)
-                Segmented(filters, filter) { filter = it }
-                DropdownChip("직원: $employeeLabel", content = employeeItems)
+                else -> {
+                    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        stepper()
+                        if (!layout.compact) { Spacer(Modifier.weight(1f)); Muted(totalsLine, maxLines = 1) }
+                    }
+                    if (layout.compact) Muted(totalsLine)
+                    Segmented(filters, filter) { filter = it }
+                    DropdownChip("직원: $employeeLabel", content = employeeItems)
+                }
             }
-        }
-        // An empty list is one card in the list column, never a blank column beside an empty detail panel.
-        val empty = when (filter) { 0 -> trips.isEmpty(); 1 -> issues.isEmpty(); else -> matchedRows.isEmpty() }
-        val list: @Composable (Modifier) -> Unit = { modifier ->
-            if (empty) Box(modifier.verticalScroll(rememberScrollState())) {
-                LogEmptyCard(logEmptyCopy(filter, period, trips.size, employeeName, localDate(now)), onPrevious = previousMonth,
-                    onClear = { filter = 0; employeeFilter = null; selectedId = null })
-            } else when (filter) {
-                0 -> TripList(trips, state.data, issues, selectedId, modifier, compact = layout.short) { selectedId = it }
-                1 -> IssueList(issues, state.data, modifier, act, repository, openDriver) { selectedId = it }
-                else -> MatchedTripList(state.data, periodClock, act, repository, modifier) { selectedId = it }
+            // An empty list is one card in the list column, never a blank column beside an empty detail panel.
+            val empty = when (filter) { 0 -> trips.isEmpty(); 1 -> issues.isEmpty(); else -> matchedRows.isEmpty() }
+            val list: @Composable (Modifier) -> Unit = { modifier ->
+                if (empty) Box(modifier.verticalScroll(rememberScrollState())) {
+                    LogEmptyCard(logEmptyCopy(filter, period, trips.size, employeeName, localDate(now)), onPrevious = previousMonth,
+                        onClear = { filter = 0; employeeFilter = null; selectedId = null })
+                } else when (filter) {
+                    0 -> TripList(trips, state.data, issues, selectedId, modifier, compact = layout.short) { selectedId = it }
+                    1 -> IssueList(issues, state.data, modifier, act, repository, openDriver) { selectedId = it }
+                    else -> MatchedTripList(state.data, periodClock, act, repository, modifier) { selectedId = it }
+                }
             }
-        }
-        if (wide) Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(layout.cardGap)) {
-            // FULL: list 560 + gap 24 + detail 616 fill the 1200-dp column; EXPANDED splits what it has.
-            list(if (layout.full) Modifier.width(560.dp).fillMaxHeight() else Modifier.weight(1f).fillMaxHeight())
-            // The detail and its placeholder only when there are rows to pick (or a trip is already open).
-            if (!empty || selected != null) Surface(Modifier.weight(1f).fillMaxHeight(), shape = RoundedCornerShape(32.dp), color = Scene.glass, border = Scene.edge) {
-                if (selected == null) Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
-                    Muted("운행을 선택하면 계기판 기록과 목적·비용·수정 이력을 볼 수 있어요.", Modifier.widthIn(max = 420.dp))
-                } else TripDetail(selected, state.data, act, repository, openDriver) { selectedId = null }
-            }
-        } else Box(Modifier.weight(1f).fillMaxWidth()) {
-            // While the detail sheet is up, the list under its scrim is out of TalkBack's reach: the sheet is the one pane to read.
-            list(Modifier.fillMaxSize().then(if (selected != null) Modifier.clearAndSetSemantics {} else Modifier))
-            SideSheet(selected, onDismiss = { selectedId = null }, widthFraction = if (layout.compact) .94f else .62f, title = "운행 상세") { trip ->
-                TripDetail(trip, state.data, act, repository, openDriver) { selectedId = null }
+            if (listWidth != null) Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(layout.cardGap)) {
+                // FULL: list 522 + gap 24 + detail 566 share the 1112-dp page.
+                list(Modifier.width(listWidth).fillMaxHeight())
+                // The detail and its placeholder only when there are rows to pick (or a trip is already open).
+                if (!empty || selected != null) Surface(Modifier.weight(1f).fillMaxHeight(), shape = RoundedCornerShape(32.dp), color = Scene.glass, border = Scene.edge) {
+                    if (selected == null) Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+                        Muted("운행을 선택하면 계기판 기록과 목적·비용·수정 이력을 볼 수 있어요.", Modifier.widthIn(max = 420.dp))
+                    } else TripDetail(selected, state.data, act, repository, openDriver) { selectedId = null }
+                }
+            } else Box(Modifier.weight(1f).fillMaxWidth()) {
+                // While the detail sheet is up, the list under its scrim is out of TalkBack's reach: the sheet is the one pane to read.
+                list(Modifier.fillMaxSize().then(if (selected != null) Modifier.clearAndSetSemantics {} else Modifier))
+                SideSheet(selected, onDismiss = { selectedId = null }, widthFraction = if (layout.compact) .94f else .62f, title = "운행 상세") { trip ->
+                    TripDetail(trip, state.data, act, repository, openDriver) { selectedId = null }
+                }
             }
         }
     }
@@ -1375,7 +1443,7 @@ internal fun taxCardBlocker(cost: Long?, ratio: Double?, year: Int, today: Local
     else -> null
 }
 
-/** The Excel view's save bar (72 dp, max 760), pinned to the bottom of the pane: one line of context and the save action, on glass. */
+/** The Excel view's save bar (72 dp, as wide as the preview above it), pinned to the bottom of the pane: one line of context and the save action, on glass. */
 @Composable private fun SaveBar(hint: String, modifier: Modifier = Modifier, action: @Composable () -> Unit) {
     Surface(modifier.widthIn(max = EXCEL_VIEW_MAX_WIDTH).fillMaxWidth(), shape = RoundedCornerShape(22.dp), color = Scene.glass, border = Scene.edge) {
         Row(Modifier.heightIn(min = 72.dp).padding(start = 22.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically,
@@ -1389,17 +1457,19 @@ internal fun taxCardBlocker(cost: Long?, ratio: Double?, year: Int, today: Local
 /**
  * 월간·Excel, one vertical scroll over one period on screen ([ReportPeriod]: a month under 월간, a year under 연간), stepped
  * like 운행기록 and never past this month. From EXPANDED up the stepper, 월간 · 연간 (320 wide) and Excel 저장 share one
- * 64-dp row; below that the stepper has its own row over the other two (480 wide). Then the month-close card (max 760) of
- * the month on screen ([reportCloseStatus]), the four views as 56-dp tabs (max 960), the range line and the view. The label,
- * the card, the views, the preview, every Excel 저장 and its file name, and 정리하러 가기 all read the one range
+ * 64-dp row; below that the stepper has its own row over the other two (480 wide). Then the month-close card of the month
+ * on screen ([reportCloseStatus]) across the page, the four views as 56-dp tabs (max 960), the range line and the view. The
+ * label, the card, the views, the preview, every Excel 저장 and its file name, and 정리하러 가기 all read the one range
  * [reportRange] gives. The pane opens on [initialMonth] when a button hands it one, else where the home card, the banner
- * and the tab badge point ([reportLandingMonth]); after that only the driver moves it. The Excel view keeps to 760 like the
+ * and the tab badge point ([reportLandingMonth]); after that only the driver moves it. The Excel view fills the page like the
  * month-close card: the preview with its lighter sheet tabs at [excelPreviewHeight] (480 at least), its table paging to the
- * rows that fit, and the save bar (72 dp) pinned to the bottom of the pane while the rest scrolls under it. The two cards of
- * the other views sit side by side from EXPANDED up and stack below it. Every Excel 저장 follows one rule ([excelSaveAvailable]).
+ * rows that fit, and the save bar (72 dp) pinned to the bottom of the pane while the rest scrolls under it; [onSaveBar] tells
+ * the shell while the bar is pinned, so its follow-up bar rides above it. The two cards of the other views (검토's too) sit
+ * side by side from EXPANDED up and stack below it. Every Excel 저장 follows one rule ([excelSaveAvailable]).
  */
 @Composable private fun ReportPane(state: TripLogState, now: Long, exporting: Boolean, saveFile: (String, String, ByteArray) -> Unit,
-    act: Act, repository: TripLogRepository, goSettings: () -> Unit, goHome: () -> Unit, initialMonth: String? = null, goReview: (YearMonth) -> Unit) {
+    act: Act, repository: TripLogRepository, goSettings: () -> Unit, goHome: () -> Unit, initialMonth: String? = null, onSaveBar: (Boolean) -> Unit = {},
+    goReview: (YearMonth) -> Unit) {
     val layout = LocalLayout.current
     val wide = layout.expanded
     val data = state.data
@@ -1446,6 +1516,9 @@ internal fun taxCardBlocker(cost: Long?, ratio: Double?, year: Int, today: Local
             enabled = canSave, onClick = requestExport)
     }
     val excel = view == 2
+    // While the save bar is pinned the shell lifts its follow-up bar over it; a pane that goes takes the bar with it.
+    val reportSaveBar by rememberUpdatedState(onSaveBar)
+    DisposableEffect(excel) { reportSaveBar(excel); onDispose { reportSaveBar(false) } }
     val fontScale = LocalDensity.current.fontScale
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val previewHeight = excelPreviewHeight(maxHeight, fontScale)
@@ -1476,7 +1549,7 @@ internal fun taxCardBlocker(cost: Long?, ratio: Double?, year: Int, today: Local
                 closeStatus?.let { s -> key(s.month) {
                     val edited = remember(data) { editedAfterCloseCount(data, s.month, zone) }
                     MonthClosePanel(s, onIssues = { goReview(s.month) }, onReviews = goHome, onExport = requestExport, exporting = exporting, act = act, repository = repository,
-                        modifier = Modifier.widthIn(max = 760.dp), compact = !wide, editedAfterClose = edited, today = today, onPrevious = { month = s.month.minusMonths(1).toString() })
+                        compact = !wide, editedAfterClose = edited, today = today, onPrevious = { month = s.month.minusMonths(1).toString() })
                 } }
             }
             Segmented(listOf("운행 현황", "경비·정산", "Excel", "검토"), view, Modifier.widthIn(max = 960.dp)) { view = it }
@@ -1490,15 +1563,18 @@ internal fun taxCardBlocker(cost: Long?, ratio: Double?, year: Int, today: Local
                         0 -> SideBySide(wide, layout.cardGap, ratio) { modifier -> EmployeeUsageCard(trips, data, modifier) }
                         1 -> SideBySide(wide, layout.cardGap, { modifier -> ExpenseOverview(trips, modifier) }, settle)
                         else -> {
-                            // Reading panels keep to the month-close card's measure (760) instead of spanning the rail.
-                            Panel(Modifier.widthIn(max = 760.dp)) {
-                                Eyebrow("증빙 준비 상태", Scene.brand)
-                                val issues = auditTrips(trips)
-                                Text(auditHeadline(trips.size, issues.size), style = MaterialTheme.typography.titleLarge)
-                                Muted("직원·운행 목적·계기판 거리의 연결을 점검합니다. Excel 확인사항 시트에서 세부 항목을 볼 수 있어요.")
-                                Muted("국세청 운행기록부 항목 참고 · 제출 전 검토용. 영수증과 세무 요건은 별도로 확인해야 합니다.")
-                            }
-                            tax(Modifier.widthIn(max = 760.dp))
+                            // The two reading panels share the page from EXPANDED up; stacked, each keeps to a 760-dp measure
+                            // instead of stretching its sentences across the page.
+                            val measure = if (wide) Modifier else Modifier.widthIn(max = 760.dp)
+                            SideBySide(wide, layout.cardGap, { modifier ->
+                                Panel(modifier.then(measure)) {
+                                    Eyebrow("증빙 준비 상태", Scene.brand)
+                                    val issues = auditTrips(trips)
+                                    Text(auditHeadline(trips.size, issues.size), style = MaterialTheme.typography.titleLarge)
+                                    Muted("직원·운행 목적·계기판 거리의 연결을 점검합니다. Excel 확인사항 시트에서 세부 항목을 볼 수 있어요.")
+                                    Muted("국세청 운행기록부 항목 참고 · 제출 전 검토용. 영수증과 세무 요건은 별도로 확인해야 합니다.")
+                                }
+                            }) { modifier -> tax(modifier.then(measure)) }
                         }
                     }
                 }
@@ -1611,14 +1687,18 @@ internal fun taxCardBlocker(cost: Long?, ratio: Double?, year: Int, today: Local
     }
 }
 
-@Composable private fun SettlementCard(trips: List<Trip>, data: TripLogData, modifier: Modifier, goSettings: () -> Unit) {
+/**
+ * The fuel settlement of [trips] at the saved km rate, per employee. Without a rate it asks for one, with 설정에서 입력 where
+ * [goSettings] is given; 설정 › 정산·세무 shows it beside the form that sets the rate and passes none.
+ */
+@Composable private fun SettlementCard(trips: List<Trip>, data: TripLogData, modifier: Modifier, goSettings: (() -> Unit)? = null) {
     val rate = data.profile.reimbursePerKmWon
     Panel(modifier.fillMaxHeight()) {
         Eyebrow("유류비 정산 · 업무용 거리 × km당 단가", Scene.brand)
         if (rate <= 0) {
-            Text("km당 정산 단가를 입력하면 사용자별 정산액을 계산해요", style = MaterialTheme.typography.titleMedium)
+            Text("km당 정산 단가를 입력하면 직원별 정산액을 계산해요", style = MaterialTheme.typography.titleMedium)
             Muted("회사에서 정한 단가를 업무용 계기판 거리에 적용합니다. 실제 주유 경비와 별개로 표시해요.")
-            QuietAction("설정에서 입력", onClick = goSettings)
+            goSettings?.let { QuietAction("설정에서 입력", onClick = it) }
         } else {
             val list = employeeUsage(trips, data.drivers, rate).filter { it.driver != null && it.totals.businessKm > 0 }
             if (list.isEmpty()) Muted("이 기간의 업무용 운행이 없어요.")
@@ -1644,53 +1724,86 @@ internal fun taxCardBlocker(cost: Long?, ratio: Double?, year: Int, today: Local
 internal fun settingsFieldColumns(layout: LayoutTokens, fontScale: Float): Int = if (layout.expanded && fontScale <= 1.25f) 2 else 1
 
 /**
- * 설정: four sub-tabs as 56-dp text tabs (max 960) over one start-anchored form column (max 720); the rest of the rail stays
- * backdrop. Fields pair up in two columns from EXPANDED at the normal font ([settingsFieldColumns]); 화면 분위기 leads 기록.
+ * How many cards a 설정 section sets side by side (pure, unit-tested): two from EXPANDED up while the [page] keeps 760 dp of
+ * effective width (its width ÷ the font scale), so 2 × 544 at FULL and still two at a 1.3× font (1046 ÷ 1.3 = 805); one
+ * below that, in the 720-dp form column.
  */
-@Composable private fun SettingsPane(state: TripLogState, act: Act, repository: TripLogRepository, onTutorial: () -> Unit = {},
-    onAssistant: (String?) -> Unit = {}, showInfo: (String) -> Unit) {
+internal fun settingsCardColumns(layout: LayoutTokens, page: Dp, fontScale: Float): Int =
+    if (layout.expanded && page / fontScale.coerceAtLeast(1f) >= 760.dp) 2 else 1
+
+/**
+ * 설정: four sub-tabs as 56-dp text tabs (max 960) over the section, which scrolls under them. Where the page has room
+ * ([settingsCardColumns]) a section's cards sit two up, each with its fields in one column: the profile beside 차량 관리
+ * 기한, 정산·세무 beside this month's settlement at the saved rate, the scene and privacy cards beside 자동 완성, the
+ * assistant and the SDK note; 직원 takes the whole page. Otherwise one form column at the start of the page (max 720), with
+ * fields paired from EXPANDED at the normal font ([settingsFieldColumns]). 화면 분위기 leads 기록. The shell holds the
+ * [section], so a button that opens 설정 on one lands there and the header's tab returns to the last one.
+ */
+@Composable private fun SettingsPane(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, section: Int, onSection: (Int) -> Unit,
+    onTutorial: () -> Unit = {}, onAssistant: (String?) -> Unit = {}, showInfo: (String) -> Unit) {
     val layout = LocalLayout.current
-    val twoColumns = settingsFieldColumns(layout, LocalDensity.current.fontScale) == 2
-    var section by rememberSaveable { mutableIntStateOf(0) }
-    val profile: @Composable () -> Unit = {
-        Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            ProfileCard(state, act, repository, showInfo, twoColumns)
-            CareSettingsCard(state, act, repository)
-        }
-    }
-    val drivers: @Composable () -> Unit = { DriversCard(state.data, act, repository, twoColumns) }
-    val costs: @Composable () -> Unit = { CostCard(state.data.profile, act, repository, showInfo, twoColumns) }
-    val privacy: @Composable () -> Unit = {
-        Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            // The scene choice leads the section: it is the one setting a driver changes on the spot.
-            SceneModeCard()
-            PrivacyCard(state.data.profile, act, repository, onTutorial)
-            AutopilotSettings(state.data.profile, act, repository) { value, change -> Field("법인카드 끝 4자리 (쉼표로 구분)", value, change, number = true, done = true, hint = "예: 1234, 5678") }
-            AssistantPreviewCard(compact = !layout.expanded, onOpen = { onAssistant(null) }, onOpenWith = { phrase -> onAssistant(phrase) })
-            Panel {
-                Eyebrow("PLEOS SDK / 필요한 신호만 사용", Scene.brand)
-                Text("${state.signal.label} · 기어·누적거리·충전상태·배터리·VIN", style = MaterialTheme.typography.titleMedium)
-                Muted("Vehicle SDK로 거리·배터리·VIN을, AAOS로 기어와 충전 상태를 읽습니다. NaviHelper 주소는 수신한 경우에만 기록합니다.")
-                Muted("권한·미지원·수신 지연은 확인 필요로 표시합니다. 차량 제어와 내비 목적지 변경은 하지 않습니다.")
+    val fontScale = LocalDensity.current.fontScale
+    val month = YearMonth.from(localDate(now))
+    // The clock recomposes the pane every second; this month's trips only change with the data and the month.
+    val monthTrips = remember(state.data.trips, month) { tripsIn(state.data.trips, month.atDay(1), month.atEndOfMonth(), zone) }
+    val sections = rememberSaveableStateHolder()
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val twoUp = settingsCardColumns(layout, maxWidth, fontScale) == 2
+        // Beside another card a form keeps one field column; alone in the form column it pairs its fields where it can.
+        val pairFields = settingsFieldColumns(layout, fontScale) == 2
+        val twoColumns = !twoUp && pairFields
+        val gap = if (twoUp) layout.cardGap else 20.dp
+        val profile: @Composable () -> Unit = {
+            SideBySide(twoUp, gap, { modifier -> ProfileCard(state, act, repository, showInfo, modifier, twoColumns) }) { modifier ->
+                CareSettingsCard(state, act, repository, modifier = modifier, columns = if (twoColumns) 2 else 1)
             }
         }
-    }
-    val sections = rememberSaveableStateHolder()
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Segmented(listOf("법인·차량", "사용자", "정산·세무", "기록"), section, Modifier.widthIn(max = 960.dp)) { section = it }
-        Crossfade(section, Modifier.weight(1f).fillMaxWidth(), animationSpec = pageFade(), label = "settings-section") { page ->
-            sections.SaveableStateProvider(page) {
-                // One form column at the start of the rail, 720 at most; the column scrolls, the sub-tabs stay.
-                val scroll = rememberScrollState()
-                Column(Modifier.fillMaxSize().fadingTopEdge(scroll).verticalScroll(scroll)) {
-                    Box(Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(bottom = 8.dp)) { when (page) { 0 -> profile(); 1 -> drivers(); 2 -> costs(); else -> privacy() } }
+        val drivers: @Composable () -> Unit = { DriversCard(state.data, act, repository, pairFields) }
+        val costs: @Composable () -> Unit = {
+            SideBySide(twoUp, gap, { modifier -> CostCard(state.data.profile, act, repository, showInfo, modifier, twoColumns) }) { modifier ->
+                SettlementCard(monthTrips, state.data, modifier)
+            }
+        }
+        val privacy: @Composable () -> Unit = {
+            SideBySide(twoUp, gap, { modifier ->
+                Column(modifier, verticalArrangement = Arrangement.spacedBy(gap)) {
+                    // The scene choice leads the section: it is the one setting a driver changes on the spot.
+                    SceneModeCard()
+                    PrivacyCard(state.data.profile, act, repository, onTutorial)
+                }
+            }) { modifier ->
+                Column(modifier, verticalArrangement = Arrangement.spacedBy(gap)) {
+                    AutopilotSettings(state.data.profile, act, repository) { value, change -> Field("법인카드 끝 4자리 (쉼표로 구분)", value, change, number = true, done = true, hint = "예: 1234, 5678") }
+                    AssistantPreviewCard(compact = !layout.expanded, onOpen = { onAssistant(null) }, onOpenWith = { phrase -> onAssistant(phrase) })
+                    Panel {
+                        Eyebrow("PLEOS SDK / 필요한 신호만 사용", Scene.brand)
+                        Text("${state.signal.label} · 기어·누적거리·충전상태·배터리·VIN", style = MaterialTheme.typography.titleMedium)
+                        Muted("Vehicle SDK로 거리·배터리·VIN을, AAOS로 기어와 충전 상태를 읽습니다. NaviHelper 주소는 수신한 경우에만 기록합니다.")
+                        Muted("권한·미지원·수신 지연은 확인 필요로 표시합니다. 차량 제어와 내비 목적지 변경은 하지 않습니다.")
+                    }
+                }
+            }
+        }
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Segmented(listOf("법인·차량", "직원", "정산·세무", "기록"), section, Modifier.widthIn(max = 960.dp), onSection)
+            Crossfade(section, Modifier.weight(1f).fillMaxWidth(), animationSpec = pageFade(), label = "settings-section") { page ->
+                sections.SaveableStateProvider(page) {
+                    // Two up, the cards share the page; one up, a form column at the start of the page, 720 at most. The section
+                    // scrolls, the sub-tabs stay.
+                    val scroll = rememberScrollState()
+                    Column(Modifier.fillMaxSize().fadingTopEdge(scroll).verticalScroll(scroll)) {
+                        Box((if (twoUp) Modifier.fillMaxWidth() else Modifier.widthIn(max = 720.dp).fillMaxWidth()).padding(bottom = 8.dp)) {
+                            when (page) { 0 -> profile(); 1 -> drivers(); 2 -> costs(); else -> privacy() }
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-@Composable private fun ProfileCard(state: TripLogState, act: Act, repository: TripLogRepository, showInfo: (String) -> Unit, twoColumns: Boolean = false) {
+@Composable private fun ProfileCard(state: TripLogState, act: Act, repository: TripLogRepository, showInfo: (String) -> Unit, modifier: Modifier = Modifier,
+    twoColumns: Boolean = false) {
     val saved = state.data.profile
     var company by rememberSaveable(saved.companyName) { mutableStateOf(saved.companyName) }
     var number by rememberSaveable(saved.businessNumber) { mutableStateOf(saved.businessNumber) }
@@ -1698,13 +1811,13 @@ internal fun settingsFieldColumns(layout: LayoutTokens, fontScale: Float): Int =
     var plate by rememberSaveable(saved.plateNumber) { mutableStateOf(saved.plateNumber) }
     val numberError = if (number.isNotBlank() && !BUSINESS_NUMBER.matches(number.trim())) "000-00-00000 형식으로 입력해 주세요" else null
     val vehicleModel = state.vehicleModel?.takeIf { it.isNotBlank() && it != "시연 차량" }
-    Panel {
+    Panel(modifier) {
         Eyebrow("FLEET PROFILE", Scene.brand)
         Text("운행일지의 기본 정보", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
         Muted("한 번 저장하면 이후 운행과 Excel에 함께 사용합니다.")
         // 법인명 and 사업자등록번호 pair up only when the form has two columns ([settingsFieldColumns]).
-        SideBySide(twoColumns, 16.dp, { modifier -> Field("법인명", company, { if (it.length <= 60) company = it }, modifier) }) { modifier ->
-            Field("사업자등록번호", number, { value -> if (value.length <= 12 && value.all { it.isDigit() || it == '-' }) number = value }, modifier,
+        SideBySide(twoColumns, 16.dp, { field -> Field("법인명", company, { if (it.length <= 60) company = it }, field) }) { field ->
+            Field("사업자등록번호", number, { value -> if (value.length <= 12 && value.all { it.isDigit() || it == '-' }) number = value }, field,
                 hint = "예: 123-45-67890", error = numberError)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1757,16 +1870,17 @@ internal fun settingsFieldColumns(layout: LayoutTokens, fontScale: Float): Int =
     }
 }
 
-@Composable private fun CostCard(saved: FleetProfile, act: Act, repository: TripLogRepository, showInfo: (String) -> Unit, twoColumns: Boolean = false) {
+@Composable private fun CostCard(saved: FleetProfile, act: Act, repository: TripLogRepository, showInfo: (String) -> Unit, modifier: Modifier = Modifier,
+    twoColumns: Boolean = false) {
     var rate by rememberSaveable(saved.reimbursePerKmWon) { mutableStateOf(saved.reimbursePerKmWon.takeIf { it > 0 }?.toString().orEmpty()) }
     var cost by rememberSaveable(saved.annualCostWon) { mutableStateOf(saved.annualCostWon?.toString().orEmpty()) }
     val updated = saved.copy(reimbursePerKmWon = rate.toLongOrNull() ?: 0, annualCostWon = cost.toLongOrNull())
     val validation = runCatching { validateProfile(updated) }.exceptionOrNull()?.message
-    Panel {
+    Panel(modifier) {
         Eyebrow("정산·세무", Scene.brand)
-        SideBySide(twoColumns, 16.dp, { modifier -> Field("유류비 정산 단가 (km당)", rate, { if (it.length <= 6 && it.all(Char::isDigit)) rate = it }, modifier, number = true, suffix = "원",
-            hint = rate.toLongOrNull()?.let(::formatWon) ?: "회사에서 정한 km당 단가") }) { modifier ->
-            Field("연간 차량 관련 비용", cost, { if (it.length <= 11 && it.all(Char::isDigit)) cost = it }, modifier, number = true, suffix = "원", done = true, hint = cost.toLongOrNull()?.let(::formatWon))
+        SideBySide(twoColumns, 16.dp, { field -> Field("유류비 정산 단가 (km당)", rate, { if (it.length <= 6 && it.all(Char::isDigit)) rate = it }, field, number = true, suffix = "원",
+            hint = rate.toLongOrNull()?.let(::formatWon) ?: "회사에서 정한 km당 단가") }) { field ->
+            Field("연간 차량 관련 비용", cost, { if (it.length <= 11 && it.all(Char::isDigit)) cost = it }, field, number = true, suffix = "원", done = true, hint = cost.toLongOrNull()?.let(::formatWon))
         }
         validation?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
         Muted("연간 비용은 감가상각비(또는 리스·렌트료), 유류비, 보험료, 자동차세, 수선비, 통행료 등의 합계입니다.")
