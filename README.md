@@ -22,7 +22,7 @@ SHAREMATE는 법인 차량을 쓰는 회사의 운전자와 관리자를 위한 
 | **차량** | **운행기록** |
 | <img src="docs/screenshots/car-vehicle.jpg" alt="차량: 차량 카드, 차량 정보, 차량 관리 기한, 다가오는 예약, 사고·특이사항 기록" width="560"> | <img src="docs/screenshots/car-log.jpg" alt="운행기록: 월 이동, 전체·점검 필요·자동 반영 구분, 운행 목록과 운행 상세" width="560"> |
 | **월간·Excel** | **설정** |
-| <img src="docs/screenshots/car-report.jpg" alt="월간·Excel: 월 마감 단계와 Excel 시트 미리보기" width="560"> | <img src="docs/screenshots/car-settings.jpg" alt="설정 › 기록: 화면 분위기(자동·낮·밤), 기록 방식과 개인정보" width="560"> |
+| <img src="docs/screenshots/car-report.jpg" alt="월간·Excel(올해): 운행기록부 시트 미리보기와 운행·직원·경비·차량·확인 시트 탭, Excel 저장 버튼" width="560"> | <img src="docs/screenshots/car-settings.jpg" alt="설정 › 기록: 화면 분위기(자동·낮·밤), 기록 방식과 개인정보" width="560"> |
 
 ### 휴대폰
 
@@ -32,7 +32,7 @@ SHAREMATE는 법인 차량을 쓰는 회사의 운전자와 관리자를 위한 
 | **홈 · 밤** | **예약** | **예약 신청서** |
 | <img src="docs/screenshots/phone-home-night.jpg" alt="휴대폰 홈(밤)" width="200"> | <img src="docs/screenshots/phone-booking.jpg" alt="예약 탭: 차량 상태, 14일 날짜 띠, 하루 시간표" width="200"> | <img src="docs/screenshots/phone-booking-form.jpg" alt="예약 신청서: 시작·끝 시각, 목적, 목적지, 메모, 예약 신청 버튼" width="200"> |
 | **회사 차량** | **운행** | **현황** |
-| <img src="docs/screenshots/phone-fleet.jpg" alt="회사 차량 시트: 등록한 차량과 상태, 삭제, 차량 추가" width="200"> | <img src="docs/screenshots/phone-trips.jpg" alt="운행 탭: 직원 칩, 월 머리줄, 날짜별 운행과 목적" width="200"> | <img src="docs/screenshots/phone-report.jpg" alt="현황 탭: 이달 운행일지, 차량 관리, Excel 미리보기" width="200"> |
+| <img src="docs/screenshots/phone-fleet.jpg" alt="회사 차량 시트: 등록한 차량과 상태, 삭제, 차량 추가" width="200"> | <img src="docs/screenshots/phone-trips.jpg" alt="운행 탭: 직원 칩, 월 머리줄, 날짜별 운행과 목적" width="200"> | <img src="docs/screenshots/phone-report.jpg" alt="현황 탭(10월): 운행일지 100% 완성, 목적·카드 확인·Excel 저장·마감 단계와 마감됨 표시" width="200"> |
 | **설정** | **로그인 · 밤** | |
 | <img src="docs/screenshots/phone-settings.jpg" alt="휴대폰 설정: 계정 카드와 로그아웃, 차량 연결, 카드 자동 연동" width="200"> | <img src="docs/screenshots/phone-signin-night.jpg" alt="휴대폰 로그인(밤)" width="200"> | |
 
@@ -55,7 +55,7 @@ SHAREMATE는 법인 차량을 쓰는 회사의 운전자와 관리자를 위한 
 - **차량 관리 기한:** 정기검사·보험·리스 만기와 정비 주기를 등록하면 30일 또는 1,000 km 안에 다가올 때 알려 줍니다. 정비소 카드 결제는 정비 이력으로도 남습니다.
 - **사고·특이사항 원탭:** 홈의 버튼 한 번으로 시각·계기판·위치·운전자가 기록되고, 이어서 대처 단계를 보여 줍니다. 잘못 눌렀다면 바로 되돌릴 수 있습니다.
 - **운행 비서(로컬 규칙):** “주차비 4,500원 추가해줘”처럼 적으면 목적 기록·비용 추가·요약을 처리합니다. 차량 안의 한국어 문장 규칙으로 동작하며 네트워크를 쓰지 않습니다.
-- **낮·밤 화면:** 홈의 도시 장면이 시계에 맞춰 낮·해 질 무렵·밤으로 바뀌고, 모든 화면의 색이 함께 바뀝니다. 설정에서 자동·낮·밤을 고를 수 있고, 주행 중에는 바뀌지 않습니다.
+- **낮·밤 화면:** 홈의 도시 장면이 시계에 맞춰 낮·해 질 무렵·밤으로 바뀌고, 모든 화면의 색이 함께 바뀝니다. 지하 주차장처럼 차량의 조도 센서가 어둡다고 알리면 자동 모드에서도 밤 화면을 씁니다. 설정에서 자동·낮·밤을 고를 수 있고, 주행 중에는 바뀌지 않습니다.
 - **여백과 움직임:** 화면을 가득 채우지 않고 왼쪽 한 열에 내용을 두어 오른쪽은 하늘로 남깁니다. 카드와 탭은 누르면 살짝 가라앉고, 페이지는 옆으로 밀리며, 숫자는 바뀔 때 떠오릅니다. 시스템의 애니메이션 축소 설정을 따릅니다.
 
 주행 중에는 거리와 기록 상태만 남기고 버튼·입력·시트를 모두 닫습니다(Pleos 주행 제한).
@@ -114,7 +114,7 @@ SHAREMATE는 법인 차량을 쓰는 회사의 운전자와 관리자를 위한 
 - **동기화:** 차량 안의 로컬 TLS 동기화 서버(포트 9247), 6자리 번호로 연결
 - **데이터 위치:** 외부 서버가 없습니다. 기록은 차량에 남고, 휴대폰은 사본과 명령만 주고받습니다.
 - **Excel:** 기기에서 직접 `.xlsx`를 만듭니다.
-- **장면:** 서울의 달별 대략적 일출·일몰 시각으로 낮·해 질 무렵·밤을 정하고, 장면이 바뀔 때는 내용이 잠깐 사라졌다 새 색으로 돌아오는 페이드 스루로 넘어갑니다.
+- **장면:** 서울의 달별 대략적 일출·일몰 시각으로 낮·해 질 무렵·밤을 정하고(차량은 조도 센서도 함께 봅니다), 장면이 바뀔 때는 내용이 잠깐 사라졌다 새 색으로 돌아오는 페이드 스루로 넘어갑니다.
 
 **알아 두실 점**
 
