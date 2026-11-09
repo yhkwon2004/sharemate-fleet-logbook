@@ -67,6 +67,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
@@ -196,6 +197,13 @@ internal fun signInSplit(width: Dp, height: Dp): Boolean = width > height
 
 /** By day a white haze (.84 → 0) covers the top 55 % of the sign-in art, so the headline reads on it (the raw sky gives 2.8:1). */
 internal const val SIGN_IN_HAZE_FRACTION = .55f
+
+/**
+ * A choice card's surface: the opaque glass, with the selection fill laid over it when chosen rather than in its place, so the
+ * card stays opaque and the day shadow under it never shows through.
+ */
+internal fun choiceCardColor(selected: Boolean, glass: Color, selectionFill: Color): Color =
+    if (selected) selectionFill.compositeOver(glass) else glass
 
 // ───────────────────────── sign-in ─────────────────────────
 
@@ -594,12 +602,15 @@ internal fun PhoneOnboarding(
     }
 }
 
-/** A large glass choice: lit tile, title and one line; chosen = selection fill + 1.5-dp ring + glow title, never colour alone. .97 press scale. */
+/**
+ * A large glass choice: lit tile, title and one line; chosen = selection fill (over the opaque glass) + 1.5-dp ring + glow title,
+ * never colour alone. .97 press scale.
+ */
 @Composable private fun ChoiceCard(title: String, detail: String, icon: Int, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(24.dp)
     val source = remember { MutableInteractionSource() }
     val sheen = Scene.colors.edgeTop
-    Surface(shape = shape, color = if (selected) Scene.selectionFill else Scene.glass, border = if (selected) BorderStroke(1.5.dp, Scene.selectionRing) else Scene.edge,
+    Surface(shape = shape, color = choiceCardColor(selected, Scene.glass, Scene.selectionFill), border = if (selected) BorderStroke(1.5.dp, Scene.selectionRing) else Scene.edge,
         modifier = modifier.cardShadow(shape).pressable(source).clip(shape)
             .selectable(selected = selected, role = Role.RadioButton, interactionSource = source, indication = LocalIndication.current, onClick = onClick)) {
         Column(Modifier.background(Brush.verticalGradient(listOf(sheen.copy(alpha = sheen.alpha * .25f), Color.Transparent))).heightIn(min = 136.dp).padding(16.dp),

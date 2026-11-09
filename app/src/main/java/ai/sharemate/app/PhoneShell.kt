@@ -26,6 +26,8 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -55,6 +57,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -65,15 +68,21 @@ import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -84,6 +93,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.YearMonth
@@ -96,7 +107,8 @@ import java.time.ZoneId
  * pops the list. Every edit still goes to the car as a SyncCommand and comes back through the mirrored copy; the
  * shell only remembers which purposes it just sent so the row can show them before the mirror catches up.
  * 2.10: the root provides LocalLayout; every frame keeps to the class's content width, centred, and in a short landscape
- * window the tab pill becomes a left rail.
+ * window the tab pill becomes a left rail. The tab pages run on under the floating pill: the shell pads them at the top and the
+ * sides only and provides LocalNavInset, which each tab adds to the end of its own scroll.
  */
 
 /** Where the phone is, on top of the tab row. [Tab] is the bottom of the stack and is never stored in it. */
@@ -165,6 +177,12 @@ internal fun phoneTrips(data: TripLogData): List<Trip> = data.trips.filter { it.
 
 internal fun phoneHasWorkspace(data: TripLogData, paired: Boolean): Boolean =
     paired || data.trips.isNotEmpty() || data.open != null || data.profile.plateNumber.isNotBlank()
+
+/**
+ * Whether a frame runs on under the tab bar: only the tab pages (a workspace on the tab route), which pad the end of their own
+ * scroll by LocalNavInset. The full-screen routes and the connect screen have no bar and keep clear of the bottom inset.
+ */
+internal fun phoneFrameUnderBar(route: PhoneRoute, hasLog: Boolean): Boolean = route == PhoneRoute.Tab && hasLog
 
 internal suspend fun sendAndConfirm(command: SyncCommand, send: suspend (SyncCommand) -> Unit, confirmed: () -> Unit) {
     send(command)
@@ -386,6 +404,10 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
     val swapBack = pageSwap(forward = false)
     // Where the greeting ends (root px), so the day haze stops just under it.
     var greetingBottom by remember { mutableFloatStateOf(0f) }
+    // Where the home's words and cards rest and where the header icons sit (root px), so the sun or moon only shows in free sky.
+    val skyShapes = remember { mutableStateMapOf<PhoneSkyShape, Rect>() }
+    val reportSkyShape = remember { { shape: PhoneSkyShape, rect: Rect -> if (skyShapes[shape] != rect) skyShapes[shape] = rect } }
+    var orbClear by remember { mutableStateOf<Boolean?>(null) }
 
     CompositionLocalProvider(LocalFollowUp provides followUp) {
         // 2.8: the phone shares the car's backdrop; the scaffold is transparent so the glow and the city show through.
@@ -393,16 +415,35 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
         ProvideLayout(compactApp = true, Modifier.fillMaxSize().sceneBackdrop()) { tokens ->
             val showTabs = hasLog && ui.routes.isEmpty()
             val rail = showTabs && phoneUsesRail(maxWidth, maxHeight)
+            val homeShown = hasLog && ui.route == PhoneRoute.Tab && ui.tab == PhoneTab.HOME.ordinal
             // One background layer for every screen: the city at full strength behind home, dimmed behind the other
             // tabs and full-screen routes, moving on the page clock so header, nav and backdrop never jump between screens.
-            val skyLevel = if (!hasLog) .34f else if (ui.route == PhoneRoute.Tab && ui.tab == 0) 1f else .30f
+            val skyLevel = if (!hasLog) .34f else if (homeShown) 1f else .30f
             val skyAlpha by animateFloatAsState(skyLevel, if (reduce) snap() else tween(MOTION_PAGE_MS), label = "phone-sky")
-            PhoneHomeBackdrop(Modifier.matchParentSize().graphicsLayer { alpha = skyAlpha }, hazeTo = greetingBottom)
+            // The sun or moon belongs to the home and to free sky: it stays out on the other screens and wherever it would touch the
+            // greeting's words, the cards or the header icons. A change waits until those have rested for PHONE_ORB_SETTLE_MS, so a
+            // page swap sliding the words past it never flashes it; the first answer is immediate.
+            val density = LocalDensity.current
+            val orbAt = phoneOrbAt(maxWidth, maxHeight, density.fontScale)
+            val orbCenter = with(density) { Offset(maxWidth.toPx() * orbAt.x, maxHeight.toPx() * orbAt.y) }
+            val orbReach = with(density) { phoneOrbReach(maxHeight).toPx() }
+            LaunchedEffect(orbCenter, orbReach, reduce) {
+                snapshotFlow { if (skyShapes.size == PhoneSkyShape.entries.size) phoneOrbClear(orbCenter, orbReach, skyShapes.values) else null }
+                    .filterNotNull()
+                    .collectLatest { clear -> if (orbClear != null && !reduce) delay(PHONE_ORB_SETTLE_MS); orbClear = clear }
+            }
+            PhoneHomeBackdrop(Modifier.matchParentSize().graphicsLayer { alpha = skyAlpha }, hazeTo = greetingBottom, showOrb = homeShown && orbClear == true, orbAt = orbAt)
             Scaffold(containerColor = Color.Transparent,
                 snackbarHost = { PhoneSnackbarHost(snackbar, Modifier.widthIn(max = 600.dp).padding(horizontal = 12.dp)) },
                 bottomBar = { if (showTabs && !rail) PhoneGlassNav(navTabs, ui.tab) { ui = ui.copy(tab = it) } }) { padding ->
-                Row(Modifier.fillMaxSize().padding(padding)) {
-                    if (rail) PhoneGlassRail(navTabs, ui.tab) { ui = ui.copy(tab = it) }
+                // The tab pages run on under the floating bar: the row keeps the top and side insets only, and LocalNavInset carries
+                // what the bar covers (beside the rail, the gesture bar), so each tab ends its own scroll above it instead of on a hard
+                // line. The snackbar still sits above the bar (the scaffold places it) and the pull indicator at the top of the page.
+                val direction = LocalLayoutDirection.current
+                val navInset = padding.calculateBottomPadding()
+                Row(Modifier.fillMaxSize().padding(start = padding.calculateStartPadding(direction), top = padding.calculateTopPadding(),
+                    end = padding.calculateEndPadding(direction))) {
+                    if (rail) PhoneGlassRail(navTabs, ui.tab, Modifier.padding(bottom = navInset)) { ui = ui.copy(tab = it) }
                     Box(Modifier.weight(1f).fillMaxHeight()) {
                         AnimatedContent(targetState = RouteFrame(ui.route, ui.routes.size), label = "phone-route", transitionSpec = {
                             if (reduce) fadeIn(snap()) togetherWith fadeOut(snap())
@@ -411,9 +452,11 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
                             else slideInHorizontally(tween(160, easing = FastOutSlowInEasing)) { -it / 4 } + fadeIn(tween(160)) togetherWith
                                 slideOutHorizontally(tween(160, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(120))
                         }) { frame ->
-                            // Every frame keeps to the class's content width and sits centred; the backdrop breathes around it.
-                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-                                Box(Modifier.contentWidth().fillMaxHeight()) {
+                            // Every frame keeps to the class's content width and sits centred; the backdrop breathes around it. A tab page
+                            // runs on under the bar; a full-screen route or the connect screen stops above the bottom inset as before.
+                            val underBar = phoneFrameUnderBar(frame.route, hasLog)
+                            Box(Modifier.fillMaxSize().padding(bottom = if (underBar) 0.dp else navInset), contentAlignment = Alignment.TopCenter) {
+                                CompositionLocalProvider(LocalNavInset provides (if (underBar) navInset else 0.dp)) { Box(Modifier.contentWidth().fillMaxHeight()) {
                                     when (val route = frame.route) {
                                         PhoneRoute.Settings -> PhoneSettingsPage(data, link, paired, busy, host.pair, host.unpair, cardAlerts, queued, host.openAlertSettings,
                                             host.importStatement, host.pickFile, onBack = { ui = ui.pop() }, accountSlot = { host.accountCard?.invoke() })
@@ -423,7 +466,7 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
                                         PhoneRoute.Vehicle -> PhoneVehicleScreen(data, link, now, onBack = { ui = ui.pop() })
                                         PhoneRoute.Tab -> Column(Modifier.fillMaxSize()) {
                                             PhoneHeader(data, link, paired, hasAssistant = host.assistant != null, onAssistant = { assistantOpen = true }, onSettings = { ui = ui.push(PhoneRoute.Settings) },
-                                                vehicleSwitcher = host.vehicleSwitcher)
+                                                vehicleSwitcher = host.vehicleSwitcher, onIcons = { reportSkyShape(PhoneSkyShape.HEADER_ICONS, it) })
                                             PhoneBanner(offline && !ui.dismissedBanners.contains("offline"),
                                                 "차량과 연결되지 않아요" + (lastSeen?.let { " · 마지막 수신 $it" } ?: "") + " · 보던 사본을 보여 주고 있어요",
                                                 Modifier.padding(horizontal = tokens.gutter, vertical = 4.dp), onDismiss = { ui = ui.copy(dismissedBanners = ui.dismissedBanners + "offline") })
@@ -436,7 +479,7 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
                                                         val body: @Composable () -> Unit = {
                                                             when (tab) {
                                                                 0 -> PhoneHomeTab(data, link, paired, busy, now, host.repository.photos, photoVersion, host.capture, host.fetchPhoto, commands, ui.pendingEdits,
-                                                                    onVehicle = { ui = ui.push(PhoneRoute.Vehicle) }, onGreetingBottom = { greetingBottom = it })
+                                                                    onVehicle = { ui = ui.push(PhoneRoute.Vehicle) }, onGreetingBottom = { greetingBottom = it }, onSkyShape = reportSkyShape)
                                                                 PhoneTab.BOOK.ordinal -> host.bookingTab(PhoneBookingArgs(data, paired, link.connected, busy, now, sendConfirmed))
                                                                 PhoneTab.TRIPS.ordinal -> PhoneTripList(data, ui.employeeFilter, paired, busy, now, ui.pendingEdits, commands, Modifier.fillMaxSize())
                                                                 PhoneTab.EXPENSES.ordinal -> host.expensesTab(PhoneExpensesArgs(data, month, ui.employeeFilter, paired, busy, send, cardAlerts, queued, host.openAlertSettings, zone))
@@ -457,7 +500,7 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
                                             }
                                         }
                                     }
-                                }
+                                } }
                             }
                         }
                     }
@@ -496,13 +539,15 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
 
 /**
  * The phone header on every tab, 56 dp: the brand mark, then the company-vehicle switcher (plate and live status, opens the
- * fleet sheet), then icon buttons for the assistant and settings in the Material on-surface colour.
+ * fleet sheet), then icon buttons for the assistant and settings in the Material on-surface colour. [onIcons] gets the box the
+ * icon glyphs fill (root px, 12 dp inside the 48-dp buttons), so the backdrop's sun or moon keeps clear of them.
  */
 @Composable private fun PhoneHeader(data: TripLogData, link: PhoneLink, paired: Boolean, hasAssistant: Boolean, onAssistant: () -> Unit, onSettings: () -> Unit,
-    vehicleSwitcher: (@Composable () -> Unit)? = null) {
+    modifier: Modifier = Modifier, vehicleSwitcher: (@Composable () -> Unit)? = null, onIcons: ((Rect) -> Unit)? = null) {
     val gutter = LocalLayout.current.gutter
     val tint = MaterialTheme.colorScheme.onSurface
-    Row(Modifier.fillMaxWidth().padding(start = gutter - 4.dp, end = (gutter - 12.dp).coerceAtLeast(4.dp), top = 4.dp, bottom = 4.dp).heightIn(min = 56.dp),
+    val glyphInset = with(LocalDensity.current) { 12.dp.toPx() }
+    Row(modifier.fillMaxWidth().padding(start = gutter - 4.dp, end = (gutter - 12.dp).coerceAtLeast(4.dp), top = 4.dp, bottom = 4.dp).heightIn(min = 56.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = "SHAREMATE", tint = Scene.brand, modifier = Modifier.size(30.dp))
         if (vehicleSwitcher != null) Box(Modifier.weight(1f)) { PressFeedback { vehicleSwitcher() } }
@@ -515,10 +560,13 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
             }
             if (paired) PhoneLinkBadge(link)
         }
-        if (hasAssistant) IconButton(onClick = onAssistant, modifier = Modifier.size(48.dp)) {
-            Icon(painterResource(R.drawable.ic_search), contentDescription = "운행 비서 열기", modifier = Modifier.size(24.dp), tint = tint)
+        Row(Modifier.then(if (onIcons != null) Modifier.onGloballyPositioned { onIcons(it.boundsInRoot().deflate(glyphInset)) } else Modifier),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (hasAssistant) IconButton(onClick = onAssistant, modifier = Modifier.size(48.dp)) {
+                Icon(painterResource(R.drawable.ic_search), contentDescription = "운행 비서 열기", modifier = Modifier.size(24.dp), tint = tint)
+            }
+            IconButton(onClick = onSettings, modifier = Modifier.size(48.dp)) { Icon(painterResource(R.drawable.ic_tune), contentDescription = "설정", modifier = Modifier.size(24.dp), tint = tint) }
         }
-        IconButton(onClick = onSettings, modifier = Modifier.size(48.dp)) { Icon(painterResource(R.drawable.ic_tune), contentDescription = "설정", modifier = Modifier.size(24.dp), tint = tint) }
     }
 }
 

@@ -38,6 +38,14 @@ class PhoneShellTest {
         assertTrue(phoneHasWorkspace(empty.copy(profile = FleetProfile(plateNumber = "12가3456")), false))
     }
 
+    @Test fun onlyTabPagesRunUnderTheFloatingBar() {
+        assertTrue("탭 화면은 막대 아래까지 스크롤", phoneFrameUnderBar(PhoneRoute.Tab, hasLog = true))
+        assertFalse("연결 화면은 막대가 없어 아래 여백을 지킴", phoneFrameUnderBar(PhoneRoute.Tab, hasLog = false))
+        assertFalse("설정 같은 전체 화면은 아래 여백을 지킴", phoneFrameUnderBar(PhoneRoute.Settings, hasLog = true))
+        assertFalse(phoneFrameUnderBar(PhoneRoute.TripDetail("t"), hasLog = true))
+        assertFalse(phoneFrameUnderBar(PhoneRoute.Vehicle, hasLog = true))
+    }
+
     private val zone = ZoneOffset.UTC
     private val now = Instant.parse("2026-10-23T05:02:00Z").toEpochMilli()
     private val hour = 3_600_000L

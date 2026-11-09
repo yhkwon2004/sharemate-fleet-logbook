@@ -6,7 +6,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -37,6 +36,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -48,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,13 +59,13 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
@@ -168,6 +169,36 @@ internal fun phoneHomeSplit(width: Dp, height: Dp, fontScale: Float = 1f): Boole
 internal fun phoneHazeEnd(greetingBottom: Float, height: Float): Float =
     if (greetingBottom > 0f && greetingBottom < height) greetingBottom else height * .26f
 
+/** What the phone home lays over the sky, reported where it rests (root px) so the backdrop keeps its sun or moon clear of it. */
+internal enum class PhoneSkyShape { DATE, HEADLINE, SUBTITLE, CARDS, HEADER_ICONS }
+
+/** The phone backdrop's tower scale, and the day sun's disc as a share of the tower height (Sky.kt; the largest of the three phases). */
+private const val PHONE_SKY_TOWERS = .30f
+private const val PHONE_ORB_DISC = .045f
+
+/** How long the home's shapes rest before the sun or moon follows them: longer than a page swap (220 ms, 40 ms enter delay). */
+internal const val PHONE_ORB_SETTLE_MS = 300L
+
+/**
+ * Where the phone home's sun or moon rests, as fractions of the window: the free sky right of the greeting in portrait, and in
+ * the landscape split the corner right of the header icons, above the card grid.
+ */
+internal fun phoneOrbAt(width: Dp, height: Dp, fontScale: Float = 1f): Offset =
+    if (phoneHomeSplit(width, height, fontScale)) Offset(.93f, .12f) else Offset(.90f, .175f)
+
+/** How far from its centre the sun or moon needs free sky in a window [height] tall: the day disc plus an 8-dp margin. */
+internal fun phoneOrbReach(height: Dp): Dp = height * (PHONE_SKY_TOWERS * PHONE_ORB_DISC) + 8.dp
+
+/** Whether the sun or moon at [center] (root px) with [reach] touches none of [shapes] (the greeting's lines, the cards, the header icons). */
+internal fun phoneOrbClear(center: Offset, reach: Float, shapes: Collection<Rect>): Boolean {
+    val orb = Rect(center, reach)
+    return shapes.none { it.overlaps(orb) }
+}
+
+/** Reports where this element rests (root px) as [shape], for the backdrop's sun or moon; nothing when [onShape] is null. */
+internal fun Modifier.reportSkyShape(shape: PhoneSkyShape, onShape: ((PhoneSkyShape, Rect) -> Unit)?): Modifier =
+    if (onShape == null) this else onGloballyPositioned { onShape(shape, it.boundsInRoot()) }
+
 // ───────────────────────── glass card helpers ─────────────────────────
 
 /** The drop shadow under a tappable glass card: Scene.shadow, which is transparent by night so nothing is drawn there. */
@@ -176,6 +207,17 @@ internal fun phoneHazeEnd(greetingBottom: Float, height: Float): Float =
     val strength = (tone.alpha / .12f).coerceIn(0f, 1f)
     return if (strength <= 0f) this else this.shadow(6.dp, shape, clip = false, ambientColor = tone.copy(alpha = strength), spotColor = tone.copy(alpha = strength))
 }
+
+/**
+ * The glass alpha of a card that casts [cardShadow]: opaque while a shadow is drawn, since the platform leaves the area under the
+ * caster unshaded and translucent glass then shows a grey ring around a hard-edged lighter box; [alpha] by night, when Scene.shadow
+ * is transparent and there is no shadow to hide.
+ */
+internal fun shadowedGlassAlpha(shadow: Color, alpha: Float): Float = if (shadow.alpha > 0f) 1f else alpha
+
+/** The one material of the phone home's shadowed cards and widgets: Scene.glass, opaque by day, [alpha] by night. */
+@Composable @ReadOnlyComposable internal fun shadowedGlass(alpha: Float = .88f): Color =
+    Scene.glass.copy(alpha = shadowedGlassAlpha(Scene.shadow, alpha))
 
 /** The faint top sheen of a glass card, from the scene's lit edge rather than a fixed white. */
 @Composable private fun cardSheen(): Brush {
@@ -188,19 +230,24 @@ internal fun phoneHazeEnd(greetingBottom: Float, height: Float): Float =
 /**
  * The phone home's top: the date line, the greeting, the link line and the four destination cards (2 × 2 on a phone, four
  * across on a tablet, one per row at a 1.3× font). Drawn over the backdrop the shell lays behind the home tab; [onGreetingBottom]
- * reports where the greeting ends (root px) so the day haze can stop just under it.
+ * reports where the greeting ends (root px) so the day haze can stop just under it, and [onShape] where the words and the cards
+ * rest, so the sun or moon stays in free sky. No bottom padding: the home column spaces its sections.
  */
 @Composable internal fun PhoneHomeHero(data: TripLogData, link: PhoneLink, paired: Boolean, now: Long, onVehicle: () -> Unit, onBook: () -> Unit,
-    onLog: () -> Unit, onExport: (YearMonth) -> Unit, modifier: Modifier = Modifier, columns: Int = 2, onGreetingBottom: ((Float) -> Unit)? = null) {
-    Column(modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        PhoneHomeGreeting(data, link, paired, now, onBottom = onGreetingBottom)
-        PhoneHomeCards(data, link, now, columns, onVehicle, onBook, onLog, onExport, Modifier.padding(top = 8.dp))
+    onLog: () -> Unit, onExport: (YearMonth) -> Unit, modifier: Modifier = Modifier, columns: Int = 2, onGreetingBottom: ((Float) -> Unit)? = null,
+    onShape: ((PhoneSkyShape, Rect) -> Unit)? = null) {
+    Column(modifier.fillMaxWidth().padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        PhoneHomeGreeting(data, link, paired, now, onBottom = onGreetingBottom, onShape = onShape)
+        PhoneHomeCards(data, link, now, columns, onVehicle, onBook, onLog, onExport, Modifier.padding(top = 8.dp).reportSkyShape(PhoneSkyShape.CARDS, onShape))
     }
 }
 
-/** The greeting block: the date in the brand tone, one headline that cross-fades when it changes, and the link line. */
+/**
+ * The greeting block: the date in the brand tone, one headline that cross-fades when it changes, and the link line. [onShape]
+ * gets each line's resting box (root px; as wide as its words), so the shell can keep the sun or moon beside them, never under them.
+ */
 @Composable internal fun PhoneHomeGreeting(data: TripLogData, link: PhoneLink, paired: Boolean, now: Long, modifier: Modifier = Modifier,
-    onBottom: ((Float) -> Unit)? = null, headlineLines: Int = 2) {
+    onBottom: ((Float) -> Unit)? = null, headlineLines: Int = 2, onShape: ((PhoneSkyShape, Rect) -> Unit)? = null) {
     val zone = remember { ZoneId.systemDefault() }
     val at = Instant.ofEpochMilli(now).atZone(zone)
     val demo = data.profile.demoMode
@@ -210,25 +257,28 @@ internal fun phoneHazeEnd(greetingBottom: Float, height: Float): Float =
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
         // The phone status bar already shows the time and the header the brand, so the hero opens with the date in the brand tone.
         Text("${dayLabel(at.toLocalDate())}  ·  FLEET JOURNAL", style = MaterialTheme.typography.labelLarge, color = Scene.brand, letterSpacing = 1.sp,
-            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.clearAndSetSemantics {})
-        GreetingText(homeGreeting(at.hour, driver?.name, open != null), maxLines = headlineLines)
+            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.clearAndSetSemantics {}.reportSkyShape(PhoneSkyShape.DATE, onShape))
+        GreetingText(homeGreeting(at.hour, driver?.name, open != null), maxLines = headlineLines, onShape = onShape)
         // No live region here: the distance in this line changes on every poll while driving; the link badge announces state.
-        Text(phoneSubtitle(paired, link.connected, open), style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary)
+        Text(phoneSubtitle(paired, link.connected, open), style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary,
+            modifier = Modifier.reportSkyShape(PhoneSkyShape.SUBTITLE, onShape))
     }
 }
 
 /** The headline swaps with a 220 ms cross-fade and a 4 dp lift when its words change (a new employee, a trip starting); a snap under reduced motion. */
-@Composable private fun GreetingText(text: String, maxLines: Int = 2) {
+@Composable private fun GreetingText(text: String, modifier: Modifier = Modifier, maxLines: Int = 2, onShape: ((PhoneSkyShape, Rect) -> Unit)? = null) {
     val reduce = LocalReduceMotion.current
     val lift = with(LocalDensity.current) { 4.dp.roundToPx() }
     val color = Scene.text
-    AnimatedContent(targetState = text, label = "greeting", transitionSpec = {
+    AnimatedContent(targetState = text, modifier = modifier, label = "greeting", transitionSpec = {
         if (reduce) fadeIn(snap()) togetherWith fadeOut(snap())
         else (fadeIn(tween(MOTION_ENTER_MS, easing = FastOutSlowInEasing)) + slideInVertically(tween(MOTION_ENTER_MS, easing = FastOutSlowInEasing)) { lift }) togetherWith
             (fadeOut(tween(140, easing = FastOutSlowInEasing)) + slideOutVertically(tween(MOTION_ENTER_MS, easing = FastOutSlowInEasing)) { -lift })
     }) { value ->
+        // The slot stays full width; the words keep their own width so the sun or moon can tell where they end. Only the arriving headline reports.
         Text(value, style = MaterialTheme.typography.headlineMedium, color = color, fontWeight = FontWeight.Bold, maxLines = maxLines, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth().semantics { heading() })
+            modifier = Modifier.fillMaxWidth().wrapContentWidth(Alignment.Start).semantics { heading() }
+                .reportSkyShape(PhoneSkyShape.HEADLINE, onShape.takeIf { value == text }))
     }
 }
 
@@ -263,12 +313,15 @@ private class PhoneCard(val title: String, val subtitle: String, val icon: Int, 
     }
 }
 
-/** A glass destination card: lit icon tile, the title on one line, one real line under it. At least 84 dp tall; .97 press scale, the day shadow. */
+/**
+ * A glass destination card: lit icon tile, the title on one line, one real line under it. At least 84 dp tall; .97 press scale,
+ * the day shadow on opaque glass (.88 glass by night, where there is no shadow).
+ */
 @Composable private fun PhoneActionCard(card: PhoneCard, vertical: Boolean, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(20.dp)
     val source = remember { MutableInteractionSource() }
     val description = "${card.title}, ${card.subtitle}" + if (card.badge > 0) ", 확인 필요 ${card.badge}건" else ""
-    Surface(onClick = card.onClick, shape = shape, color = Scene.glass.copy(alpha = .88f), border = Scene.edge, interactionSource = source,
+    Surface(onClick = card.onClick, shape = shape, color = shadowedGlass(.88f), border = Scene.edge, interactionSource = source,
         modifier = modifier.cardShadow(shape).pressable(source).semantics(mergeDescendants = true) { contentDescription = description; role = Role.Button }) {
         val tile: @Composable () -> Unit = {
             Box {
@@ -322,8 +375,7 @@ private class PhoneCard(val title: String, val subtitle: String, val icon: Int, 
     val km = String.format(Locale.KOREA, "%,.1f", day.km)
     val numberStyle = MaterialTheme.typography.headlineMedium.copy(fontFeatureSettings = "tnum")
     val content: @Composable () -> Unit = {
-        Column(Modifier.fillMaxHeight().heightIn(min = 120.dp).padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("오늘 운행", style = MaterialTheme.typography.labelMedium, color = Scene.textMuted)
+        WidgetBody("오늘 운행") {
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (live) Text(km, style = numberStyle, color = Scene.text, maxLines = 1)
                 else DigitChange(km, style = numberStyle, color = Scene.text)
@@ -332,9 +384,11 @@ private class PhoneCard(val title: String, val subtitle: String, val icon: Int, 
             DigitChange("${day.trips}건 · ${formatWon(day.expenseWon)}", style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary)
         }
     }
-    if (onClick != null) Surface(onClick = onClick, shape = shape, color = Scene.glass, border = Scene.edge, interactionSource = source,
+    // The destination cards' material: opaque glass under the day shadow, .88 by night.
+    val glass = shadowedGlass(.88f)
+    if (onClick != null) Surface(onClick = onClick, shape = shape, color = glass, border = Scene.edge, interactionSource = source,
         modifier = modifier.cardShadow(shape).pressable(source).semantics(mergeDescendants = true) { contentDescription = "$spoken, 운행 열기"; role = Role.Button }) { content() }
-    else Surface(shape = shape, color = Scene.glass, border = Scene.edge, modifier = modifier.semantics(mergeDescendants = true) { contentDescription = spoken }) { content() }
+    else Surface(shape = shape, color = glass, border = Scene.edge, modifier = modifier.semantics(mergeDescendants = true) { contentDescription = spoken }) { content() }
 }
 
 /** 이달 운행일지: one word for the month in its tone and the completion ring. Opens 현황. */
@@ -342,15 +396,25 @@ private class PhoneCard(val title: String, val subtitle: String, val icon: Int, 
     val shape = RoundedCornerShape(22.dp)
     val source = remember { MutableInteractionSource() }
     val tone = when (month.tone) { 1 -> Scene.glow; 2 -> Scene.warn; else -> Scene.text }
-    Surface(onClick = onClick, shape = shape, color = Scene.glass, border = Scene.edge, interactionSource = source,
+    Surface(onClick = onClick, shape = shape, color = shadowedGlass(.88f), border = Scene.edge, interactionSource = source,
         modifier = modifier.cardShadow(shape).pressable(source).semantics(mergeDescendants = true) { contentDescription = "${month.title} ${month.headline}, ${month.detail}, 현황 열기"; role = Role.Button }) {
-        Row(Modifier.fillMaxHeight().heightIn(min = 120.dp).padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("이달 운행일지", style = MaterialTheme.typography.labelMedium, color = Scene.textMuted)
-                DigitChange(month.headline, style = MaterialTheme.typography.titleMedium, color = tone, fontWeight = FontWeight.Bold, maxLines = 3)
-            }
-            PhoneRing(month.percent, tone, 52.dp, 6.dp)
+        WidgetBody("이달 운행일지", trailing = { PhoneRing(month.percent, tone, 52.dp, 6.dp) }) {
+            DigitChange(month.headline, style = MaterialTheme.typography.titleMedium, color = tone, fontWeight = FontWeight.Bold, maxLines = 3)
         }
+    }
+}
+
+/**
+ * The two widgets' one layout, so their labels line up across the row: 16-dp padding, the label at the top left and the value
+ * 6 dp under it; an optional [trailing] part (the month ring) sits centred at the end. The cards' top sheen lies under it.
+ */
+@Composable private fun WidgetBody(label: String, modifier: Modifier = Modifier, trailing: (@Composable () -> Unit)? = null, value: @Composable () -> Unit) {
+    Row(modifier.fillMaxHeight().heightIn(min = 120.dp).background(cardSheen()).padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = Scene.textMuted)
+            value()
+        }
+        if (trailing != null) Box(Modifier.align(Alignment.CenterVertically)) { trailing() }
     }
 }
 
@@ -388,13 +452,15 @@ private class PhoneCard(val title: String, val subtitle: String, val icon: Int, 
 
 private val NavItemShape = RoundedCornerShape(24.dp)
 
-/** One tab: icon and label, lit in the glow when active (the icon grows a touch on a spring), .97 press scale and a bounded ripple. */
+/**
+ * One tab: icon and label, lit in the glow when active, .97 press scale and a bounded ripple. A page change moves only the pill
+ * and the tint (spec C: tab bars do not animate beyond that), so the icon keeps its size.
+ */
 @Composable private fun NavItem(tab: NavTab, active: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val source = remember { MutableInteractionSource() }
     // The lit state glides from the old tab to the new one on the page clock instead of jumping.
     val tint by animateColorAsState(if (active) Scene.glow else Scene.textSecondary, tabColorSpec(), label = "tab-tint")
     val label by animateColorAsState(if (active) Scene.glow else Scene.text, tabColorSpec(), label = "tab-label")
-    val scale by animateFloatAsState(if (active) 1.08f else 1f, springSpec(), label = "tab-icon")
     Column(modifier.clip(NavItemShape).pressable(source).clickable(interactionSource = source, indication = LocalIndication.current, onClick = onClick)
         .clearAndSetSemantics {
             this.selected = active; role = Role.Tab
@@ -402,7 +468,7 @@ private val NavItemShape = RoundedCornerShape(24.dp)
         }
         .padding(vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)) {
         Box {
-            Icon(painterResource(tab.icon), null, Modifier.size(24.dp).graphicsLayer { scaleX = scale; scaleY = scale }, tint = tint)
+            Icon(painterResource(tab.icon), null, Modifier.size(24.dp), tint = tint)
             if (tab.badge > 0) CountBadge(tab.badge, Modifier.align(Alignment.TopEnd).offset(x = 10.dp, y = (-4).dp))
         }
         Text(tab.label, style = MaterialTheme.typography.labelMedium, color = label, maxLines = 1)
@@ -543,18 +609,20 @@ private val NavItemShape = RoundedCornerShape(24.dp)
 // ───────────────────────── backdrop ─────────────────────────
 
 /**
- * The phone home's backdrop: the city low behind the greeting and the cards (horizon at 40 %, towers at 30 % scale, the sun or
- * the moon at (.86, .235)), fading into the base colour before the task list. By night the scrim comes in from the left as built;
- * by day a white haze (Scene.haze) runs down from the top, .88 → .76 at the greeting's bottom ([hazeTo], root px; a quarter of the
- * height until measured) → clear 120 dp lower, so the greeting reads on white rather than on the sky. The two cross-fade with the phase.
+ * The phone home's backdrop: the city low behind the greeting and the cards (horizon at 40 %, towers at 30 % scale), fading into
+ * the base colour before the task list. The sun or the moon sits at [orbAt] (phoneOrbAt: the free sky right of the greeting) and
+ * only while [showOrb]: the shell passes it on the home tab when the orb touches none of the words, the cards or the header icons.
+ * By night the scrim comes in from the left as built; by day a white haze (Scene.haze) runs down from the top, .88 → .76 at the
+ * greeting's bottom ([hazeTo], root px; a quarter of the height until measured) → clear 120 dp lower, so the greeting reads on
+ * white rather than on the sky. The two cross-fade with the phase.
  */
-@Composable internal fun PhoneHomeBackdrop(modifier: Modifier = Modifier, hazeTo: Float = 0f) {
+@Composable internal fun PhoneHomeBackdrop(modifier: Modifier = Modifier, hazeTo: Float = 0f, showOrb: Boolean = true, orbAt: Offset = Offset(.90f, .175f)) {
     val haze = Scene.haze
     val bg = Scene.bg
     val reduce = LocalReduceMotion.current
     val fade = with(LocalDensity.current) { 120.dp.toPx() }
     Box(modifier) {
-        HomeBackdrop(Modifier.matchParentSize(), horizonAt = .40f, heightScale = .30f, moonAt = Offset(.86f, .235f), leftScrim = false)
+        HomeBackdrop(Modifier.matchParentSize(), horizonAt = .40f, heightScale = PHONE_SKY_TOWERS, moonAt = orbAt, leftScrim = false, showOrb = showOrb)
         Crossfade(LocalScenePhase.current == ScenePhase.DAY, Modifier.matchParentSize(), animationSpec = if (reduce) snap() else tween(MOTION_SCENE_MS), label = "phone-haze") { day ->
             if (day) Spacer(Modifier.fillMaxSize().drawWithCache {
                 val end = phoneHazeEnd(hazeTo, size.height)
