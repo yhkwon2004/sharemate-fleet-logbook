@@ -27,6 +27,10 @@ class VehiclePaneTest {
         // FULL and EXPANDED: the car card beside the info column with the 420 drawing, the four cards two up.
         assertEquals(twoUp, vehiclePaneLayout(carLayout(1680.dp, 1200.dp), 1200.dp))
         assertEquals(twoUp, vehiclePaneLayout(carLayout(1200.dp, 800.dp), 1104.dp))
+        // Beside the 지금 column the pane is the 1112-dp page; a 1.3x font's 1046-dp page is 805 dp of effective width, so it stacks.
+        assertEquals("FULL의 1112 페이지", twoUp, vehiclePaneLayout(carLayout(1680.dp, 1200.dp), 1112.dp, 1f))
+        assertEquals("1.3배 글꼴은 한 열, 그림 260", stacked, vehiclePaneLayout(carLayout(1680.dp / 1.3f, 1200.dp), 1046.dp, 1.3f))
+        assertEquals("1400 dp 창의 832 페이지", stacked, vehiclePaneLayout(carLayout(1400.dp, 1200.dp), 832.dp))
         // A split window can carry an EXPANDED class while the pane itself is too narrow for two columns.
         assertEquals(stacked, vehiclePaneLayout(carLayout(1200.dp, 800.dp), 900.dp))
         // MEDIUM and COMPACT: one column with the 260 drawing, the cards stacked.

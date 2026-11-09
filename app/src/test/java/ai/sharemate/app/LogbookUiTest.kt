@@ -199,4 +199,20 @@ class LogbookUiTest {
         assertEquals("1.3배 글꼴은 항상 한 열", 1, settingsFieldColumns(carLayout(1680.dp), 1.3f))
         assertEquals("MEDIUM 이하는 한 열", 1, settingsFieldColumns(carLayout(1000.dp), 1f))
     }
+
+    @Test fun theLogSplitsOnlyWhenThePageHasRoom() {
+        // FULL beside the 지금 column: the 1112-dp page, less the 24-dp gap, gives the list 48 % (the detail the other 566).
+        assertEquals(522.24f, logListWidth(carLayout(1680.dp), 1112.dp, 24.dp, 1f)!!.value, .01f)
+        assertNull("1400 dp 창의 832 페이지는 옆 시트", logListWidth(carLayout(1400.dp), 832.dp, 24.dp, 1f))
+        assertNull("1.3배 글꼴의 1046 페이지(805 상당)는 옆 시트", logListWidth(carLayout(1680.dp / 1.3f), 1046.dp, 20.dp, 1.3f))
+        assertEquals("열이 없는 EXPANDED", 520.32f, logListWidth(carLayout(1200.dp), 1104.dp, 20.dp, 1f)!!.value, .01f)
+        assertNull("MEDIUM은 옆 시트", logListWidth(carLayout(1000.dp), 936.dp, 16.dp, 1f))
+    }
+
+    @Test fun settingsCardsGoTwoUpWhenThePageHasRoom() {
+        assertEquals("FULL: 2 × 544", 2, settingsCardColumns(carLayout(1680.dp), 1112.dp, 1f))
+        assertEquals("1.3배 글꼴의 1046 페이지도 두 장", 2, settingsCardColumns(carLayout(1680.dp / 1.3f), 1046.dp, 1.3f))
+        assertEquals("900 ÷ 1.3 = 692는 한 장", 1, settingsCardColumns(carLayout(1680.dp / 1.3f), 900.dp, 1.3f))
+        assertEquals("MEDIUM은 한 장", 1, settingsCardColumns(carLayout(1000.dp), 936.dp, 1f))
+    }
 }
