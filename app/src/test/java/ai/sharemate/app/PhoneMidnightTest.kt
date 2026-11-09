@@ -1,5 +1,7 @@
 package ai.sharemate.app
 
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -94,5 +96,38 @@ class PhoneMidnightTest {
         assertEquals(420f, phoneHazeEnd(420f, 2000f), 0f)
         assertEquals("측정 전에는 높이의 26 %", 520f, phoneHazeEnd(0f, 2000f), 0f)
         assertEquals("화면 밖 값은 무시", 520f, phoneHazeEnd(2400f, 2000f), 0f)
+    }
+
+    @Test fun shadowedCardsAreOpaqueByDayAndKeepTheirGlassByNight() {
+        assertEquals("낮: 그림자가 유리에 비치지 않게 불투명", 1f, shadowedGlassAlpha(DaySceneColors.shadow, .88f), 0f)
+        assertEquals("밤: 그림자가 없으니 유리 그대로", .88f, shadowedGlassAlpha(NightSceneColors.shadow, .88f), 0f)
+    }
+
+    @Test fun orbRestsRightOfTheGreetingOrBesideTheHeaderInTheSplit() {
+        assertEquals("세로: 인사말 오른쪽의 빈 하늘", Offset(.90f, .175f), phoneOrbAt(411.dp, 914.dp))
+        assertEquals("가로 분할: 헤더 아이콘 오른쪽, 카드 위", Offset(.93f, .12f), phoneOrbAt(914.dp, 411.dp))
+        assertEquals("1.3× 글꼴은 분할하지 않음", Offset(.90f, .175f), phoneOrbAt(914.dp, 411.dp, 1.3f))
+        assertEquals("낮 해 원반(타워 높이 30 %의 4.5 %) + 8 dp", 914f * .30f * .045f + 8f, phoneOrbReach(914.dp).value, 1e-3f)
+    }
+
+    @Test fun orbShowsOnlyInFreeSky() {
+        // The 411 × 914 dp reference phone in dp units: the orb at (370, 160) with a 20.3-dp reach, the words as measured on it.
+        val center = Offset(411f * .90f, 914f * .175f)
+        val reach = phoneOrbReach(914.dp).value
+        val date = Rect(20f, 90f, 263f, 110f)
+        val headline = Rect(20f, 117f, 336f, 153f)
+        val subtitle = Rect(20f, 157f, 221f, 177f)
+        val cards = Rect(20f, 193f, 391f, 425f)
+        val icons = Rect(323f, 40f, 391f, 72f)
+        assertTrue(phoneOrbClear(center, reach, listOf(date, headline, subtitle, cards, icons)))
+        assertFalse("1.15× 글꼴처럼 인사말이 길어지면 숨김", phoneOrbClear(center, reach, listOf(headline.copy(right = 383f))))
+        assertFalse("두 줄 안내문이 오른쪽 끝까지 오면 숨김", phoneOrbClear(center, reach, listOf(subtitle.copy(right = 391f, bottom = 197f))))
+        assertFalse("카드가 올라와 닿으면 숨김", phoneOrbClear(center, reach, listOf(cards.copy(top = 175f))))
+        assertTrue("잰 것이 없으면 걸릴 것도 없음", phoneOrbClear(center, reach, emptyList()))
+        // Landscape split on the same phone: the moon at (850, 49) clears the settings glyph that ends at x = 834.
+        val moon = Offset(914f * .93f, 411f * .12f)
+        val moonReach = phoneOrbReach(411.dp).value
+        assertTrue(phoneOrbClear(moon, moonReach, listOf(Rect(754f, 44f, 834f, 68f), Rect(479f, 92f, 834f, 360f))))
+        assertFalse("좁은 가로 창에서 설정 아이콘에 닿으면 숨김", phoneOrbClear(Offset(850f * .93f, 49f), moonReach, listOf(Rect(722f, 44f, 802f, 68f))))
     }
 }

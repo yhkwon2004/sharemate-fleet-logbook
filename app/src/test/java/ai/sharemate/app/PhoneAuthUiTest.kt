@@ -3,6 +3,7 @@ package ai.sharemate.app
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
@@ -119,5 +120,14 @@ class PhoneAuthUiTest {
         assertFalse(signInSplit(412.dp, 915.dp))
         assertFalse("정사각형은 세로 배치", signInSplit(600.dp, 600.dp))
         assertTrue("낮 안개는 위쪽 55 %", SIGN_IN_HAZE_FRACTION == .55f)
+    }
+
+    @Test fun chosenCardLaysTheSelectionOverOpaqueGlass() {
+        listOf(DaySceneColors, NightSceneColors).forEach { scene ->
+            assertEquals("고르지 않은 카드는 유리 그대로", scene.glass, choiceCardColor(false, scene.glass, scene.selectionFill))
+            val chosen = choiceCardColor(true, scene.glass, scene.selectionFill)
+            assertEquals("고른 카드도 불투명", 1f, chosen.alpha, 0f)
+            assertNotEquals("고른 카드는 채움이 보임", scene.glass, chosen)
+        }
     }
 }

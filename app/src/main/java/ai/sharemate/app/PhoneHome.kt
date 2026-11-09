@@ -38,6 +38,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
@@ -55,6 +56,7 @@ import java.time.ZoneId
  * "지금 할 일" in the car's order (safety → money the car measured → paperwork), one unclassified trip at a time, then the incident
  * buttons. Every number is a real count; a task card appears only when there is a task, and when the stack empties once in a
  * session the bar says so and points at 현황. In landscape the greeting sits beside the cards and widgets (40/60).
+ * Sections sit one section gap apart (24 dp on the phone) and the column scrolls on under the floating tab bar (LocalNavInset).
  */
 
 /** Trips the home stack still asks about: closed, unclassified, and not already answered in flight. */
@@ -95,7 +97,7 @@ private val shownKeysSaver = listSaver<MutableState<Set<String>>, String>(save =
 
 @Composable internal fun PhoneHomeTab(data: TripLogData, link: PhoneLink, paired: Boolean, busy: Boolean, now: Long, photos: PhotoStore, photoVersion: Int,
     capture: (String) -> Unit, fetchPhoto: (String) -> Unit, commands: PhoneCommands, pending: Map<String, PendingEdit>, modifier: Modifier = Modifier,
-    onVehicle: () -> Unit = {}, onGreetingBottom: (Float) -> Unit = {}) {
+    onVehicle: () -> Unit = {}, onGreetingBottom: (Float) -> Unit = {}, onSkyShape: (PhoneSkyShape, Rect) -> Unit = { _, _ -> }) {
     val zone = remember { ZoneId.systemDefault() }
     val followUp = LocalFollowUp.current
     val demo = data.profile.demoMode
@@ -115,10 +117,12 @@ private val shownKeysSaver = listSaver<MutableState<Set<String>>, String>(save =
         else if (paired && sawTasks && !celebrated) { celebrated = true; followUp(FollowUp("이달 정리가 끝났어요", "현황 보기") { commands.openTab(PhoneTab.REPORT.ordinal) }) }
     }
     val layout = LocalLayout.current
+    val navInset = LocalNavInset.current
     val fontScale = LocalDensity.current.fontScale
     val scroll = rememberScrollState()
-    // The haze under the greeting follows its resting position only; a scrolled hero does not drag the scrim with it.
+    // The haze under the greeting and the sun or moon beside it follow the resting layout only; a scrolled hero drags neither along.
     val greetingBottom: (Float) -> Unit = { if (scroll.value == 0) onGreetingBottom(it) }
+    val skyShape: (PhoneSkyShape, Rect) -> Unit = { shape, rect -> if (scroll.value == 0) onSkyShape(shape, rect) }
     val onBook = { commands.openTab(PhoneTab.BOOK.ordinal) }
     val onLog = { commands.openTab(PhoneTab.TRIPS.ordinal) }
     val onMonth = { commands.openReport(YearMonth.now()) }
@@ -128,23 +132,26 @@ private val shownKeysSaver = listSaver<MutableState<Set<String>>, String>(save =
         val contentWidth = maxWidth - layout.gutter * 2
         val cardsWidth = if (split) (contentWidth - layout.cardGap * 2) * .6f else contentWidth
         val columns = phoneHeroColumns(cardsWidth, fontScale)
-        Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = layout.gutter).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        // Sections one section gap apart. The column runs on under the floating tab bar: its end clears the bar by 16 dp.
+        Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = layout.gutter).padding(bottom = navInset + 16.dp),
+            verticalArrangement = Arrangement.spacedBy(layout.sectionGap)) {
             // The car's home in phone size: greeting and the four destinations over the city, then today and this month.
             // Landscape phone: the greeting takes the left 40 % (three headline lines in the narrower column), cards and widgets the right 60 %.
-            if (split) Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(layout.cardGap * 2)) {
-                PhoneHomeGreeting(data, link, paired, now, Modifier.weight(2f).padding(top = 8.dp), onBottom = greetingBottom, headlineLines = 3)
+            if (split) Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(layout.cardGap * 2)) {
+                PhoneHomeGreeting(data, link, paired, now, Modifier.weight(2f).padding(top = 8.dp), onBottom = greetingBottom, headlineLines = 3, onShape = skyShape)
                 Column(Modifier.weight(3f), verticalArrangement = Arrangement.spacedBy(layout.cardGap)) {
-                    PhoneHomeCards(data, link, now, columns, onVehicle, onBook, onLog, commands.openReport)
+                    PhoneHomeCards(data, link, now, columns, onVehicle, onBook, onLog, commands.openReport, Modifier.reportSkyShape(PhoneSkyShape.CARDS, skyShape))
                     PhoneWidgets(data, now, onMonth, onToday = onLog)
                 }
             } else {
                 PhoneHomeHero(data, link, paired, now, onVehicle = onVehicle, onBook = onBook, onLog = onLog, onExport = commands.openReport,
-                    columns = columns, onGreetingBottom = greetingBottom)
+                    columns = columns, onGreetingBottom = greetingBottom, onShape = skyShape)
                 PhoneWidgets(data, now, onMonth, onToday = onLog, stacked = columns == 1)
             }
             if (open != null) HomeAppear("open", index++, shown) { PhoneOpenTripCard(open, link) }
             if (paired) {
-                if (taskCount > 0) {
+                // "지금 할 일" is one section: its title and its cards a card gap apart.
+                if (taskCount > 0) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(layout.cardGap)) {
                     HomeAppear("tasks-title", index++, shown) { PhoneSectionTitle("지금 할 일", trailing = "${taskCount}건") }
                     incidents.forEach { incident ->
                         HomeAppear("incident:${incident.id}", index++, shown) { PhoneIncidentCard(incident, data, busy, commands.send, photos, photoVersion, capture, fetchPhoto) }
