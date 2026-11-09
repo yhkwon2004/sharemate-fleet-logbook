@@ -1,11 +1,17 @@
 package ai.sharemate.app
 
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.intl.LocaleList
+import androidx.compose.ui.text.style.LineBreak
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDateTime
+import kotlin.math.hypot
 
 class SceneTest {
     private fun at(month: Int, hour: Int, minute: Int = 0) = LocalDateTime.of(2026, month, 15, hour, minute)
@@ -110,8 +116,8 @@ class SceneTest {
     @Test fun theDayHazeIsWhiteAndLighterThanTheNightScrim() {
         val day = DaySceneColors
         val night = NightSceneColors
-        val carDay = skyScrims(day = true, compact = false, leftScrim = true, horizonAt = .52f, haze = day.haze, bg = day.bg, heroEdge = .47f, heroFade = .18f)
-        val carNight = skyScrims(day = false, compact = false, leftScrim = true, horizonAt = .52f, haze = night.haze, bg = night.bg)
+        val carDay = skyScrims(day = true, leftScrim = true, horizonAt = .52f, haze = day.haze, bg = day.bg, heroEdge = .47f, heroFade = .18f)
+        val carNight = skyScrims(day = false, leftScrim = true, horizonAt = .52f, haze = night.haze, bg = night.bg)
         assertEquals(2, carDay.size)
         assertEquals(2, carNight.size)
         val hero = carDay[0]
@@ -134,17 +140,58 @@ class SceneTest {
         assertEquals(.90f, carNight[1].stops[3].second.alpha, .005f)
         assertEquals("아래쪽은 바탕색으로 끝남", day.bg, carDay[1].stops.last().second)
         assertEquals(night.bg, carNight[1].stops.last().second)
-        val phoneDay = skyScrims(day = true, compact = true, leftScrim = true, horizonAt = .40f, haze = day.haze, bg = day.bg, greetingBottom = .20f, greetingFade = .14f)
-        assertTrue("휴대폰 낮: 위에서 내려오는 안개", phoneDay[0].vertical)
-        assertEquals(.88f, phoneDay[0].stops[0].second.alpha, .005f)
-        assertEquals(.76f, phoneDay[0].stops[1].second.alpha, .005f)
-        assertEquals(.34f, phoneDay[0].stops[2].first, 1e-3f)
-        val signInDay = skyScrims(day = true, compact = true, leftScrim = false, horizonAt = .46f, haze = day.haze, bg = day.bg)
-        assertTrue(signInDay[0].vertical)
-        assertEquals("로그인 낮: 위 55 %에 흰 스크림", .84f, signInDay[0].stops[0].second.alpha, .005f)
-        assertEquals(.55f, signInDay[0].stops[1].first, 1e-3f)
-        assertEquals("로그인 밤: 위 스크림 없음", 1, skyScrims(day = false, compact = true, leftScrim = false, horizonAt = .46f, haze = night.haze, bg = night.bg).size)
+        // The phone home (horizon .40) and the sign-in (.46) pass no left scrim and lay their own day haze, so the backdrop adds
+        // only its bottom scrim: one white layer over the sky, not two. By night they keep the bottom scrim alone, as built.
+        listOf(.40f, .46f).forEach { horizonAt ->
+            val phoneDay = skyScrims(day = true, leftScrim = false, horizonAt = horizonAt, haze = day.haze, bg = day.bg)
+            assertEquals("휴대폰 홈·로그인 낮: 아래 스크림 하나뿐", 1, phoneDay.size)
+            val base = phoneDay[0]
+            assertTrue("아래 스크림은 세로", base.vertical)
+            assertEquals("위쪽은 옅게만", .25f, base.stops[0].second.alpha, .005f)
+            assertEquals("아래쪽은 바탕색으로 끝남", day.bg, base.stops.last().second)
+            val sameBase = skyScrims(day = true, leftScrim = true, horizonAt = horizonAt, haze = day.haze, bg = day.bg)[1]
+            assertEquals("아래 스크림은 차량과 같음", sameBase.stops, base.stops)
+            val phoneNight = skyScrims(day = false, leftScrim = false, horizonAt = horizonAt, haze = night.haze, bg = night.bg)
+            assertEquals("휴대폰 홈·로그인 밤: 위 스크림 없음", 1, phoneNight.size)
+            assertEquals(.35f, phoneNight[0].stops[0].second.alpha, .005f)
+            assertEquals(night.bg, phoneNight[0].stops.last().second)
+        }
     }
+
+    @Test fun theDayCloudsKeepToTheFreeSkyRightOfTheColumn() {
+        // The full Pleos window: 1680 × 1210 dp at 160 dpi (px = dp), with the car backdrop's horizon (.52) and tower scale (.72).
+        val w = 1680f; val h = 1210f; val horizon = h * .52f; val ht = h * .72f
+        assertEquals(4, DayClouds.size)
+        DayClouds.forEach { c ->
+            assertTrue("가로 .79–.97: ${c.x}", c.x in .79f..(.97f))
+            assertTrue("세로 .08–.34: ${c.y}", c.y in .08f..(.34f))
+        }
+        val boxes = DayClouds.map { dayCloudBox(it, w, h, horizon, ht) }
+        for (i in boxes.indices) for (j in i + 1 until boxes.size) assertTrue("구름 $i, $j 는 겹치지 않음", !boxes[i].overlaps(boxes[j]))
+        // The sun at (.62, .21) with its halo (.30 of the tower height) is never under a cloud, and every cloud stays in the window.
+        val sun = Offset(w * .62f, h * .21f)
+        boxes.forEach { b ->
+            assertTrue("해와 햇무리에 닿지 않음", distance(sun, b) > ht * .30f)
+            assertTrue("창 안", b.left >= 0f && b.right <= w && b.top >= 0f)
+        }
+        // All four clear the 1200-dp column, which the header chips end with: on the full window (gutter 72, so it ends at
+        // 1272) and with a 1.3x font (EXPANDED, gutter 48, ends at 1248).
+        listOf(carLayout(1680.dp), carLayout(1680.dp / 1.3f)).forEach { layout ->
+            val columnEnd = (layout.gutter + layout.contentMax).value
+            assertEquals("${layout.widthClass}: 네 구름 모두 칼럼 오른쪽", 4, visibleDayClouds(w, h, horizon, ht, columnEnd).size)
+        }
+        // A window whose column fills it has no free sky, so no cloud sits behind the header chips there; a window only just
+        // wide enough for FULL keeps the clouds that fit beside the column and leaves the rest out.
+        val medium = carLayout(1000.dp)
+        assertEquals("빈 하늘이 없으면 구름도 없음", 0, visibleDayClouds(1000f, h, horizon, ht, (medium.gutter + medium.contentMax).value).size)
+        val narrowFull = carLayout(1400.dp)
+        val columnEnd = (narrowFull.gutter + narrowFull.contentMax).value
+        val kept = visibleDayClouds(1400f, h, horizon, ht, columnEnd)
+        assertTrue("칼럼에 걸리는 구름은 빠짐", kept.size < 4)
+        kept.forEach { assertTrue(dayCloudBox(it, 1400f, h, horizon, ht).left >= columnEnd) }
+    }
+
+    private fun distance(p: Offset, r: Rect): Float = hypot(maxOf(r.left - p.x, 0f, p.x - r.right), maxOf(r.top - p.y, 0f, p.y - r.bottom))
 
     @Test fun dayTextClearsAaOnWhiteGlass() {
         fun luminance(c: Color): Double {
@@ -168,6 +215,22 @@ class SceneTest {
         }
     }
 
+    @Test fun koreanBreaksBetweenPhrasesNeverInsideAWord() {
+        listOf(false, true).forEach { compact ->
+            val t = typographyFor(compact)
+            val headings = listOf(t.displayLarge, t.displayMedium, t.displaySmall, t.headlineLarge, t.headlineMedium, t.headlineSmall,
+                t.titleLarge, t.titleMedium, t.titleSmall)
+            val text = listOf(t.bodyLarge, t.bodyMedium, t.bodySmall, t.labelLarge, t.labelMedium, t.labelSmall)
+            (headings + text).forEach { style ->
+                assertEquals("어절 단위로 줄바꿈 ('맞춰'/'요.' 없음)", LineBreak.WordBreak.Phrase, style.lineBreak.wordBreak)
+                assertEquals(LineBreak.Strictness.Strict, style.lineBreak.strictness)
+                assertEquals("한국어 규칙", LocaleList("ko-KR"), style.localeList)
+            }
+            headings.forEach { assertEquals("제목은 줄 길이를 고르게", LineBreak.Strategy.Balanced, it.lineBreak.strategy) }
+            text.forEach { assertEquals("본문은 단순 줄바꿈", LineBreak.Strategy.Simple, it.lineBreak.strategy) }
+        }
+    }
+
     @Test fun layoutTokensGrowWithTheWindow() {
         assertEquals(WidthClass.COMPACT, carLayout(700.dp).widthClass)
         assertEquals(WidthClass.MEDIUM, carLayout(1000.dp).widthClass)
@@ -175,6 +238,14 @@ class SceneTest {
         assertEquals(WidthClass.FULL, carLayout(1680.dp).widthClass)
         assertTrue(carLayout(1680.dp).gutter > carLayout(1100.dp).gutter)
         assertTrue("가장 넓은 창에서도 내용은 1200dp까지", carLayout(1680.dp).contentMax == 1200.dp)
+        // A 1.3x font on the full window: 1680 / 1.3 = 1292 dp is EXPANDED, and the column still stops at 1200 dp from the start
+        // gutter, so the raw 1680-dp window keeps the sky on its right instead of a rail 1584 dp wide.
+        val largeFont = carLayout(1680.dp / 1.3f)
+        assertEquals("1.3배 글꼴은 EXPANDED", WidthClass.EXPANDED, largeFont.widthClass)
+        assertEquals("큰 글꼴에서도 내용은 1200dp까지", 1200.dp, largeFont.contentMax)
+        assertTrue(largeFont.startAnchored)
+        assertEquals("좁은 창은 꽉 채움", Dp.Infinity, carLayout(1000.dp).contentMax)
+        assertEquals(Dp.Infinity, carLayout(700.dp).contentMax)
         assertEquals("낮은 창", HeightClass.SHORT, carLayout(1680.dp, 500.dp).heightClass)
         assertTrue(carLayout(1680.dp).startAnchored && !phoneLayout(411.dp).startAnchored)
         assertEquals(WidthClass.COMPACT, phoneLayout(411.dp).widthClass)
@@ -186,5 +257,16 @@ class SceneTest {
         assertTrue(sceneModeHint(SceneMode.AUTO, ScenePhase.DAY).startsWith("지금은 낮"))
         assertTrue(sceneModeHint(SceneMode.AUTO, ScenePhase.NIGHT).contains("해가 뜨면"))
         assertEquals("항상 밝은 낮 화면을 써요", sceneModeHint(SceneMode.DAY, ScenePhase.NIGHT))
+        // Dusk covers the half hour around sunrise too. Ten minutes before sunrise and before sunset are both dusk, but only the
+        // evening one turns to night; SceneModeCard passes morning = hour < 12. November: 07:10 · 17:25; June: 05:15 · 19:55.
+        listOf(at(11, 7, 0), at(6, 5, 5)).forEach { dawn ->
+            assertEquals("$dawn", ScenePhase.DUSK, scenePhaseAt(dawn))
+            assertEquals("지금은 해 뜰 무렵이에요 · 곧 낮 화면으로 바뀌어요", sceneModeHint(SceneMode.AUTO, scenePhaseAt(dawn), morning = dawn.hour < 12))
+        }
+        listOf(at(11, 17, 15), at(6, 19, 45)).forEach { evening ->
+            assertEquals("$evening", ScenePhase.DUSK, scenePhaseAt(evening))
+            assertEquals("지금은 해 질 무렵이에요 · 곧 밤 화면으로 바뀌어요", sceneModeHint(SceneMode.AUTO, scenePhaseAt(evening), morning = evening.hour < 12))
+        }
+        assertEquals("고정하면 아침이어도 그대로", "항상 어두운 밤 화면을 써요", sceneModeHint(SceneMode.NIGHT, ScenePhase.DUSK, morning = true))
     }
 }

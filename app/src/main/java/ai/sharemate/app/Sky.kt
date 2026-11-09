@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlin.math.min
@@ -40,8 +41,9 @@ import kotlin.random.Random
  */
 
 private class SkyTower(val left: Float, val width: Float, val height: Float, val lit: List<Offset>, val crown: Int, val cool: Boolean, val reflect: Float)
-private class SkyCloud(val x: Float, val y: Float, val scale: Float)
-private class SkyScene(val stars: List<Triple<Float, Float, Float>>, val clouds: List<SkyCloud>, val far: List<SkyTower>, val near: List<SkyTower>, val ridge: List<Offset>)
+/** One day cloud: its centre as fractions of the width ([x]) and of the horizon's height ([y]), and its size ([scale]). */
+internal class SkyCloud(val x: Float, val y: Float, val scale: Float)
+private class SkyScene(val stars: List<Triple<Float, Float, Float>>, val far: List<SkyTower>, val near: List<SkyTower>, val ridge: List<Offset>)
 
 private fun skylineScene(): SkyScene {
     val r = Random(2026)
@@ -64,11 +66,38 @@ private fun skylineScene(): SkyScene {
     val ridge = List(9) { i -> Offset(.30f + i * .09f, .06f + r.nextFloat() * .10f) }
     val far = towers(.34f, .32f, .012f, .028f, .16f, .76f)
     val near = towers(.44f, .44f, .016f, .036f, .30f, .82f)
-    // Four day clouds, high and over the city's half of the sky (x .50–.95, y .06–.20): never under the hero column or the sun.
-    // Drawn last from the seed so the towers stay the towers of 2.8.
-    val clouds = List(4) { i -> SkyCloud(.50f + i * .115f + r.nextFloat() * .055f, .06f + r.nextFloat() * .14f, .7f + r.nextFloat() * .6f) }
-    return SkyScene(stars, clouds, far, near, ridge)
+    return SkyScene(stars, far, near, ridge)
 }
+
+/**
+ * The four day clouds, placed by hand in the free sky right of the car's 1200-dp content column (x .79–.97 of the width,
+ * y .08–.34 of the horizon's height), so none sits behind the header chips, which end with the column. Staggered so no two
+ * touch, clear of the sun at (.62, .21) and its halo, and above the towers. Not drawn from the seed, so the stars and the
+ * towers stay those of 2.8. A window too narrow for some of them leaves those out ([visibleDayClouds]).
+ */
+internal val DayClouds = listOf(
+    SkyCloud(.83f, .09f, .90f),
+    SkyCloud(.95f, .17f, .75f),
+    SkyCloud(.81f, .26f, .70f),
+    SkyCloud(.92f, .33f, .95f),
+)
+
+/** A cloud's size against the towers' height, and how far its underside shade drops (a fraction of the sky's height). */
+private const val CLOUD_SIZE = .07f
+private const val CLOUD_SHADE_DROP = .012f
+
+/**
+ * The box one day [cloud] covers in a [w] × [h] sky whose horizon is at [horizon] px, with the towers scaled to [ht] px: its
+ * three ovals, its flat base and the underside shade below them (pure, unit-tested).
+ */
+internal fun dayCloudBox(cloud: SkyCloud, w: Float, h: Float, horizon: Float, ht: Float): Rect {
+    val cx = w * cloud.x; val cy = horizon * cloud.y; val s = ht * CLOUD_SIZE * cloud.scale
+    return Rect(cx - s * .93f, cy - s * .5f, cx + s * .92f, cy + s * .52f + h * CLOUD_SHADE_DROP)
+}
+
+/** The day clouds whose box lies wholly right of [clearOf] px, where the content column ends (pure, unit-tested). */
+internal fun visibleDayClouds(w: Float, h: Float, horizon: Float, ht: Float, clearOf: Float): List<SkyCloud> =
+    DayClouds.filter { dayCloudBox(it, w, h, horizon, ht).left >= clearOf }
 
 /** How one phase paints the scene. */
 private class SkyPaint(
@@ -143,9 +172,10 @@ internal fun starFade(entering: Boolean, leaving: Boolean, t: Float): Float {
 /**
  * The decorative hero background for one [phase]: sky, city across the river, bridge, reflections. No semantics.
  * [entering] marks a skyline arriving through a scene change (its orb rises into place), [leaving] one on its way out.
+ * By day it draws only the clouds that lie wholly right of [cloudsClearOf], where the content column ends.
  */
 @Composable internal fun Skyline(phase: ScenePhase, modifier: Modifier = Modifier, horizonAt: Float = .62f, heightScale: Float = 1f, orbAt: Offset = Offset(.53f, .40f),
-    entering: Boolean = false, leaving: Boolean = false, showOrb: Boolean = true, showClouds: Boolean = true) {
+    entering: Boolean = false, leaving: Boolean = false, showOrb: Boolean = true, showClouds: Boolean = true, cloudsClearOf: Dp = 0.dp) {
     val scene = remember { skylineScene() }
     val p = paintFor(phase)
     // One clock per crossfade, read only inside the draw so the cached paths never rebuild; nothing moves under reduced motion.
@@ -209,18 +239,19 @@ internal fun starFade(entering: Boolean, leaving: Boolean, t: Float): Float {
                 t.lit.forEachIndexed { i, pt -> if (i % 4 == 0) addOval(Rect(Offset(left + tw * pt.x, top + th * pt.y), 6f)) }
             }
         }
-        // Day clouds: three overlapping ovals per cloud, slightly flattened, drawn before the towers.
+        // Day clouds: three overlapping ovals per cloud, slightly flattened, drawn before the towers. Only the ones clear of the
+        // content column, so none sits behind the header chips or a card (no free sky, no clouds).
         val clouds = Path().apply {
             p.clouds ?: return@apply
-            scene.clouds.forEach { c ->
-                val cx = w * c.x; val cy = horizon * c.y; val s = ht * .07f * c.scale
+            visibleDayClouds(w, h, horizon, ht, cloudsClearOf.toPx()).forEach { c ->
+                val cx = w * c.x; val cy = horizon * c.y; val s = ht * CLOUD_SIZE * c.scale
                 addOval(Rect(Offset(cx, cy), s * .5f))
                 addOval(Rect(Offset(cx - s * .55f, cy + s * .12f), s * .38f))
                 addOval(Rect(Offset(cx + s * .5f, cy + s * .1f), s * .42f))
                 addRect(Rect(cx - s * .8f, cy + s * .05f, cx + s * .8f, cy + s * .45f))
             }
         }
-        val cloudShadeOffset = h * .012f
+        val cloudShadeOffset = h * CLOUD_SHADE_DROP
         onDrawBehind {
             // The crossfade clock is the only state read here: the draw invalidates, the paths above do not. The orb and the
             // stars move on the part of the crossfade the driver sees (the fade-through still hides the content at first).
@@ -282,22 +313,20 @@ internal const val MOTION_SCENE_MS = 800
 internal class SkyScrim(val vertical: Boolean, val stops: List<Pair<Float, Color>>)
 
 /**
- * The scrims that keep text legible over the sky, in painting order (pure, unit-tested). By night the base colour comes in
- * from the left for the greeting and from the bottom for the widgets, as in 2.8. By day the haze is white and lighter so the
- * sky shows: on the car a hero haze (.90 → .76 at the hero column's right edge → 0 at [heroFade] past it), on the phone a
- * top haze (.88 → .76 at the greeting's bottom → 0 at [greetingFade] below), on the sign-in (no left scrim) a top scrim over
- * the upper 55 %. The bottom scrim is the one built in 2.8, lighter by day, and always settles on the base colour.
- * [heroEdge] and [heroFade] are fractions of the width, [greetingBottom] and [greetingFade] of the height.
+ * The scrims that keep text legible over the sky, in painting order (pure, unit-tested). With [leftScrim] (the car home) a
+ * lead scrim comes in from the left for the greeting: by night the base colour, as in 2.8; by day a white haze, lighter so
+ * the sky shows (.90 → .76 at the hero column's right edge [heroEdge] → 0 at [heroFade] past it). Without it (the phone home
+ * and the sign-in) there is no lead scrim at all: those screens lay their own haze over the sky by day, and a second white
+ * layer here would wash out the sky and the sun. The bottom scrim is the one built in 2.8, lighter by day, and always
+ * settles on the base colour. [heroEdge] and [heroFade] are fractions of the width.
  */
-internal fun skyScrims(day: Boolean, compact: Boolean, leftScrim: Boolean, horizonAt: Float, haze: Color, bg: Color,
-    heroEdge: Float = .47f, heroFade: Float = .18f, greetingBottom: Float = .20f, greetingFade: Float = .14f): List<SkyScrim> {
+internal fun skyScrims(day: Boolean, leftScrim: Boolean, horizonAt: Float, haze: Color, bg: Color,
+    heroEdge: Float = .47f, heroFade: Float = .18f): List<SkyScrim> {
     val clear = haze.copy(alpha = 0f)
     val lead = when {
-        day && !leftScrim -> SkyScrim(vertical = true, listOf(0f to haze.copy(alpha = .84f), .55f to clear))
-        day && compact -> SkyScrim(vertical = true, listOf(0f to haze.copy(alpha = .88f), greetingBottom to haze.copy(alpha = .76f), (greetingBottom + greetingFade).coerceAtMost(1f) to clear))
+        !leftScrim -> null
         day -> SkyScrim(vertical = false, listOf(0f to haze.copy(alpha = .90f), heroEdge to haze.copy(alpha = .76f), (heroEdge + heroFade).coerceAtMost(1f) to clear))
-        leftScrim -> SkyScrim(vertical = false, listOf(0f to haze.copy(alpha = .92f), .38f to haze.copy(alpha = .62f), .74f to clear))
-        else -> null
+        else -> SkyScrim(vertical = false, listOf(0f to haze.copy(alpha = .92f), .38f to haze.copy(alpha = .62f), .74f to clear))
     }
     val base = SkyScrim(vertical = true, listOf(0f to haze.copy(alpha = if (day) .25f else .35f), .14f to clear,
         (horizonAt - .04f).coerceAtLeast(.2f) to clear, (horizonAt + .16f).coerceAtMost(.98f) to haze.copy(alpha = if (day) .85f else .90f), 1f to bg))
@@ -311,7 +340,9 @@ private class SkyLedger { var changes = 0 }
  * so the greeting and the widgets stay legible. A scene change cross-fades the two skylines on the clock of
  * [LocalSceneChange] (600 ms inside the 800 ms fade-through, 360 inside 480 on a tap), the arriving sun or moon rising into
  * place while the leaving one sinks; an instant swap under reduced motion. [moonAt] places the sun by day as well: on the
- * car (.62, .21), clear of the hero haze; the phone passes its own.
+ * car (.62, .21), clear of the hero haze; the phone passes its own. Without [leftScrim] (the phone home, the sign-in) only the
+ * bottom scrim is drawn: the caller lays its own day haze. The day clouds keep to the sky right of the car's content column
+ * and stay off the phone, whose sky is mostly haze: there they read as smudges beside the header icons.
  */
 @Composable internal fun HomeBackdrop(modifier: Modifier = Modifier, horizonAt: Float = .52f, heightScale: Float = .72f, moonAt: Offset = Offset(.62f, .21f),
     leftScrim: Boolean = true, showOrb: Boolean = true, showClouds: Boolean = true) {
@@ -320,7 +351,11 @@ private class SkyLedger { var changes = 0 }
     val haze = colors.haze
     val bg = colors.bg
     val compact = LocalCompactApp.current
-    val gutter = LocalLayout.current.gutter
+    val layout = LocalLayout.current
+    val gutter = layout.gutter
+    // The car's column starts at the gutter and stops at the content maximum; with no maximum it runs to the far gutter, so
+    // no cloud fits beside it.
+    val columnEnd = gutter + layout.contentMax
     val reduce = LocalReduceMotion.current
     val phase = LocalScenePhase.current
     val crossfadeMs = LocalSceneChange.current.crossfadeMs
@@ -330,13 +365,12 @@ private class SkyLedger { var changes = 0 }
     Box(modifier) {
         Crossfade(phase, Modifier.matchParentSize(), animationSpec = if (reduce) snap() else tween(crossfadeMs, easing = LinearEasing), label = "sky-phase") { shown ->
             Skyline(shown, Modifier.fillMaxSize(), horizonAt, heightScale, moonAt, entering = entering && shown == phase, leaving = shown != phase,
-                showOrb = showOrb, showClouds = showClouds)
+                showOrb = showOrb, showClouds = showClouds && !compact, cloudsClearOf = columnEnd)
         }
         Spacer(Modifier.matchParentSize().drawWithCache {
-            // The hero column ends 720 dp past the gutter on the car (never past 60 % of the window); the phone greeting ends about half-way to the horizon.
+            // The hero column ends 720 dp past the gutter on the car (never past 60 % of the window).
             val heroEdge = min(gutter.toPx() + 720.dp.toPx(), size.width * .6f) / size.width
-            val scrims = skyScrims(day, compact, leftScrim, horizonAt, haze, bg, heroEdge = heroEdge, heroFade = 300.dp.toPx() / size.width,
-                greetingBottom = horizonAt * .5f, greetingFade = 120.dp.toPx() / size.height)
+            val scrims = skyScrims(day, leftScrim, horizonAt, haze, bg, heroEdge = heroEdge, heroFade = 300.dp.toPx() / size.width)
             val brushes = scrims.map { s -> if (s.vertical) Brush.verticalGradient(*s.stops.toTypedArray()) else Brush.horizontalGradient(*s.stops.toTypedArray()) }
             onDrawBehind { brushes.forEach { drawRect(it) } }
         })

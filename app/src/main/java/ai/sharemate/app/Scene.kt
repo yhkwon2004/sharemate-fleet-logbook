@@ -215,11 +215,14 @@ object ScenePrefs {
     return mode ?: SceneMode.AUTO
 }
 
-/** The copy under the scene choice in settings. */
-internal fun sceneModeHint(mode: SceneMode, phase: ScenePhase): String = when (mode) {
+/**
+ * The copy under the scene choice in settings. Dusk covers the half hour around sunrise as well as the 45 minutes either side
+ * of sunset, so [morning] (before noon) tells a dusk that turns to day from one that turns to night.
+ */
+internal fun sceneModeHint(mode: SceneMode, phase: ScenePhase, morning: Boolean = false): String = when (mode) {
     SceneMode.AUTO -> when (phase) {
         ScenePhase.DAY -> "지금은 낮 화면이에요 · 해 질 무렵 밤 화면으로 바뀌어요"
-        ScenePhase.DUSK -> "지금은 해 질 무렵이에요 · 곧 밤 화면으로 바뀌어요"
+        ScenePhase.DUSK -> if (morning) "지금은 해 뜰 무렵이에요 · 곧 낮 화면으로 바뀌어요" else "지금은 해 질 무렵이에요 · 곧 밤 화면으로 바뀌어요"
         ScenePhase.NIGHT -> "지금은 밤 화면이에요 · 해가 뜨면 낮 화면으로 바뀌어요"
     }
     SceneMode.DAY -> "항상 밝은 낮 화면을 써요"
@@ -227,15 +230,16 @@ internal fun sceneModeHint(mode: SceneMode, phase: ScenePhase): String = when (m
 }
 
 /** The settings row for the scene, shared by the car (설정 › 화면) and the phone (설정): a segmented 자동 · 낮 · 밤 with one line under it. */
-@Composable internal fun SceneModeCard(compact: Boolean = false) {
+@Composable internal fun SceneModeCard(modifier: Modifier = Modifier, compact: Boolean = false) {
     val context = LocalContext.current
     val mode = rememberSceneMode()
     val phase = LocalScenePhase.current
-    Panel(padding = if (compact) 20.dp else 28.dp) {
+    Panel(modifier, padding = if (compact) 20.dp else 28.dp) {
         Eyebrow("화면 분위기")
         Column {
             Segmented(SceneMode.entries.map { it.label }, SceneMode.entries.indexOf(mode)) { ScenePrefs.set(context, SceneMode.entries[it]) }
         }
-        Muted(sceneModeHint(mode, phase))
+        // A change of phase recomposes the card, so the clock is read again then; sunrise and sunset never share a side of noon.
+        Muted(sceneModeHint(mode, phase, morning = LocalDateTime.now().hour < 12))
     }
 }
