@@ -160,25 +160,33 @@ internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate,
  * hairline instead of a glass pill. The chosen sheet's label takes the glow colour over a 3-dp glow underline (a shape, so
  * never colour alone) that glides to a new sheet in 180 ms, a snap under reduced motion. Cap the width with [modifier].
  */
+/** The width [count] sheet tabs need at their natural size: 72 dp each with 4 dp between them. */
+internal fun sheetTabsNaturalWidth(count: Int): Dp = 72.dp * count + 4.dp * (count - 1).coerceAtLeast(0)
+
 @Composable private fun SheetTabs(labels: List<String>, selected: Int, modifier: Modifier = Modifier, onSelect: (Int) -> Unit) {
     val car = LocalLayout.current.startAnchored
     val bounds = rememberItemBounds()
     val reduce = LocalReduceMotion.current
     val hairline = Scene.divider
-    Box(modifier.fillMaxWidth().drawBehind {
+    BoxWithConstraints(modifier.fillMaxWidth().drawBehind {
         val stroke = 1.dp.toPx()
         drawRect(hairline, Offset(0f, size.height - stroke), Size(size.width, stroke))
     }) {
-        Row(Modifier.horizontalScroll(rememberScrollState()).underlineGlide(bounds, selected), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        // Where the tabs fit at their natural width they sit at the start; where they do not (a phone card is about 335 dp),
+        // they share the width equally so every sheet stays visible instead of the last one being cut at the edge.
+        val fits = maxWidth >= sheetTabsNaturalWidth(labels.size)
+        Row((if (fits) Modifier.horizontalScroll(rememberScrollState()) else Modifier.fillMaxWidth()).underlineGlide(bounds, selected),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             labels.forEachIndexed { index, label ->
                 val active = index == selected
                 val interaction = remember { MutableInteractionSource() }
                 val tint by animateColorAsState(if (active) Scene.glow else Scene.textSecondary, if (reduce) snap() else tween(180, easing = FastOutSlowInEasing), label = "sheet-tab")
-                Box(Modifier.reportBounds(bounds, index).pressable(interaction, .98f).heightIn(min = if (car) 56.dp else 48.dp).widthIn(min = 72.dp)
+                Box(Modifier.reportBounds(bounds, index).then(if (fits) Modifier.widthIn(min = 72.dp) else Modifier.weight(1f))
+                    .pressable(interaction, .98f).heightIn(min = if (car) 56.dp else 48.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .semantics { this.selected = active; role = Role.Tab }
                     .clickable(interactionSource = interaction, indication = if (car) null else LocalIndication.current) { onSelect(index) }
-                    .padding(horizontal = 18.dp), contentAlignment = Alignment.Center) {
+                    .padding(horizontal = if (fits) 18.dp else 4.dp), contentAlignment = Alignment.Center) {
                     Text(label, style = MaterialTheme.typography.labelLarge, color = tint, maxLines = 1)
                 }
             }

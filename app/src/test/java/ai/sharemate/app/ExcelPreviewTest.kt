@@ -22,4 +22,11 @@ class ExcelPreviewTest {
         assertEquals("마지막 열은 날짜여도 비고 폭", listOf(360.dp), excelColumnWidths(listOf("운행일자"), compact = false))
         assertTrue(excelColumnWidths(emptyList(), compact = false).isEmpty())
     }
+
+    @Test fun fiveSheetTabsShareThePhoneCardButKeepTheirWidthOnTheCar() {
+        assertEquals("72 dp × 5 + 4 dp × 4", 376.dp, sheetTabsNaturalWidth(5))
+        assertTrue("휴대폰 카드(약 335 dp)에서는 나눠 씀", 335.dp < sheetTabsNaturalWidth(5))
+        assertTrue("차량 760 dp 열에서는 자연 폭", 760.dp >= sheetTabsNaturalWidth(5))
+        assertEquals(72.dp, sheetTabsNaturalWidth(1))
+    }
 }
