@@ -1,6 +1,7 @@
 package ai.sharemate.app
 
 import androidx.compose.runtime.Immutable
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import java.text.Collator
@@ -136,6 +137,26 @@ internal fun driverRowDescription(row: DriverRowInfo): String =
  * effect, so a 1.3× font gets one card per row and its longer lines; a font below 1× counts as 1×, as for the window classes.
  */
 internal fun pickerColumns(contentWidth: Dp, fontScale: Float): Int = if (contentWidth / fontScale.coerceAtLeast(1f) >= 600.dp) 2 else 1
+
+/** How a picker card is painted: its fill and the colour of its status line ([pickerCardStyle]). */
+@Immutable
+internal data class PickerCardStyle(val fill: Color, val status: Color)
+
+/**
+ * A picker card's paint from the scene's [colors], with every status line at AA (4.5:1) on the dialog's container, the
+ * scheme's surfaceContainerHigh (#E9EFF7 by day, #1D2738 by night). The chosen card takes the selection fill. By day the
+ * others are white glass: the faint fill over the dialog left textMuted at 4.47:1, white gives it 5.8:1. By night they keep
+ * the faint fill (5.06:1), and the chosen card's status steps up to textSecondary (6.6:1), since textMuted reads 4.17:1 on the
+ * night selection.
+ */
+internal fun pickerCardStyle(colors: SceneColors, chosen: Boolean): PickerCardStyle = PickerCardStyle(
+    fill = when {
+        chosen -> colors.selectionFill
+        colors.isDay -> colors.glass
+        else -> colors.fill
+    },
+    status = if (chosen && !colors.isDay) colors.textSecondary else colors.textMuted,
+)
 
 /** The trip the picker sets the driver of: "11월 9일 (월) 08:12–08:47 · 12.4 km", or "08:12 출발 · 기록 중" while it records. */
 internal fun pickerTripLine(trip: Trip, zone: ZoneId): String {

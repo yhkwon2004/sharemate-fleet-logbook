@@ -1,5 +1,7 @@
 package ai.sharemate.app
 
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -10,7 +12,10 @@ import java.time.LocalDateTime
 import java.time.ZoneId
 import java.util.UUID
 
-/** Driver management's pure rules (2.11): the avatar, the copy, the stable list with what is next, deletes and undo, and the booking switch. */
+/**
+ * Driver management's pure rules (2.11): the avatar, the copy, the stable list with what is next, the picker's columns and
+ * paint, deletes and undo, and the booking switch.
+ */
 class DriverRosterTest {
     private val zone = ZoneId.of("Asia/Seoul")
     private fun at(day: Int, hour: Int, minute: Int = 0, month: Int = 11, year: Int = 2026) =
@@ -111,6 +116,39 @@ class DriverRosterTest {
         assertEquals(1, pickerColumns(664.dp, 1.3f))
         assertEquals(1, pickerColumns(560.dp, 1f))
         assertEquals("작은 글꼴은 1배로 셈", 1, pickerColumns(560.dp, .85f))
+    }
+
+    @Test fun everyPickerStatusLineClearsAaOnTheDialog() {
+        // The dialog's container is AlertDialogDefaults.containerColor: surfaceContainerHigh of the day and night Material schemes.
+        val dialogs = listOf(DaySceneColors to Color(0xFFE9EFF7), NightSceneColors to Color(0xFF1D2738))
+        dialogs.forEach { (scene, dialog) ->
+            val light = if (scene.isDay) "낮" else "밤"
+            listOf(false, true).forEach { chosen ->
+                val paint = pickerCardStyle(scene, chosen)
+                val card = paint.fill.compositeOver(dialog)
+                val which = if (chosen) "고른 카드" else "다른 카드"
+                assertTrue("$light $which: 상태 줄", contrast(paint.status, card) >= 4.5)
+                assertTrue("$light $which: 부서", contrast(scene.textSecondary, card) >= 4.5)
+            }
+            assertEquals("$light: 고른 카드는 선택 채움", scene.selectionFill, pickerCardStyle(scene, chosen = true).fill)
+            assertEquals("$light: 다른 카드의 상태 줄은 흐린 글자", scene.textMuted, pickerCardStyle(scene, chosen = false).status)
+        }
+        assertEquals("낮: 다른 카드는 흰 유리", DaySceneColors.glass, pickerCardStyle(DaySceneColors, chosen = false).fill)
+        assertEquals("밤: 다른 카드는 옅은 채움", NightSceneColors.fill, pickerCardStyle(NightSceneColors, chosen = false).fill)
+        assertEquals("낮: 고른 카드도 흐린 글자", DaySceneColors.textMuted, pickerCardStyle(DaySceneColors, chosen = true).status)
+        assertEquals("밤: 고른 카드만 보조 글자", NightSceneColors.textSecondary, pickerCardStyle(NightSceneColors, chosen = true).status)
+        // Why: on the dialog, textMuted fell to 4.47:1 on the faint day fill and to 4.17:1 on the night selection.
+        assertTrue(contrast(DaySceneColors.textMuted, DaySceneColors.fill.compositeOver(Color(0xFFE9EFF7))) < 4.5)
+        assertTrue(contrast(NightSceneColors.textMuted, NightSceneColors.selectionFill.compositeOver(Color(0xFF1D2738))) < 4.5)
+    }
+
+    /** The WCAG contrast of two opaque colours. */
+    private fun contrast(a: Color, b: Color): Double {
+        fun lin(v: Float): Double = if (v <= 0.03928f) v / 12.92 else Math.pow((v + 0.055) / 1.055, 2.4)
+        fun luminance(c: Color): Double = 0.2126 * lin(c.red) + 0.7152 * lin(c.green) + 0.0722 * lin(c.blue)
+        val l1 = luminance(a)
+        val l2 = luminance(b)
+        return (maxOf(l1, l2) + 0.05) / (minOf(l1, l2) + 0.05)
     }
 
     @Test fun onlyDriversWithoutAnyTripCanBeRemoved() {

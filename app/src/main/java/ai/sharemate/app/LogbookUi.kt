@@ -443,10 +443,18 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 }
 
 /**
+ * Whether the header's driver chip shows the person's avatar in [chipMax], the width the header row leaves the chip. The
+ * avatar and the chip's padding take 74 dp (12 + 32 + 10 + 20); from 140 dp at 1×, more with a larger font, the caption
+ * ‘지금 운전’ still fits beside them. Narrower, the chip is the text pill of 2.10, 20 dp in: its label ellipsises, then its
+ * caption, and the header keeps its one 68-dp row instead of wrapping the caption or squeezing the avatar into an oval.
+ */
+internal fun driverChipAvatar(chipMax: Dp, fontScale: Float): Boolean = chipMax >= 74.dp + 66.dp * fontScale.coerceAtLeast(1f)
+
+/**
  * The header of every page, spanning the rail: the brand mark and the five tabs with their counts at the start; at the rail's
  * end (over the 지금 column when it stands) the short window's clock, the recording state and the tools. The driver chip
- * joins them only where there is no 지금 column ([showDriver]), whose top card says who is driving. In a narrow window the
- * tabs drop to their own scrolling row.
+ * joins them only where there is no 지금 column ([showDriver]), whose top card says who is driving; in a tight header it is
+ * the one that gives ([driverChipAvatar]). In a narrow window the tabs drop to their own scrolling row.
  */
 @Composable private fun TopBar(state: TripLogState, layout: LayoutTokens, tabs: List<NavTab>, selected: Int, onSelect: (Int) -> Unit,
     onDriver: () -> Unit, onTutorial: () -> Unit, onAssistant: () -> Unit = {}, clock: String? = null, showDriver: Boolean = true) {
@@ -458,14 +466,20 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
         val interaction = remember { MutableInteractionSource() }
         if (showDriver) Surface(onClick = onDriver, shape = RoundedCornerShape(50), color = Scene.glass, border = Scene.edge, interactionSource = interaction,
             modifier = modifier.heightIn(min = 56.dp).pressable(interaction, .98f).semantics { contentDescription = "지금 운전 ${driver?.label ?: "미선택"}, 바꾸기" }) {
-            // The person's avatar (the one the picker and 설정 › 직원 show) sits 12 dp in, concentric with the pill's round end.
-            Row(Modifier.padding(start = 12.dp, end = 20.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                DriverAvatar(driver, 32.dp)
-                Column {
-                    Text("지금 운전", style = MaterialTheme.typography.labelSmall, color = Scene.textSecondary)
-                    Text(driver?.label ?: "직원 선택", style = MaterialTheme.typography.labelLarge, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.widthIn(max = if (wide) 230.dp else 140.dp))
+            // The person's avatar (the one the picker and 설정 › 직원 show) sits 12 dp in, concentric with the pill's round end,
+            // where the header leaves the chip room for it ([driverChipAvatar]). The pill's 56-dp minimum still reaches the row.
+            BoxWithConstraints(propagateMinConstraints = true) {
+                val avatar = driverChipAvatar(maxWidth, LocalDensity.current.fontScale)
+                Row(Modifier.padding(start = if (avatar) 12.dp else 20.dp, end = 20.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (avatar) DriverAvatar(driver, 32.dp)
+                    Column {
+                        // One line each: in the tightest header the caption ellipsises too, rather than wrapping and growing the row.
+                        Text("지금 운전", style = MaterialTheme.typography.labelSmall, color = Scene.textSecondary, maxLines = 1, softWrap = false,
+                            overflow = TextOverflow.Ellipsis)
+                        Text(driver?.label ?: "직원 선택", style = MaterialTheme.typography.labelLarge, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = if (wide) 230.dp else 140.dp))
+                    }
                 }
             }
         }
@@ -498,7 +512,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                 GlassTabs(tabs, selected, onSelect, compact = layout.short)
             }
             // The right cluster takes what the pill leaves of the rail, flush with its end. The driver chip is the one that gives,
-            // its label ellipsising before anything is pushed past the rail's edge.
+            // its label ellipsising (then its avatar stepping out) before anything is pushed past the rail's edge.
             Row(Modifier.weight(1f, fill = false).padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 time()
                 StatusPill(state)

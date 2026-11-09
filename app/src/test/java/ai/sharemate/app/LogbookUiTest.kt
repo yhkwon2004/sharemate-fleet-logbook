@@ -15,8 +15,9 @@ import java.time.ZoneId
 import java.util.UUID
 
 /**
- * Pure parts of the car shell: the header pill's line and tone, the log's filter labels and empty state, the settings form's
- * columns, and the one period 월간·Excel shows (its range, stepper, close card, file name and tidy-up month).
+ * Pure parts of the car shell: the header pill's line and tone and the driver chip's avatar, the log's filter labels and empty
+ * state, the settings form's columns, and the one period 월간·Excel shows (its range, stepper, close card, file name and
+ * tidy-up month).
  */
 class LogbookUiTest {
     private val zone = ZoneId.of("Asia/Seoul")
@@ -214,5 +215,15 @@ class LogbookUiTest {
         assertEquals("1.3배 글꼴의 1046 페이지도 두 장", 2, settingsCardColumns(carLayout(1680.dp / 1.3f), 1046.dp, 1.3f))
         assertEquals("900 ÷ 1.3 = 692는 한 장", 1, settingsCardColumns(carLayout(1680.dp / 1.3f), 900.dp, 1.3f))
         assertEquals("MEDIUM은 한 장", 1, settingsCardColumns(carLayout(1000.dp), 936.dp, 1f))
+    }
+
+    @Test fun theHeaderChipDropsItsAvatarBeforeItsCaptionWouldWrap() {
+        assertTrue("넓은 헤더", driverChipAvatar(230.dp, 1f))
+        assertTrue("140 dp: 아바타와 여백 74 + 글자 66", driverChipAvatar(140.dp, 1f))
+        assertFalse("139 dp는 글자만", driverChipAvatar(139.dp, 1f))
+        assertFalse("1.3배 글꼴은 160 dp부터", driverChipAvatar(150.dp, 1.3f))
+        assertTrue(driverChipAvatar(160.dp, 1.3f))
+        assertTrue("작은 글꼴은 1배로 셈", driverChipAvatar(140.dp, .85f))
+        assertTrue("너비 제한 없음", driverChipAvatar(Dp.Infinity, 1f))
     }
 }

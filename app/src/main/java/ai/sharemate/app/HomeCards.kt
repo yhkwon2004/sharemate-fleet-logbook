@@ -316,8 +316,8 @@ internal class ParkedStackAnswers(dismissed: String = "", reclassifyId: String? 
         if (more) PurposeOptions(if (reclassifying) trip.purpose else null) { purpose -> if (!reclassifying || purpose != trip.purpose) classify(trip, purpose, EditSource.DRIVER) }
         autoPurposeProgress(trip, data.trips, data.profile.autopilot)?.let { Muted(it) }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Muted("사용자  ${driver?.label ?: "미지정"}", Modifier.weight(1f))
-            TextButton(onClick = { openDriver(trip.id) }, modifier = Modifier.heightIn(min = 56.dp).semantics { contentDescription = "이 운행의 사용자 변경" }) {
+            Muted("운전자  ${driver?.label ?: "미지정"}", Modifier.weight(1f))
+            TextButton(onClick = { openDriver(trip.id) }, modifier = Modifier.heightIn(min = 56.dp).semantics { contentDescription = "이 운행의 운전자 변경" }) {
                 Text("변경", modifier = Modifier.clearAndSetSemantics {})
             }
         }

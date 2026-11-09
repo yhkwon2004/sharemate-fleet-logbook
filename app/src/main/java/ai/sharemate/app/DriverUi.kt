@@ -56,6 +56,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -84,6 +85,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -215,8 +217,9 @@ private const val NOW_FOLD_MS = 200
  * in [pickerColumns] columns in the stable order of [driverRows]: avatar 56, name, department and what is next for that
  * person; the chosen one on the selection fill with its ring, the name in glow and a ✓. One tap commits and closes (the same
  * person just closes) and the follow-up bar says what changed, with undo where there was someone before
- * ([driverPickMessage]). Over eight 직원 bring a search field. The list keeps to 60 % of the window and opens scrolled to the
- * chosen card. 720 dp at most in the AlertDialog colour, and it fades in and out: car dialogs fade only (spec C), so the
+ * ([driverPickMessage]). Over eight 직원 bring a search field. The list takes what the title, the search field, the footnote
+ * and the footer leave, at most 60 % of the window, so the footer's buttons stay whole on a short window; it opens scrolled to
+ * the chosen card. 720 dp at most in the AlertDialog colour, and it fades in and out: car dialogs fade only (spec C), so the
  * window's own fade-and-slide gives way to [R.style.CarDialogFade] (160 / 120 ms), and to nothing under reduced motion.
  */
 @Composable internal fun DriverPickerDialog(data: TripLogData, tripId: String?, act: Act, repository: TripLogRepository, dismiss: () -> Unit, now: Long,
@@ -254,10 +257,21 @@ private const val NOW_FOLD_MS = 200
         // The content wraps the card (the window spans the screen's width), so a tap beside the card still dismisses it.
         BoxWithConstraints(Modifier.padding(24.dp)) {
             val columns = pickerColumns(minOf(maxWidth, 720.dp) - 56.dp, LocalDensity.current.fontScale)
-            val listMax = if (maxHeight.isFinite) maxHeight * .6f else 480.dp
+            // A dialog's window always bounds the card. Unbounded (a preview), a weighted list would get no height at all, so
+            // there it is a plain child capped at 480 dp.
+            val bounded = maxHeight.isFinite
+            val listMax = if (bounded) maxHeight * .6f else 480.dp
             // Opens with the chosen card's row second from the top (first when it is in the first row), clamped at the end.
             val chosenIndex = rows.indexOfFirst { it.selected }
             val grid = rememberLazyGridState(initialFirstVisibleItemIndex = if (chosenIndex < 0) 0 else ((chosenIndex / columns - 1).coerceAtLeast(0)) * columns)
+            // A short window can leave the list less than those two rows. Once it is laid out, a chosen card that does not show
+            // whole leads the list instead.
+            LaunchedEffect(grid) {
+                if (chosenIndex < 0) return@LaunchedEffect
+                val laidOut = snapshotFlow { grid.layoutInfo }.first { it.visibleItemsInfo.isNotEmpty() }
+                val card = laidOut.visibleItemsInfo.firstOrNull { it.index == chosenIndex }
+                if (card == null || card.offset.y + card.size.height > laidOut.viewportEndOffset) grid.scrollToItem(chosenIndex)
+            }
             val scope = rememberCoroutineScope()
             Surface(Modifier.widthIn(max = 720.dp).fillMaxWidth().semantics { paneTitle = title }, shape = RoundedCornerShape(28.dp),
                 color = AlertDialogDefaults.containerColor, contentColor = MaterialTheme.colorScheme.onSurface, tonalElevation = AlertDialogDefaults.TonalElevation) {
@@ -281,9 +295,13 @@ private const val NOW_FOLD_MS = 200
                         if (searchable) Field("이름이나 부서로 찾기", query, { value ->
                             if (value.length <= 30) { query = value; scope.launch { grid.scrollToItem(0) } }
                         }, done = true)
+                        // The grid is the card's weighted child, so the column measures it last: the title, the search field, the
+                        // footnote and the footer keep their height on a short window, and the list scrolls in what they leave. It
+                        // does not fill, so a short list still wraps the card.
                         if (rows.isEmpty()) Text("맞는 직원이 없어요", style = MaterialTheme.typography.bodyLarge, color = Scene.textSecondary,
                             modifier = Modifier.padding(vertical = 12.dp).semantics { liveRegion = LiveRegionMode.Polite })
-                        else LazyVerticalGrid(GridCells.Fixed(columns), Modifier.fillMaxWidth().heightIn(max = listMax).selectableGroup(), state = grid,
+                        else LazyVerticalGrid(GridCells.Fixed(columns), Modifier.then(if (bounded) Modifier.weight(1f, fill = false) else Modifier).fillMaxWidth()
+                            .heightIn(max = listMax).selectableGroup(), state = grid,
                             verticalArrangement = Arrangement.spacedBy(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             items(rows, key = { it.driver.id }) { row -> DriverPickCard(row, forTrip) { pick(row.driver) } }
                         }
@@ -302,14 +320,16 @@ private const val NOW_FOLD_MS = 200
 
 /**
  * One person in the picker: a card of at least 88 dp that settles to .98 and lights with the press fill. The chosen one sits
- * on the selection fill inside its 1.5-dp ring, with the name in glow and a trailing ✓; TalkBack hears a radio button
- * "Kim Jiwoo, Sales, 마지막 운행 어제 18:47" and, when chosen, "지금 운전 중" (for a trip, "이 운행의 운전자").
+ * on the selection fill inside its 1.5-dp ring, with the name in glow and a trailing ✓; by day the others are white glass
+ * ([pickerCardStyle] keeps every status line at AA on the dialog). TalkBack hears a radio button "Kim Jiwoo, Sales, 마지막
+ * 운행 어제 18:47" and, when chosen, "지금 운전 중" (for a trip, "이 운행의 운전자").
  */
 @Composable private fun DriverPickCard(row: DriverRowInfo, forTrip: Boolean, onPick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val chosen = row.selected
     val description = driverRowDescription(row)
-    Surface(onClick = onPick, shape = RoundedCornerShape(20.dp), color = if (chosen) Scene.selectionFill else Scene.fill, contentColor = Scene.text,
+    val paint = pickerCardStyle(Scene.colors, chosen)
+    Surface(onClick = onPick, shape = RoundedCornerShape(20.dp), color = paint.fill, contentColor = Scene.text,
         border = if (chosen) BorderStroke(1.5.dp, Scene.selectionRing) else null, interactionSource = interaction,
         modifier = Modifier.fillMaxWidth().heightIn(min = 88.dp).pressable(interaction, .98f).semantics {
             selected = chosen; role = Role.RadioButton; contentDescription = description
@@ -323,7 +343,7 @@ private const val NOW_FOLD_MS = 200
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (row.driver.department.isNotBlank()) Text(row.driver.department, style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(row.status, style = MaterialTheme.typography.labelMedium, color = Scene.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(row.status, style = MaterialTheme.typography.labelMedium, color = paint.status, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (chosen) Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(24.dp), tint = Scene.glow)
         }

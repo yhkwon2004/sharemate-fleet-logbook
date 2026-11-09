@@ -211,7 +211,7 @@ private fun deleteIncident(incident: Incident, act: Act, repository: TripLogRepo
         HorizontalDivider(color = Scene.divider)
         Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
             Stat("계기판", km(incident.odometerKm), Modifier.weight(1f))
-            Stat("사용자", driver?.name ?: "미지정", Modifier.weight(1f))
+            Stat("운전자", driver?.name ?: "미지정", Modifier.weight(1f))
         }
         Muted(incident.address?.let { "위치 · $it" } ?: "위치 · 내비 주소 미수신")
         if (incident.note.isNotBlank()) Text(incident.note, style = MaterialTheme.typography.bodyMedium)
