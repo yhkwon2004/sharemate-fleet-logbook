@@ -35,10 +35,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -69,39 +72,83 @@ import androidx.compose.ui.unit.dp
 @Composable internal fun rememberChargePrompt(data: TripLogData): MutableState<ChargePrompt> =
     rememberSaveable(pendingChargeSession(data)?.endAt ?: 0L) { mutableStateOf(ChargePrompt.AUTO) }
 
-/** What is on the card right now; one value per visible card so AnimatedContent swaps exactly when the question changes. */
-private data class StackKey(val kind: TaskKind?, val finishedId: String?, val reclassifyId: String?)
+/**
+ * What is on the card right now; one value per visible card so AnimatedContent swaps exactly when the question changes. All
+ * three null is the empty stack, which draws no card (the all-done card where the stack offers one).
+ */
+internal data class StackKey(val kind: TaskKind?, val finishedId: String?, val reclassifyId: String?) {
+    /** True when this names a card to draw. */
+    val showsCard: Boolean get() = kind != null || finishedId != null || reclassifyId != null
+}
 
 private fun Set<String>.joined() = joinToString(",")
 private fun String.toIdSet() = split(',').filter { it.isNotBlank() }.toSet()
 
 /**
- * The home task stack: [TaskStepper] over an `AnimatedContent` that shows the first of [parkedTasks]. A trip that just
- * labelled itself goes first unless something the car measured (an incident, a card question, a charge) is waiting.
- * [other] renders the kinds whose cards live elsewhere (MONTH_CLOSE, CARE); [chargePrompt] and [onWaitForCard] carry the
- * driver's answer to the card-feed wait between this stack and the [AutopilotStrip]. While [blocked] the swap snaps.
+ * The card the task stack shows, from what it reads. First the purpose question reopened from the finished-trip card
+ * ([reclassifyId], while that trip is still the last one finished and not recording; a newer trip retires it), then the
+ * finished trip's own card unless something the car measured (an incident, a card question, a charge) is waiting, then the
+ * first of [tasks]. Pure, so the home can tell whether the stack draws a card before it composes the stack.
  */
-@Composable internal fun ParkedTaskStack(state: TripLogState, now: Long, wide: Boolean, blocked: Boolean, act: Act, repository: TripLogRepository,
-    openDriver: (String?) -> Unit, goSettings: () -> Unit, modifier: Modifier = Modifier, chargePrompt: ChargePrompt = ChargePrompt.AUTO,
-    onWaitForCard: (() -> Unit)? = null, snoozedCare: Set<String> = emptySet(), showAllDone: Boolean = true,
-    other: @Composable (ParkedTask) -> Unit = {}) {
-    val data = state.data
-    val live = state.live?.takeIf { it.demo == data.profile.demoMode }
-    val tasks = parkedTasks(data, state.sync, now, zone, snoozedCare, chargePrompt, live?.odometerKm)
-    var dismissed by rememberSaveable { mutableStateOf("") }
-    var reclassifyId by rememberSaveable { mutableStateOf<String?>(null) }
-    val finished = finishedTripToShow(data, state.lastFinishedId, now, dismissed.toIdSet())
-    val reclassify = reclassifyId?.let { id -> data.trips.firstOrNull { it.id == id && !it.open } }
+internal fun parkedStackKey(tasks: List<ParkedTask>, data: TripLogData, lastFinishedId: String?, now: Long, dismissed: Set<String>,
+    reclassifyId: String?): StackKey {
+    val reclassify = reclassifyId?.takeIf { it == lastFinishedId }?.let { id -> data.trips.firstOrNull { it.id == id && !it.open } }
+    val finished = finishedTripToShow(data, lastFinishedId, now, dismissed)
     val first = tasks.firstOrNull()
     // Safety and money the car measured come before the good news; everything else waits behind it.
     val finishedFirst = finished != null && first?.kind !in setOf(TaskKind.INCIDENT, TaskKind.CARD_REVIEW, TaskKind.CHARGE)
-    val key = when {
+    return when {
         reclassify != null -> StackKey(null, null, reclassify.id)
         finishedFirst -> StackKey(null, finished!!.id, null)
         else -> StackKey(first?.kind, null, null)
     }
+}
+
+/**
+ * The stack's own answers: the finished-trip cards already acknowledged ([dismissed], ids joined by commas) and the trip
+ * whose purpose is being changed from its card ([reclassifyId]). The home holds them ([rememberParkedStackAnswers]), so the
+ * answers outlive the stack leaving the composition and the home can ask [key] whether the stack draws a card at all.
+ */
+@Stable
+internal class ParkedStackAnswers(dismissed: String = "", reclassifyId: String? = null) {
+    var dismissed by mutableStateOf(dismissed)
+    var reclassifyId by mutableStateOf(reclassifyId)
+
+    /** The card the stack shows for [tasks] with these answers ([parkedStackKey]). */
+    fun key(tasks: List<ParkedTask>, data: TripLogData, lastFinishedId: String?, now: Long): StackKey =
+        parkedStackKey(tasks, data, lastFinishedId, now, dismissed.toIdSet(), reclassifyId)
+
+    /** Acknowledges the finished-trip card of [tripId]; with [reclassify] the purpose question for that trip opens in its place. */
+    fun answer(tripId: String, reclassify: Boolean = false) {
+        dismissed = (dismissed.toIdSet() + tripId).joined()
+        if (reclassify) reclassifyId = tripId
+    }
+
+    companion object {
+        val Saver: Saver<ParkedStackAnswers, Any> = listSaver<ParkedStackAnswers, String>(save = { listOf(it.dismissed, it.reclassifyId.orEmpty()) },
+            restore = { ParkedStackAnswers(it[0], it[1].ifEmpty { null }) })
+    }
+}
+
+/** The task stack's answers, kept across rotation and a return to the tab; hold them where the stack is decided on. */
+@Composable internal fun rememberParkedStackAnswers(): ParkedStackAnswers = rememberSaveable(saver = ParkedStackAnswers.Saver) { ParkedStackAnswers() }
+
+/**
+ * The home task stack: [TaskStepper] over an `AnimatedContent` that shows the card [parkedStackKey] picks. [other] renders
+ * the kinds whose cards live elsewhere (MONTH_CLOSE, CARE); [chargePrompt] and [onWaitForCard] carry the driver's answer to
+ * the card-feed wait between this stack and the [AutopilotStrip]. While [blocked] the swap snaps. With [showAllDone] false
+ * an empty stack draws nothing, so compose it only while [ParkedStackAnswers.key] shows a card, handing it the same [answers].
+ */
+@Composable internal fun ParkedTaskStack(state: TripLogState, now: Long, wide: Boolean, blocked: Boolean, act: Act, repository: TripLogRepository,
+    openDriver: (String?) -> Unit, goSettings: () -> Unit, modifier: Modifier = Modifier, chargePrompt: ChargePrompt = ChargePrompt.AUTO,
+    onWaitForCard: (() -> Unit)? = null, snoozedCare: Set<String> = emptySet(), showAllDone: Boolean = true,
+    answers: ParkedStackAnswers = rememberParkedStackAnswers(), other: @Composable (ParkedTask) -> Unit = {}) {
+    val data = state.data
+    val live = state.live?.takeIf { it.demo == data.profile.demoMode }
+    val tasks = parkedTasks(data, state.sync, now, zone, snoozedCare, chargePrompt, live?.odometerKm)
+    val key = answers.key(tasks, data, state.lastFinishedId, now)
     val baseClassify = rememberClassifier(data, act, repository)
-    val classify: (Trip, TripPurpose, EditSource) -> Unit = { trip, purpose, source -> reclassifyId = null; baseClassify(trip, purpose, source) }
+    val classify: (Trip, TripPurpose, EditSource) -> Unit = { trip, purpose, source -> answers.reclassifyId = null; baseClassify(trip, purpose, source) }
     val swap = cardSwap(snap = blocked)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (key.kind != null) TaskStepper(tasks)
@@ -109,11 +156,11 @@ private fun String.toIdSet() = split(',').filter { it.isNotBlank() }.toSet()
             // The data may have moved on by the time the exit frame renders; a card whose subject is gone draws nothing.
             when {
                 shown.reclassifyId != null -> data.trips.firstOrNull { it.id == shown.reclassifyId }?.let { trip ->
-                    PendingPurposeCard(trip, 1, data, act, repository, openDriver, classify, reclassifying = true) { reclassifyId = null }
+                    PendingPurposeCard(trip, 1, data, act, repository, openDriver, classify, reclassifying = true) { answers.reclassifyId = null }
                 }
                 shown.finishedId != null -> data.trips.firstOrNull { it.id == shown.finishedId }?.let { trip ->
-                    FinishedTripCard(trip, matchedChargeFor(trip, data), onConfirm = { dismissed = (dismissed.toIdSet() + trip.id).joined() },
-                        onChangePurpose = { dismissed = (dismissed.toIdSet() + trip.id).joined(); reclassifyId = trip.id }, note = autoFillMessage(trip, data.trips))
+                    FinishedTripCard(trip, matchedChargeFor(trip, data), onConfirm = { answers.answer(trip.id) },
+                        onChangePurpose = { answers.answer(trip.id, reclassify = true) }, note = autoFillMessage(trip, data.trips))
                 }
                 shown.kind == TaskKind.INCIDENT -> openIncidents(data).firstOrNull()?.let { IncidentCard(it, data, act, repository) }
                 shown.kind == TaskKind.CARD_REVIEW -> {
@@ -188,7 +235,8 @@ private fun String.toIdSet() = split(',').filter { it.isNotBlank() }.toSet()
                 Text(driver?.name?.take(1) ?: "–", style = MaterialTheme.typography.headlineSmall, color = Scene.text, modifier = Modifier.clearAndSetSemantics {})
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Eyebrow("현재 이용 직원")
+                // A field label inside the card, not a section label.
+                Eyebrow("현재 이용 직원", Scene.textSecondary)
                 Text(driver?.label ?: "직원을 선택해 주세요", style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
@@ -359,6 +407,7 @@ private const val MOTION_FOLD_MS = 200
  * "네" writes nothing and remembers today; "다른 직원" opens the picker. Both count as an answer, so the row does not
  * come back for the newly chosen driver. See [driverConfirmDue] for when the question is worth asking at all.
  * [confirmed] holds the day keys already answered; the shell owns it so the home hero and the other tabs ask once a day between them.
+ * The row folds itself in and out; [modifier] applies inside the fold, so a gap the caller pads under the row folds with it.
  */
 @Composable internal fun DriverConfirmRow(state: TripLogState, now: Long, openDriver: (String?) -> Unit, confirmed: String, onConfirmed: (String) -> Unit,
     modifier: Modifier = Modifier) {
@@ -373,12 +422,12 @@ private const val MOTION_FOLD_MS = 200
     if (driver == null || (!visible.currentState && !visible.targetState)) return
     val reduce = LocalReduceMotion.current
     val ease = FastOutSlowInEasing
-    AnimatedVisibility(visibleState = visible, modifier = modifier,
+    AnimatedVisibility(visibleState = visible,
         enter = if (reduce) fadeIn(snap()) else fadeIn(tween(MOTION_FOLD_MS, easing = ease)) + expandVertically(tween(MOTION_FOLD_MS, easing = ease)),
         exit = if (reduce) fadeOut(snap()) else fadeOut(tween(MOTION_FOLD_MS, easing = ease)) + shrinkVertically(tween(MOTION_FOLD_MS, easing = ease)),
         label = "driver-confirm") {
         val answer = { onConfirmed((dates + dateKey(now, zone)).joined()) }
-        Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = Scene.glass, contentColor = Scene.text, border = Scene.edge) {
+        Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = Scene.glass, contentColor = Scene.text, border = Scene.edge) {
             BoxWithConstraints(Modifier.padding(start = 18.dp, end = 10.dp, top = 8.dp, bottom = 8.dp)) {
                 val question: @Composable (Modifier) -> Unit = { place ->
                     Text("오늘도 ${driver.label} 님이 운전하나요?", style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis,

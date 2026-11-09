@@ -1,9 +1,7 @@
 package ai.sharemate.app
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.LocalIndication
@@ -23,9 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
@@ -51,6 +47,32 @@ private val ROW_NUMBER_WIDTH = 48.dp
 /** The Excel view's measure on the car (spec B): the preview, its sheet tabs and the save bar under it, like the month-close card. */
 internal val EXCEL_VIEW_MAX_WIDTH = 760.dp
 
+/** The car's Excel preview never gets less height than this; a shorter pane scrolls further instead of squeezing the table. */
+internal val EXCEL_PREVIEW_MIN_HEIGHT = 480.dp
+
+/** The most rows one page holds when the table pages to fit its height (the skeleton draws at most as many). */
+internal const val PREVIEW_MAX_ROWS = 8
+
+/**
+ * How many rows one page of the preview table holds. Given the table's own height ([tableHeight]: its room under the sheet
+ * name, the pager and the hint taken off), the rows that fit under its header: rows of up to two lines (72 dp, 64 when
+ * [compact], taller at a large font) with their hairlines, at least one and at most [PREVIEW_MAX_ROWS]. Without a definite
+ * height (null or unbounded: a preview that wraps its content in a page that scrolls) a fixed page, 3 compact and 6
+ * otherwise, so the count never rests on an infinite height.
+ */
+internal fun previewRowsPerPage(tableHeight: Dp?, compact: Boolean, fontScale: Float = 1f): Int {
+    if (tableHeight == null || !tableHeight.value.isFinite()) return if (compact) 3 else 6
+    val scale = fontScale.coerceAtLeast(1f)
+    // The header row: up to two lines of labelLarge (20 sp) in 12 dp of padding, and the card's 1-dp edge above and below.
+    val header = 24.dp + 40.dp * scale + 2.dp
+    // A data row: its minimum or two lines of bodyMedium (20 sp) in 12 dp of padding, whichever is taller, and its divider.
+    val row = maxOf(if (compact) 64.dp else 72.dp, 24.dp + 40.dp * scale) + 1.dp
+    return ((tableHeight - header) / row).toInt().coerceIn(1, PREVIEW_MAX_ROWS)
+}
+
+/** What the pager and the hint take under the table on its page: two 12-dp gaps, the pager's touch target and one labelMedium line. */
+internal fun previewPagerHeight(tapHeight: Dp, fontScale: Float = 1f): Dp = 12.dp + tapHeight + 12.dp + 16.dp * fontScale.coerceAtLeast(1f)
+
 /** Column widths of the preview table: the remarks column (last) widest, date columns 180, the rest 170 (136 on the phone). */
 internal fun excelColumnWidths(columns: List<String>, compact: Boolean): List<Dp> = columns.mapIndexed { index, title -> when {
     index == columns.lastIndex -> if (compact) 260.dp else 360.dp
@@ -71,10 +93,14 @@ internal fun previewCell(value: Any): String = when (value) {
  * A read-only data preview of the same five sheets that Excel export writes (운행·직원·경비·차량관리·확인). The sheets are
  * text tabs ([SheetTabs], max 760), a lighter level than the view tabs above the preview. The table keeps its row number and
  * first column pinned while the rest scrolls sideways (spec B); a row opens its full contents.
+ *
+ * The preview never scrolls vertically itself; the page around it does. With [fillHeight] (the car's 월간·Excel) [modifier]
+ * gives it a definite height and the table pages to the rows that fit its own room ([previewRowsPerPage]); otherwise (the
+ * phone's 현황 card) it wraps its content and pages a fixed count, so an empty sheet leaves no blank under it.
  */
 @Composable
 internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate, to: LocalDate,
-    modifier: Modifier = Modifier, compact: Boolean = false) {
+    modifier: Modifier = Modifier, compact: Boolean = false, fillHeight: Boolean = false) {
     var sheetIndex by rememberSaveable { mutableIntStateOf(0) }
     var page by rememberSaveable { mutableIntStateOf(0) }
     var detail by remember { mutableStateOf<Pair<Int, List<Any>>?>(null) }
@@ -89,9 +115,9 @@ internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate,
     val colors = MaterialTheme.colorScheme
     // Touch targets follow the device, not the width: 56 dp on the car (a narrow car window too), 48 on the phone.
     val tapHeight = if (LocalLayout.current.startAnchored) 56.dp else 48.dp
-    BoxWithConstraints(modifier) {
-    val rowsPerPage = ((maxHeight.value - if (compact) 340 else 470) / if (compact) 64 else 72).toInt().coerceIn(1, if (compact) 3 else 6)
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val fontScale = LocalDensity.current.fontScale
+    val columns = if (compact) 4 else 6
+    Column(modifier.fillMaxWidth().padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("업무용승용차 운행기록부", style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
@@ -103,15 +129,16 @@ internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate,
                 style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         SheetTabs(listOf("운행", "직원", "경비", "차량", "확인"), sheetIndex, Modifier.widthIn(max = EXCEL_VIEW_MAX_WIDTH)) { sheetIndex = it; page = 0; detail = null }
+        val sheets = result
         when {
-            result == null -> SkeletonTable(columns = if (compact) 4 else 6, rows = rowsPerPage, compact = compact)
-            result!!.isFailure -> Panel { Text("미리보기를 만들지 못했어요"); Muted("기록은 변경하지 않았습니다. 조회 기간을 다시 선택해 주세요.") }
+            // The skeleton holds the table's place: in a definite height it takes the room the table will get (its activity line
+            // taken off), otherwise one fixed page. Content shorter than a definite height leaves the slack at the bottom.
+            sheets == null -> if (fillHeight) BoxWithConstraints(Modifier.weight(1f, fill = false).fillMaxWidth()) {
+                SkeletonTable(columns, rows = previewRowsPerPage(maxHeight - 12.dp - 16.dp * fontScale.coerceAtLeast(1f), compact, fontScale), compact = compact)
+            } else SkeletonTable(columns, rows = previewRowsPerPage(null, compact), compact = compact)
+            sheets.isFailure -> Panel { Text("미리보기를 만들지 못했어요"); Muted("기록은 변경하지 않았습니다. 조회 기간을 다시 선택해 주세요.") }
             else -> {
-                val sheet = result!!.getOrThrow()[sheetIndex]
-                val pageSize = rowsPerPage
-                val pages = maxOf(1, (sheet.rows.size + pageSize - 1) / pageSize)
-                val currentPage = page.coerceIn(0, pages - 1)
-                val start = currentPage * pageSize
+                val sheet = sheets.getOrThrow()[sheetIndex]
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(sheet.name, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     Text("${sheet.rows.size}행", style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary)
@@ -120,26 +147,14 @@ internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate,
                     Text(when (sheetIndex) { 2 -> "등록된 경비가 없어요"; 3 -> "정비 기록과 기한이 없어요"; else -> "이 범위의 기록이 없어요" }, style = MaterialTheme.typography.titleMedium)
                     Muted("조회 기간과 직원 선택을 확인하세요. 저장 시에도 빈 내역으로 표시됩니다.")
                 } else {
-                    val widths = excelColumnWidths(sheet.columns, compact)
-                    // One scroll state for every row keeps the scrolling part of the table in step while the first column stays put.
-                    val sideways = rememberScrollState()
-                    Surface(shape = RoundedCornerShape(18.dp), border = Scene.edge, color = colors.surface, contentColor = Scene.text) {
-                        Column {
-                            PreviewRow("행", sheet.columns, widths, sideways, header = true, compact = compact)
-                            sheet.rows.subList(start, minOf(start + pageSize, sheet.rows.size)).forEachIndexed { offset, row ->
-                                val number = start + offset + 6
-                                HorizontalDivider(color = Scene.divider)
-                                PreviewRow(number.toString(), row.map(::previewCell), widths, sideways, header = false, compact = compact,
-                                    zebra = offset % 2 == 1, numeric = row.map { it is Number }, clickLabel = "${number}행 전체 내용 보기") { detail = number to row }
-                            }
-                        }
+                    val showPage: @Composable (Int) -> Unit = { rowsPerPage ->
+                        SheetPage(sheet, rowsPerPage, page, compact, tapHeight, onPage = { page = it }) { number, row -> detail = number to row }
                     }
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                        TextButton(onClick = { page = currentPage - 1 }, enabled = currentPage > 0, modifier = Modifier.heightIn(min = tapHeight)) { Text("‹ 이전") }
-                        Text("${currentPage + 1} / $pages", style = MaterialTheme.typography.labelLarge)
-                        TextButton(onClick = { page = currentPage + 1 }, enabled = currentPage + 1 < pages, modifier = Modifier.heightIn(min = tapHeight)) { Text("다음 ›") }
-                    }
-                    Text("가로로 더 보기 · 행을 누르면 전체 내용 표시", style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary)
+                    // In a definite height the page gets what the rest of the preview leaves (the note under it included), and the
+                    // table what the pager and the hint leave of that; the page wraps its rows, so the note follows right under it.
+                    if (fillHeight) BoxWithConstraints(Modifier.weight(1f, fill = false).fillMaxWidth()) {
+                        showPage(previewRowsPerPage(maxHeight - previewPagerHeight(tapHeight, fontScale), compact, fontScale))
+                    } else showPage(previewRowsPerPage(null, compact))
                 }
                 Text("실제 저장 데이터 · Excel 인쇄 배치와 다를 수 있어요. 증빙·세무 요건은 제출 전 별도로 확인하세요.", style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary)
                 detail?.let { (number, row) -> AlertDialog(onDismissRequest = { detail = null }, title = { Text("${sheet.name} · ${number}행") },
@@ -148,21 +163,55 @@ internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate,
                             Text(sheet.columns[index], style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                             Text(previewCell(cell).ifBlank { "—" }, style = MaterialTheme.typography.bodyLarge)
                         } }
-                    } }, confirmButton = { TextButton(onClick = { detail = null }, modifier = Modifier.heightIn(min = tapHeight)) { Text("닫기") } }) }
+                    } }, confirmButton = { DialogButton("닫기") { detail = null } }) }
             }
         }
-    }
     }
 }
 
 /**
- * The preview's sheet tabs, one level under the 월간·Excel view tabs: plain text tabs (56 dp on the car, 48 on the phone) on a
- * hairline instead of a glass pill. The chosen sheet's label takes the glow colour over a 3-dp glow underline (a shape, so
- * never colour alone) that glides to a new sheet in 180 ms, a snap under reduced motion. Cap the width with [modifier].
+ * One page of a sheet: the table with [rowsPerPage] rows under its header (row number and first column pinned, the other
+ * columns scrolling sideways together), then the pager and the hint. [page] is held to the sheet's pages; [onRow] opens a
+ * row's full contents.
  */
+@Composable private fun SheetPage(sheet: LogbookSheet, rowsPerPage: Int, page: Int, compact: Boolean, tapHeight: Dp, onPage: (Int) -> Unit,
+    modifier: Modifier = Modifier, onRow: (Int, List<Any>) -> Unit) {
+    val pages = maxOf(1, (sheet.rows.size + rowsPerPage - 1) / rowsPerPage)
+    val currentPage = page.coerceIn(0, pages - 1)
+    val start = currentPage * rowsPerPage
+    val widths = excelColumnWidths(sheet.columns, compact)
+    // One scroll state for every row keeps the scrolling part of the table in step while the first column stays put.
+    val sideways = rememberScrollState()
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Surface(shape = RoundedCornerShape(18.dp), border = Scene.edge, color = MaterialTheme.colorScheme.surface, contentColor = Scene.text) {
+            Column {
+                PreviewRow("행", sheet.columns, widths, sideways, header = true, compact = compact)
+                sheet.rows.subList(start, minOf(start + rowsPerPage, sheet.rows.size)).forEachIndexed { offset, row ->
+                    val number = start + offset + 6
+                    HorizontalDivider(color = Scene.divider)
+                    PreviewRow(number.toString(), row.map(::previewCell), widths, sideways, header = false, compact = compact,
+                        zebra = offset % 2 == 1, numeric = row.map { it is Number }, clickLabel = "${number}행 전체 내용 보기") { onRow(number, row) }
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            TextButton(onClick = { onPage(currentPage - 1) }, enabled = currentPage > 0, modifier = Modifier.heightIn(min = tapHeight)) { Text("‹ 이전") }
+            Text("${currentPage + 1} / $pages", style = MaterialTheme.typography.labelLarge)
+            TextButton(onClick = { onPage(currentPage + 1) }, enabled = currentPage + 1 < pages, modifier = Modifier.heightIn(min = tapHeight)) { Text("다음 ›") }
+        }
+        Text("가로로 더 보기 · 행을 누르면 전체 내용 표시", style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary)
+    }
+}
+
 /** The width [count] sheet tabs need at their natural size: 72 dp each with 4 dp between them. */
 internal fun sheetTabsNaturalWidth(count: Int): Dp = 72.dp * count + 4.dp * (count - 1).coerceAtLeast(0)
 
+/**
+ * The preview's sheet tabs, one level under the 월간·Excel view tabs: plain text tabs (56 dp on the car, 48 on the phone) on a
+ * hairline instead of a glass pill. The chosen sheet's label takes the glow colour over the glow underline of [selectionGlide]
+ * ([GlideMark.UNDERLINE]: a shape, so never colour alone) that glides to a new sheet in 180 ms, a snap under reduced motion.
+ * Cap the width with [modifier].
+ */
 @Composable private fun SheetTabs(labels: List<String>, selected: Int, modifier: Modifier = Modifier, onSelect: (Int) -> Unit) {
     val car = LocalLayout.current.startAnchored
     val bounds = rememberItemBounds()
@@ -175,8 +224,8 @@ internal fun sheetTabsNaturalWidth(count: Int): Dp = 72.dp * count + 4.dp * (cou
         // Where the tabs fit at their natural width they sit at the start; where they do not (a phone card is about 335 dp),
         // they share the width equally so every sheet stays visible instead of the last one being cut at the edge.
         val fits = maxWidth >= sheetTabsNaturalWidth(labels.size)
-        Row((if (fits) Modifier.horizontalScroll(rememberScrollState()) else Modifier.fillMaxWidth()).underlineGlide(bounds, selected),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row((if (fits) Modifier.horizontalScroll(rememberScrollState()) else Modifier.fillMaxWidth())
+            .selectionGlide(bounds, selected, durationMs = 180, mark = GlideMark.UNDERLINE), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             labels.forEachIndexed { index, label ->
                 val active = index == selected
                 val interaction = remember { MutableInteractionSource() }
@@ -191,33 +240,6 @@ internal fun sheetTabsNaturalWidth(count: Int): Dp = 72.dp * count + 4.dp * (cou
                 }
             }
         }
-    }
-}
-
-/**
- * The chosen sheet's underline: 3 dp of glow along the bottom of its tab (inset 16 dp a side), gliding to a new tab in
- * [durationMs] (FastOutSlowIn); the first placement and reduced motion snap. Apply it to the tab row itself, so the drawing
- * and the bounds the tabs report share one coordinate space.
- */
-@Composable private fun Modifier.underlineGlide(bounds: ItemBounds, selected: Int, durationMs: Int = 180): Modifier {
-    val reduce = LocalReduceMotion.current
-    val color = Scene.glow
-    val target = bounds[selected]
-    val rect = remember { Animatable(Rect.Zero, Rect.VectorConverter) }
-    var placed by remember { mutableStateOf(false) }
-    LaunchedEffect(target, reduce) {
-        val next = target ?: return@LaunchedEffect
-        if (!placed || reduce) { rect.snapTo(next); placed = true } else rect.animateTo(next, tween(durationMs, easing = FastOutSlowInEasing))
-    }
-    val density = LocalDensity.current
-    val thickness = with(density) { 3.dp.toPx() }
-    val inset = with(density) { 16.dp.toPx() }
-    val visible = target != null
-    return drawBehind {
-        if (!placed || !visible) return@drawBehind
-        val r = rect.value
-        val width = (r.width - inset * 2).coerceAtLeast(thickness * 4)
-        drawRoundRect(color, Offset(r.center.x - width / 2, r.bottom - thickness), Size(width, thickness), CornerRadius(thickness / 2, thickness / 2))
     }
 }
 

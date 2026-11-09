@@ -1,7 +1,6 @@
 package ai.sharemate.app
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -166,7 +165,8 @@ internal fun tripsOfDriver(trips: List<Trip>, drivers: List<Driver>, driverId: S
         } else { left(); right() }
         Panel(padding = tokens.panelPadding) {
             Eyebrow("Excel 미리보기 · ${month.year}년 ${month.monthValue}월${filterDriver?.let { " · ${it.name}" } ?: if (employeeFilter == "") " · 직원 미지정" else ""}")
-            ExcelPreview(data, trips, month.atDay(1), month.atEndOfMonth(), Modifier.fillMaxWidth().height(540.dp), compact = true)
+            // The tab already scrolls: the preview wraps its content (a fixed page of rows), so an empty sheet leaves no blank in the card.
+            ExcelPreview(data, trips, month.atDay(1), month.atEndOfMonth(), Modifier.fillMaxWidth(), compact = true)
         }
         val unclassified = trips.count { it.purpose == TripPurpose.UNCLASSIFIED }
         if (unclassified > 0) Muted("정리되지 않은 운행 ${unclassified}건이 비고에 ‘목적 미분류’로 표시돼요.")
@@ -207,10 +207,12 @@ internal fun tripsOfDriver(trips: List<Trip>, drivers: List<Driver>, driverId: S
             return@Panel
         }
         val percent = status.percent ?: 0
-        // The number cross-fades to its new value; the bar sweeps there (320 ms, a snap under reduced motion). No count-up: a percentage is data.
-        val progress by animateFloatAsState(percent / 100f, enterSpec(320), label = "month-progress")
+        // The number cross-fades to its new value; the bar sweeps there ([sweepProgress]: from empty the first time in the
+        // process, from where it stood after that, so paging the month or returning to 현황 does not replay it; a snap under
+        // reduced motion). No count-up: a percentage is data.
+        val progress = sweepProgress(percent / 100f, key = "phone-month-bar")
         DigitChange("$name 운행일지 ${percent}% 완성", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.semantics { heading() })
-        LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp))
+        LinearProgressIndicator(progress = { progress.value }, modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp))
             .semantics { contentDescription = "완성률 ${percent}퍼센트" }, color = Scene.positive, trackColor = Scene.ringTrack)
         Muted(listOfNotNull("운행 ${status.trips}건", "목적 자동 분류 ${summary.autoPurpose}건", "카드 자동 반영 ${summary.cardMatched}건 · ${formatWon(summary.cardWon)}",
             if (summary.waiting > 0) "카드 결제 ${summary.waiting}건 대기 중" else null).joinToString(" · "))

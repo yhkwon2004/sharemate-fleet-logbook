@@ -1,6 +1,7 @@
 package ai.sharemate.app
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -82,7 +83,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toSize
-import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
@@ -110,16 +110,35 @@ internal fun Modifier.reportBounds(bounds: ItemBounds, index: Int): Modifier = o
     if (bounds[index] != rect) bounds[index] = rect
 }
 
+/** How [selectionGlide] marks the chosen item: the lit pill (selection fill and ring), or a glow underline (the sheet tabs). */
+internal enum class GlideMark { PILL, UNDERLINE }
+
+/** The underline mark: 3 dp of glow, inset 16 dp from each side of the chosen item. */
+private val UNDERLINE_THICKNESS = 3.dp
+private val UNDERLINE_INSET = 16.dp
+
 /**
- * The lit pill behind the selected item of a tab row or a segmented control: the selection fill and a 1.5 dp ring (never
- * colour alone), drawn behind the row at the selected item's measured bounds. On a change it glides from the old item to the
- * new one in [durationMs] (FastOutSlowIn); the first placement and reduced motion snap. Apply it after the row's padding,
- * so the drawing and the reported bounds share one coordinate space.
+ * Where the underline mark sits under an item with [bounds]: [thickness] high along its bottom edge, centred, inset by [inset]
+ * a side but never narrower than four times its thickness (so a narrow tab still shows a bar, not a dot).
  */
-@Composable internal fun Modifier.selectionGlide(bounds: ItemBounds, selected: Int, durationMs: Int = MOTION_PAGE_MS, ringWidth: Dp = 1.5.dp, corner: Dp? = null): Modifier {
+internal fun underlineBar(bounds: Rect, thickness: Float, inset: Float): Rect {
+    val width = (bounds.width - inset * 2).coerceAtLeast(thickness * 4)
+    return Rect(bounds.center.x - width / 2, bounds.bottom - thickness, bounds.center.x + width / 2, bounds.bottom)
+}
+
+/**
+ * The mark behind the selected item of a tab row or a segmented control, drawn at the selected item's measured bounds: the
+ * lit pill (the selection fill and a 1.5 dp ring, never colour alone), or with [GlideMark.UNDERLINE] a 3-dp glow underline
+ * (a shape, so never colour alone either). On a change it glides from the old item to the new one in [durationMs]
+ * (FastOutSlowIn); the first placement and reduced motion snap. Apply it after the row's padding (or its scroll), so the
+ * drawing and the reported bounds share one coordinate space.
+ */
+@Composable internal fun Modifier.selectionGlide(bounds: ItemBounds, selected: Int, durationMs: Int = MOTION_PAGE_MS, ringWidth: Dp = 1.5.dp, corner: Dp? = null,
+    mark: GlideMark = GlideMark.PILL): Modifier {
     val reduce = LocalReduceMotion.current
     val fill = Scene.selectionFill
     val ring = Scene.selectionRing
+    val glow = Scene.glow
     val target = bounds[selected]
     val rect = remember { Animatable(Rect.Zero, Rect.VectorConverter) }
     var placed by remember { mutableStateOf(false) }
@@ -130,10 +149,17 @@ internal fun Modifier.reportBounds(bounds: ItemBounds, index: Int): Modifier = o
     val density = LocalDensity.current
     val stroke = with(density) { ringWidth.toPx() }
     val radius = corner?.let { with(density) { it.toPx() } }
+    val thickness = with(density) { UNDERLINE_THICKNESS.toPx() }
+    val inset = with(density) { UNDERLINE_INSET.toPx() }
     val visible = target != null
     return drawBehind {
         if (!placed || !visible) return@drawBehind
         val r = rect.value
+        if (mark == GlideMark.UNDERLINE) {
+            val bar = underlineBar(r, thickness, inset)
+            drawRoundRect(glow, bar.topLeft, bar.size, CornerRadius(thickness / 2, thickness / 2))
+            return@drawBehind
+        }
         val round = radius ?: (r.height / 2f)
         drawRoundRect(fill, r.topLeft, r.size, CornerRadius(round, round))
         drawRoundRect(ring, Offset(r.left + stroke / 2, r.top + stroke / 2), Size(r.width - stroke, r.height - stroke),
@@ -218,6 +244,12 @@ internal fun homeSubtitle(signal: SignalStatus, demo: Boolean, open: Trip?): Str
     signal == SignalStatus.STARTING -> "차량과 연결하고 있어요."
     else -> "차량 데이터를 받을 수 없어요. 연결 상태를 확인해 주세요."
 }
+
+/**
+ * True while a trip of the data set on screen is being recorded. Its distance is then live telemetry inside the hero's
+ * supporting line ([homeSubtitle]) and the 오늘 운행 figure, so those update in place instead of cross-fading (spec C).
+ */
+internal fun homeShowsLiveTrip(data: TripLogData): Boolean = data.open?.let { it.demo == data.profile.demoMode } == true
 
 /**
  * How the home lays itself out in one window ([LayoutTokens] plus the font scale and the window height):
@@ -372,11 +404,14 @@ private var homeEntranceDone = false
                     Icon(painterResource(R.drawable.ic_splash_logo), null, Modifier.size(30.dp), tint = Scene.brand)
                     Text("SHAREMATE  ·  FLEET JOURNAL", style = MaterialTheme.typography.labelLarge, color = Scene.brand, letterSpacing = 3.sp)
                 }
-                // One headline, one supporting line. Both cross-fade with a small lift when the text changes (a new employee, a trip starting).
+                // One headline, one supporting line. Both cross-fade with a small lift when the text changes (a new employee, a trip starting),
+                // except that while a trip records the line carries its live distance, which updates in place (telemetry never cross-fades).
                 DigitChange(homeGreeting(hour, driver?.name, open != null), Modifier.semantics { heading() },
                     style = if (compact) MaterialTheme.typography.headlineLarge else scaledDisplay(MaterialTheme.typography.displaySmall, MaterialTheme.typography.headlineLarge),
                     color = Scene.text, fontWeight = FontWeight.Bold, maxLines = 2, lift = 4.dp)
-                DigitChange(homeSubtitle(state.signal, demo, open), style = MaterialTheme.typography.bodyLarge, color = Scene.textSecondary, maxLines = 2, lift = 4.dp)
+                val subtitle = homeSubtitle(state.signal, demo, open)
+                if (homeShowsLiveTrip(data)) Text(subtitle, style = MaterialTheme.typography.bodyLarge, color = Scene.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                else DigitChange(subtitle, style = MaterialTheme.typography.bodyLarge, color = Scene.textSecondary, maxLines = 2, lift = 4.dp)
                 if (state.signal == SignalStatus.DENIED) PrimaryAction("차량 정보 권한 허용", onClick = requestPermissions)
             }
         }
@@ -397,12 +432,16 @@ private var homeEntranceDone = false
     }
 }
 
-/** The search-bar entry to the assistant (640 × 68): it opens the sheet, where the driver picks a suggestion or types one line. */
+/**
+ * The search-bar entry to the assistant (640 × 68): it opens the sheet, where the driver picks a suggestion or types one line.
+ * Its outline is the solid accent, the one edge that marks it as a control on the hero haze (3.6:1 at the haze's weakest point,
+ * where WCAG 1.4.11 asks 3:1; the .40 accent it had was 1.7:1).
+ */
 @Composable private fun AssistantSearch(onClick: () -> Unit, modifier: Modifier = Modifier) {
     val interaction = remember { MutableInteractionSource() }
     // Day glass that carries text stays at .88 or above, so the composite contrast holds; night keeps its lighter alpha.
     val glass = Scene.glass.copy(alpha = if (Scene.isDay) .88f else .80f)
-    Surface(onClick = onClick, shape = RoundedCornerShape(50), color = glass, border = BorderStroke(1.dp, Scene.accent.copy(alpha = .40f)), interactionSource = interaction,
+    Surface(onClick = onClick, shape = RoundedCornerShape(50), color = glass, border = BorderStroke(1.dp, Scene.accent), interactionSource = interaction,
         modifier = modifier.widthIn(max = 640.dp).fillMaxWidth().pressable(interaction, .98f)
             .semantics { contentDescription = "운행 비서 열기. 예: 주차비 4,500원 추가해줘"; role = Role.Button }) {
         Row(Modifier.pressFill(interaction).heightIn(min = 68.dp).padding(horizontal = 26.dp), verticalAlignment = Alignment.CenterVertically,
@@ -496,16 +535,18 @@ private var homeEntranceDone = false
 
 /**
  * A count on its red disc. A changed count cross-fades its digits while the disc scales in from .85 (160 ms, no bounce);
- * an instant swap under reduced motion. Decorative for TalkBack: the tab or card it sits in speaks the count.
+ * an instant swap under reduced motion. The disc's bounds follow on the same clock without clipping (9 → 10 widens it),
+ * and snap with the rest under reduced motion. Decorative for TalkBack: the tab or card it sits in speaks the count.
  */
 @Composable internal fun CountBadge(count: Int, modifier: Modifier = Modifier) {
     val reduce = LocalReduceMotion.current
     // White digits on the badge red clear 5.3:1 by day; the tile's foreground is the one white that is a scene token.
     val digits = Scene.onTile
     AnimatedContent(targetState = count.coerceAtMost(99), modifier = modifier.clearAndSetSemantics {}, label = "badge", transitionSpec = {
-        if (reduce) fadeIn(snap()) togetherWith fadeOut(snap())
-        else (fadeIn(tween(160, easing = FastOutSlowInEasing)) + scaleIn(tween(160, easing = FastOutSlowInEasing), initialScale = .85f)) togetherWith
-            fadeOut(tween(120, easing = FastOutSlowInEasing))
+        val swap = if (reduce) fadeIn(snap()) togetherWith fadeOut(snap())
+            else (fadeIn(tween(160, easing = FastOutSlowInEasing)) + scaleIn(tween(160, easing = FastOutSlowInEasing), initialScale = .85f)) togetherWith
+                fadeOut(tween(120, easing = FastOutSlowInEasing))
+        swap using SizeTransform(clip = false) { _, _ -> if (reduce) snap() else tween(160, easing = FastOutSlowInEasing) }
     }) { value ->
         Box(Modifier.heightIn(min = 26.dp).widthIn(min = 26.dp).clip(RoundedCornerShape(50)).background(Scene.badge).padding(horizontal = 8.dp),
             contentAlignment = Alignment.Center) {
@@ -540,7 +581,8 @@ private var homeEntranceDone = false
 
 /**
  * Today at a glance: distance (the live trip included), finished trips, expenses, and the odometer when the signal is fresh.
- * The distance, the count and the expenses cross-fade when they change; the odometer is live telemetry and simply updates.
+ * The count and the expenses cross-fade when they change, and so does the distance between trips; while a trip records the
+ * distance is live telemetry like the odometer, and both simply update in place.
  */
 @Composable internal fun TodayWidget(state: TripLogState, now: Long, modifier: Modifier = Modifier, compact: Boolean = false) {
     val data = state.data
@@ -557,8 +599,10 @@ private var homeEntranceDone = false
         Column(verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 6.dp)) {
             Text("오늘 운행", style = MaterialTheme.typography.labelLarge, color = Scene.textMuted)
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                DigitChange(kmLabel, style = (if (compact) scaledDisplay(MaterialTheme.typography.displaySmall, MaterialTheme.typography.headlineLarge)
-                    else scaledDisplay(MaterialTheme.typography.displayMedium, MaterialTheme.typography.displaySmall)).copy(fontFeatureSettings = "tnum"), color = Scene.text)
+                val kmStyle = (if (compact) scaledDisplay(MaterialTheme.typography.displaySmall, MaterialTheme.typography.headlineLarge)
+                    else scaledDisplay(MaterialTheme.typography.displayMedium, MaterialTheme.typography.displaySmall)).copy(fontFeatureSettings = "tnum")
+                if (homeShowsLiveTrip(data)) Text(kmLabel, style = kmStyle, color = Scene.text, maxLines = 1)
+                else DigitChange(kmLabel, style = kmStyle, color = Scene.text)
                 Text("km", style = MaterialTheme.typography.titleMedium, color = Scene.textMuted, modifier = Modifier.padding(bottom = if (compact) 6.dp else 10.dp))
             }
         }
@@ -587,37 +631,23 @@ private var homeEntranceDone = false
             }
             if (!compact) info.auto?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }
-        CompletionRing(info.percent, color, diameter = if (compact) 44.dp else 104.dp, thickness = if (compact) 5.dp else 10.dp)
+        CompletionRing(info.percent, color, diameter = if (compact) 44.dp else 104.dp, thickness = if (compact) 5.dp else 10.dp, sweepKey = "home-month-ring")
         Chevron()
     }
 }
 
 /**
- * The ring's fill as a fraction of the circle: it sweeps up from 0 in 600 ms the first time (120 ms after the card lands)
- * and from the previous value in 320 ms after that; the exact value, at once, under reduced motion. Read `.value` in the
- * draw lambda so only the drawing invalidates per frame.
- */
-@Composable internal fun rememberRingSweep(target: Float): Animatable<Float, *> {
-    val reduce = LocalReduceMotion.current
-    val sweep = remember { Animatable(0f) }
-    var first by remember { mutableStateOf(true) }
-    LaunchedEffect(target, reduce) {
-        if (reduce) { sweep.snapTo(target); first = false; return@LaunchedEffect }
-        if (first) { delay(120); first = false; sweep.animateTo(target, tween(600, easing = FastOutSlowInEasing)) }
-        else sweep.animateTo(target, tween(320, easing = FastOutSlowInEasing))
-    }
-    return sweep
-}
-
-/**
  * How much of the month is confirmed, as a ring lit in the widget's tone; a dash when the month has no trips yet. The arc
- * sweeps to its value ([rememberRingSweep]) and the label cross-fades. Decorative for TalkBack (the widget speaks the numbers).
+ * sweeps to its value ([sweepProgress]: from empty the first time in the process, from where it stood after that, so a
+ * return to 홈 does not replay it; keyed by [sweepKey]) and the label cross-fades. Decorative for TalkBack (the widget
+ * speaks the numbers).
  */
-@Composable internal fun CompletionRing(percent: Int?, color: Color, diameter: Dp = 104.dp, thickness: Dp = 10.dp) {
+@Composable internal fun CompletionRing(percent: Int?, color: Color, modifier: Modifier = Modifier, diameter: Dp = 104.dp, thickness: Dp = 10.dp,
+    sweepKey: String = "completion-ring") {
     val track = Scene.ringTrack
     val accent = Scene.accent
-    val sweep = rememberRingSweep((percent ?: 0).coerceIn(0, 100) / 100f)
-    Box(Modifier.size(diameter).clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
+    val sweep = sweepProgress((percent ?: 0).coerceIn(0, 100) / 100f, key = sweepKey)
+    Box(modifier.size(diameter).clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
         Spacer(Modifier.matchParentSize().drawBehind {
             val stroke = thickness.toPx()
             val inset = stroke / 2
