@@ -2,6 +2,7 @@ package ai.sharemate.app
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.snap
@@ -71,14 +72,11 @@ internal fun phoneSameDestinationCount(trip: Trip, history: List<Trip>, purpose:
         it.purposeSource != EditSource.AUTO && it.purposeSource != EditSource.SUGGESTED && (it.destination ?: it.endAddress) == key }
 }
 
-/** What the car does next, honest about the signal: automatic recording is promised only while the car is actually listening. */
+/** What the car does next, honest about the signal (the settings' link card says it): automatic recording is promised only while the car is listening. */
 internal fun autoRecordText(signal: SignalStatus?): String = when (signal) {
     SignalStatus.READY, SignalStatus.RECORDING, SignalStatus.DEMO -> "다음 운행도 자동 기록해요"
     else -> "차량 신호를 받으면 자동 기록해요"
 }
-
-/** The all-done line (now spoken by the settings' link card rather than an empty band on the home). */
-internal fun homeAllDoneText(signal: SignalStatus?): String = "지금 할 일이 없어요 · ${autoRecordText(signal)}"
 
 private val shownKeysSaver = listSaver<MutableState<Set<String>>, String>(save = { it.value.toList() }, restore = { mutableStateOf(it.toSet()) })
 
@@ -162,11 +160,13 @@ private val shownKeysSaver = listSaver<MutableState<Set<String>>, String>(save =
                     }
                     if (charge != null) HomeAppear("charge:${charge.endAt}", index++, shown) { PhoneChargeCard(charge, busy, commands.send) }
                     if (unclassified.isNotEmpty()) HomeAppear("purpose", index++, shown) {
-                        // The next trip slides up into the same slot after each answer.
+                        // The next trip slides up into the same slot after each answer; the slot's height follows in 160 ms, unclipped,
+                        // and everything snaps under reduced motion.
                         val reduce = LocalReduceMotion.current
                         AnimatedContent(targetState = unclassified.first().id, label = "home-purpose", transitionSpec = {
-                            if (reduce) fadeIn(snap()) togetherWith fadeOut(snap())
-                            else fadeIn(tween(MOTION_ENTER_MS, easing = FastOutSlowInEasing)) + slideInVertically(tween(MOTION_ENTER_MS, easing = FastOutSlowInEasing)) { it / 6 } togetherWith fadeOut(tween(120))
+                            val swap = if (reduce) fadeIn(snap()) togetherWith fadeOut(snap())
+                                else fadeIn(tween(MOTION_ENTER_MS, easing = FastOutSlowInEasing)) + slideInVertically(tween(MOTION_ENTER_MS, easing = FastOutSlowInEasing)) { it / 6 } togetherWith fadeOut(tween(120))
+                            swap using SizeTransform(clip = false) { _, _ -> if (reduce) snap() else tween(160, easing = FastOutSlowInEasing) }
                         }) { id ->
                             val trip = unclassified.firstOrNull { it.id == id } ?: unclassified.first()
                             PhoneUnclassifiedCard(trip, unclassified.size, data, enabled = !busy, onClassify = { commands.classify(trip, it) }, onOpen = { commands.openTrip(trip.id) },

@@ -146,9 +146,13 @@ class PhoneShellTest {
         assertEquals(listOf("a"), homeUnclassified(data, emptyMap()).map { it.id })
         assertTrue(homeUnclassified(data, mapOf("a" to PendingEdit(TripPurpose.BUSINESS, now, 1))).isEmpty())
         assertEquals(listOf("a"), homeUnclassified(data, mapOf("a" to PendingEdit(TripPurpose.UNCLASSIFIED, now, 1))).map { it.id })
-        assertEquals("지금 할 일이 없어요 · 다음 운행도 자동 기록해요", homeAllDoneText(SignalStatus.READY))
-        assertEquals("지금 할 일이 없어요 · 차량 신호를 받으면 자동 기록해요", homeAllDoneText(SignalStatus.DENIED))
-        assertEquals("지금 할 일이 없어요 · 차량 신호를 받으면 자동 기록해요", homeAllDoneText(null))
+    }
+
+    @Test fun settingsPromiseAutomaticRecordingOnlyWhileTheCarListens() {
+        assertEquals("다음 운행도 자동 기록해요", autoRecordText(SignalStatus.READY))
+        assertEquals("다음 운행도 자동 기록해요", autoRecordText(SignalStatus.RECORDING))
+        assertEquals("차량 신호를 받으면 자동 기록해요", autoRecordText(SignalStatus.DENIED))
+        assertEquals("차량 신호를 받으면 자동 기록해요", autoRecordText(null))
     }
 
     @Test fun purposeSourceLineNeverHidesAnAutomaticValue() {

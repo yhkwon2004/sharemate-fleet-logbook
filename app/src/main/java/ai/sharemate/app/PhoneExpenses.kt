@@ -469,7 +469,8 @@ private class LauncherHolder { var launch: (() -> Unit)? = null }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetMaxWidth = phoneSheetMaxWidth(), containerColor = Scene.rail, contentColor = Scene.text) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = tokens.gutter).padding(bottom = 32.dp).navigationBarsPadding(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("경비 추가", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
-            Eyebrow("어느 운행이에요?")
+            // The sheet's field labels stay in textSecondary; brand is for section labels.
+            Eyebrow("어느 운행이에요?", Scene.textSecondary)
             if (trip == null) Muted("끝난 운행이 없어요. 운행이 끝나면 경비를 붙일 수 있어요.")
             else {
                 Surface(shape = RoundedCornerShape(16.dp), color = Scene.glass, contentColor = Scene.text, border = Scene.edge) {
@@ -493,7 +494,7 @@ private class LauncherHolder { var launch: (() -> Unit)? = null }
                     }
                 }
             }
-            Eyebrow("종류")
+            Eyebrow("종류", Scene.textSecondary)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 ExpenseType.entries.forEach { candidate ->
                     val chosen = type == candidate.name

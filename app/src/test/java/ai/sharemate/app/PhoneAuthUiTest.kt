@@ -1,5 +1,7 @@
 package ai.sharemate.app
 
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -129,5 +131,17 @@ class PhoneAuthUiTest {
             assertEquals("고른 카드도 불투명", 1f, chosen.alpha, 0f)
             assertNotEquals("고른 카드는 채움이 보임", scene.glass, chosen)
         }
+    }
+
+    @Test fun theNightScrimLiesOverTheBrandBlockAndStopsShortOfTheMoon() {
+        // The 1080 × 2400 px phone (2.625 px per dp): the brand block as measured, a 16-dp margin (42 px), a 64-dp fade (168 px).
+        val art = Size(1080f, 2400f)
+        val core = signInNightScrim(Rect(52.5f, 158f, 582.4f, 561.2f), art, 42f)
+        assertEquals("글자 블록 + 여백, 픽셀 단위로 올림", Rect(0f, 0f, 625f, 604f), core)
+        assertTrue("흐려지는 끝도 달(가로 82 %)보다 왼쪽", core!!.right + 168f < art.width * .82f)
+        assertNull("재기 전에는 그리지 않음", signInNightScrim(Rect.Zero, art, 42f))
+        assertNull("그림 밖의 글자", signInNightScrim(Rect(1200f, 100f, 1500f, 400f), art, 42f))
+        assertEquals("그림을 넘지 않음", Rect(0f, 0f, 1080f, 342f), signInNightScrim(Rect(0f, 0f, 1070f, 300f), art, 42f))
+        assertTrue("밤 가림막은 배경색 .70", SIGN_IN_NIGHT_SCRIM_ALPHA == .70f)
     }
 }

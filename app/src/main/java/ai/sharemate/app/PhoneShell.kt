@@ -432,7 +432,10 @@ private data class RouteFrame(val route: PhoneRoute, val depth: Int)
                     .filterNotNull()
                     .collectLatest { clear -> if (orbClear != null && !reduce) delay(PHONE_ORB_SETTLE_MS); orbClear = clear }
             }
-            PhoneHomeBackdrop(Modifier.matchParentSize().graphicsLayer { alpha = skyAlpha }, hazeTo = greetingBottom, showOrb = homeShown && orbClear == true, orbAt = orbAt)
+            // It fades with the page on the page clock instead of popping on the first frame of a tab change; the sky reads the
+            // value in its draw, so the fade redraws the sky and recomposes nothing.
+            val orbFade = animateFloatAsState(if (homeShown && orbClear == true) 1f else 0f, if (reduce) snap() else tween(MOTION_PAGE_MS), label = "phone-orb")
+            PhoneHomeBackdrop(Modifier.matchParentSize().graphicsLayer { alpha = skyAlpha }, hazeTo = greetingBottom, orbAt = orbAt, orbAlpha = { orbFade.value })
             Scaffold(containerColor = Color.Transparent,
                 snackbarHost = { PhoneSnackbarHost(snackbar, Modifier.widthIn(max = 600.dp).padding(horizontal = 12.dp)) },
                 bottomBar = { if (showTabs && !rail) PhoneGlassNav(navTabs, ui.tab) { ui = ui.copy(tab = it) } }) { padding ->

@@ -1,6 +1,5 @@
 package ai.sharemate.app
 
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
@@ -41,6 +40,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
@@ -56,7 +56,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -249,8 +248,36 @@ internal fun precheckReservation(data: TripLogData, request: Reservation, now: L
 /** Spec B: on a landscape phone or a tablet (MEDIUM and up) the day's timeline sits beside the request form instead of above it. */
 internal fun bookingTwoPane(tokens: LayoutTokens): Boolean = !tokens.compact
 
-/** The 'now' line's resting place inside its hour row: the fraction, or the top edge while the line is elsewhere (nothing is drawn then). */
+/** The 'now' line's place inside its hour row: the fraction, or the top edge while the line is elsewhere (nothing is drawn then). */
 internal fun nowLineTarget(marker: Float?): Float = marker?.coerceIn(0f, 1f) ?: 0f
+
+/** How one hour row of the day is painted: its fill, the outline of a booking's first row (null elsewhere) and its words' colour. */
+@Immutable internal data class HourRowStyle(val fill: Color, val edge: Color?, val text: Color)
+
+/**
+ * The paint of an hour row from the scene's [colors]. An hour that is over has no fill (it offers nothing any more) and a free
+ * one says "지난 시간" in textMuted; a booking keeps its outline and its words in text (its first row) or textSecondary, past or
+ * not. No row is dimmed as a whole: that left past bookings at 2–2.8:1 by day.
+ */
+internal fun hourRowStyle(colors: SceneColors, booked: Boolean, mine: Boolean, first: Boolean, past: Boolean): HourRowStyle = HourRowStyle(
+    fill = when {
+        past -> Color.Transparent
+        !booked -> colors.fill
+        mine -> colors.selectionFill
+        else -> colors.brand.copy(alpha = .16f)
+    },
+    edge = when {
+        !booked || !first -> null
+        mine -> colors.selectionRing
+        else -> colors.brand.copy(alpha = .5f)
+    },
+    text = when {
+        booked && first -> colors.text
+        booked -> colors.textSecondary
+        past -> colors.textMuted
+        else -> colors.textSecondary
+    },
+)
 
 /** "06:00–09:00 · 지난 시간": the hours from [firstHour] up to [endHour] that are already over, folded into one line. */
 internal fun pastHoursText(firstHour: Int, endHour: Int): String = "%02d:00–%02d:00 · 지난 시간".format(firstHour, endHour)
@@ -505,20 +532,13 @@ private fun Modifier.bleedPast(start: Dp, end: Dp): Modifier = layout { measurab
 @Composable private fun HourRow(hour: Int, occupant: Reservation?, first: Boolean, data: TripLogData, mine: Boolean, past: Boolean, marker: Float?,
     date: LocalDate, tz: ZoneId, onPick: (() -> Unit)?) {
     val shape = RoundedCornerShape(14.dp)
-    val fill = when {
-        occupant == null -> Scene.fill
-        mine -> Scene.selectionFill
-        else -> Scene.brand.copy(alpha = .16f)
-    }
-    val edge: BorderStroke? = when {
-        occupant == null || !first -> null
-        mine -> BorderStroke(1.5.dp, Scene.selectionRing)
-        else -> BorderStroke(1.dp, Scene.brand.copy(alpha = .5f))
-    }
-    // Hoisted for the draw lambda; the line itself slides to the new minute (enterSpec: 220 ms, a snap under reduced motion).
+    // A past hour is marked by its missing fill and, when free, its muted words; the row itself is never dimmed ([hourRowStyle]).
+    val style = hourRowStyle(Scene.colors, booked = occupant != null, mine = mine, first = first, past = past)
+    val edge: BorderStroke? = style.edge?.let { BorderStroke(if (mine) 1.5.dp else 1.dp, it) }
+    // Hoisted for the draw lambda. The line is the clock, so it sits at the minute and never slides (spec C: the clock does not animate).
     val nowLine = Scene.glow.copy(alpha = .55f)
     val nowDot = Scene.glow
-    val lineAt by animateFloatAsState(nowLineTarget(marker), enterSpec(), label = "now-line")
+    val lineAt = nowLineTarget(marker)
     val tappable = occupant == null && !past && onPick != null
     val press = remember { MutableInteractionSource() }
     val label = when {
@@ -527,12 +547,12 @@ private fun Modifier.bleedPast(start: Dp, end: Dp): Modifier = layout { measurab
         past -> "지난 시간"
         else -> "비어 있어요"
     }
-    val description = "${minutesText(hour * 60)}, " + (if (occupant != null) "${bookerLabel(data, occupant.driverId)} 님 예약 ${dayWindowText(occupant, date, tz)}" else label) +
-        if (marker != null) ", 지금" else ""
-    Row(Modifier.fillMaxWidth().alpha(if (past) .45f else 1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    val description = "${minutesText(hour * 60)}, " + (if (occupant != null) "${bookerLabel(data, occupant.driverId)} 님 예약 ${dayWindowText(occupant, date, tz)}" +
+        (if (past) ", 지난 시간" else "") else label) + if (marker != null) ", 지금" else ""
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(minutesText(hour * 60), style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"), color = Scene.textMuted,
             modifier = Modifier.widthIn(min = 44.dp).clearAndSetSemantics {})
-        Box(Modifier.weight(1f).then(if (tappable) Modifier.pressable(press) else Modifier).heightIn(min = 48.dp).clip(shape).background(fill)
+        Box(Modifier.weight(1f).then(if (tappable) Modifier.pressable(press) else Modifier).heightIn(min = 48.dp).clip(shape).background(style.fill)
             .then(if (edge != null) Modifier.border(edge, shape) else Modifier)
             .then(if (tappable) Modifier.clickable(interactionSource = press, indication = LocalIndication.current, onClickLabel = "이 시간으로 신청서 채우기", role = Role.Button) { onPick?.invoke() } else Modifier)
             .drawWithContent {
@@ -546,8 +566,7 @@ private fun Modifier.bleedPast(start: Dp, end: Dp): Modifier = layout { measurab
             }
             .semantics(mergeDescendants = true) { contentDescription = description }
             .padding(horizontal = 14.dp, vertical = 8.dp), contentAlignment = Alignment.CenterStart) {
-            Text(label, Modifier.clearAndSetSemantics {}, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                color = when { occupant != null && first -> Scene.text; occupant != null -> Scene.textMuted; else -> Scene.textSecondary })
+            Text(label, Modifier.clearAndSetSemantics {}, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, color = style.text)
         }
     }
 }

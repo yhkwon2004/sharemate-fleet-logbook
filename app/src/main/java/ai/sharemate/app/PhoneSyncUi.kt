@@ -147,7 +147,7 @@ internal fun reasonSteps(reason: String): List<String> = reason.split(" · ").ma
 
 @Composable internal fun PhoneOpenTripCard(open: Trip, link: PhoneLink) {
     Panel(color = Scene.glass, padding = 20.dp) {
-            Eyebrow("지금 운행 중 · ${phoneTime(open.startAt)} 출발", Scene.brand)
+            Eyebrow("지금 운행 중 · ${phoneTime(open.startAt)} 출발")
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("%.1f".format(Locale.KOREA, open.distanceKm), style = MaterialTheme.typography.displaySmall)
                 Text("km", style = MaterialTheme.typography.titleMedium, color = Scene.textSecondary, modifier = Modifier.padding(bottom = 6.dp))
