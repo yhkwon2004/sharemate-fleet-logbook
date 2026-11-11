@@ -100,10 +100,15 @@ internal fun previewCell(value: Any): String = when (value) {
  * The preview never scrolls vertically itself; the page around it does. With [fillHeight] (the car's 월간·Excel) [modifier]
  * gives it a definite height and the table pages to the rows that fit its own room ([previewRowsPerPage]); otherwise (the
  * phone's 현황 card) it wraps its content and pages a fixed count, so an empty sheet leaves no blank under it.
+ *
+ * On the car (2.12, [isCar]) the preview sits in its own card, so it speaks the car's one line: the closed month as a tag, an
+ * empty sheet or a failed build as a title over one line instead of a nested panel, the caveat as an ⓘ row with its long form
+ * folded, and the chosen sheet in the accent ink. The phone draws it as before.
  */
 @Composable
 internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate, to: LocalDate,
     modifier: Modifier = Modifier, compact: Boolean = false, fillHeight: Boolean = false) {
+    val car = isCar()
     var sheetIndex by rememberSaveable { mutableIntStateOf(0) }
     var page by rememberSaveable { mutableIntStateOf(0) }
     var detail by remember { mutableStateOf<Pair<Int, List<Any>>?>(null) }
@@ -126,9 +131,10 @@ internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate,
                 Text("업무용승용차 운행기록부", style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f).semantics { heading() }, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 // The previewed month is closed: say so where the file name would, never as a lock.
-                closed?.let { ClosedChip(it) }
+                closed?.let { if (car) CarTag("마감됨 · ${closedDay(it.closedAt)}", tone = PillTone.POSITIVE) else ClosedChip(it) }
             }
-            Text(if (data.profile.demoMode) "시연 데이터 · 제출용이 아닙니다" else "${data.profile.companyName.ifBlank { "법인명 미입력" }} · ${data.profile.plateNumber.ifBlank { "차량번호 미입력" }}",
+            Text(if (data.profile.demoMode) (if (car) ReportCopy.PREVIEW_DEMO else "시연 데이터 · 제출용이 아닙니다")
+                else "${data.profile.companyName.ifBlank { "법인명 미입력" }} · ${data.profile.plateNumber.ifBlank { "차량번호 미입력" }}",
                 style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         SheetTabs(listOf("운행", "직원", "경비", "차량", "확인"), sheetIndex, Modifier.widthIn(max = EXCEL_VIEW_MAX_WIDTH)) { sheetIndex = it; page = 0; detail = null }
@@ -139,16 +145,21 @@ internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate,
             sheets == null -> if (fillHeight) BoxWithConstraints(Modifier.weight(1f, fill = false).fillMaxWidth()) {
                 SkeletonTable(columns, rows = previewRowsPerPage(maxHeight - 12.dp - 16.dp * fontScale.coerceAtLeast(1f), compact, fontScale), compact = compact)
             } else SkeletonTable(columns, rows = previewRowsPerPage(null, compact), compact = compact)
-            sheets.isFailure -> Panel { Text("미리보기를 만들지 못했어요"); Muted("기록은 변경하지 않았습니다. 조회 기간을 다시 선택해 주세요.") }
+            sheets.isFailure -> if (car) PreviewNotice(ReportCopy.PREVIEW_FAILED, ReportCopy.PREVIEW_FAILED_LINE)
+                else Panel { Text("미리보기를 만들지 못했어요"); Muted("기록은 변경하지 않았습니다. 조회 기간을 다시 선택해 주세요.") }
             else -> {
                 val sheet = sheets.getOrThrow()[sheetIndex]
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(sheet.name, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     Text("${sheet.rows.size}행", style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary)
                 }
-                if (sheet.rows.isEmpty()) Panel(padding = 24.dp) {
-                    Text(when (sheetIndex) { 2 -> "등록된 경비가 없어요"; 3 -> "정비 기록과 기한이 없어요"; else -> "이 범위의 기록이 없어요" }, style = MaterialTheme.typography.titleMedium)
-                    Muted("조회 기간과 직원 선택을 확인하세요. 저장 시에도 빈 내역으로 표시됩니다.")
+                val emptyTitle = when (sheetIndex) { 2 -> "등록된 경비가 없어요"; 3 -> "정비 기록과 기한이 없어요"; else -> "이 범위의 기록이 없어요" }
+                if (sheet.rows.isEmpty()) {
+                    if (car) PreviewNotice(emptyTitle, ReportCopy.PREVIEW_EMPTY_LINE)
+                    else Panel(padding = 24.dp) {
+                        Text(emptyTitle, style = MaterialTheme.typography.titleMedium)
+                        Muted("조회 기간과 직원 선택을 확인하세요. 저장 시에도 빈 내역으로 표시됩니다.")
+                    }
                 } else {
                     val showPage: @Composable (Int) -> Unit = { rowsPerPage ->
                         SheetPage(sheet, rowsPerPage, page, compact, tapHeight, onPage = { page = it }) { number, row -> detail = number to row }
@@ -159,7 +170,8 @@ internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate,
                         showPage(previewRowsPerPage(maxHeight - previewPagerHeight(tapHeight, fontScale), compact, fontScale))
                     } else showPage(previewRowsPerPage(null, compact))
                 }
-                Text("실제 저장 데이터 · Excel 인쇄 배치와 다를 수 있어요. 증빙·세무 요건은 제출 전 별도로 확인하세요.", style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary)
+                if (car) CarInfoRow(ReportCopy.PREVIEW_NOTE, more = ReportCopy.PREVIEW_NOTE_MORE)
+                else Text("실제 저장 데이터 · Excel 인쇄 배치와 다를 수 있어요. 증빙·세무 요건은 제출 전 별도로 확인하세요.", style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary)
                 detail?.let { (number, row) -> AlertDialog(onDismissRequest = { detail = null }, title = { Text("${sheet.name} · ${number}행") },
                     text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         row.forEachIndexed { index, cell -> Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -169,6 +181,17 @@ internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate,
                     } }, confirmButton = { DialogButton("닫기") { detail = null } }) }
             }
         }
+    }
+}
+
+/**
+ * The car's word in place of the table (2.12): a [title] over one [line] ([CarLine]), straight on the preview's card, where
+ * the phone nests a panel: an empty sheet, or a preview that could not be built.
+ */
+@Composable private fun PreviewNotice(title: String, line: String) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(title, style = MaterialTheme.typography.titleMedium, color = Scene.text)
+        CarLine(line)
     }
 }
 
@@ -213,13 +236,14 @@ internal fun sheetTabsNaturalWidth(count: Int): Dp = 72.dp * count + 4.dp * (cou
  * The preview's sheet tabs, one level under the 월간·Excel view tabs: plain text tabs (56 dp on the car, 48 on the phone) on a
  * hairline instead of a glass pill. The chosen sheet's label takes the glow colour over the glow underline of [selectionGlide]
  * ([GlideMark.UNDERLINE]: a shape, so never colour alone) that glides to a new sheet in 180 ms, a snap under reduced motion.
- * Cap the width with [modifier].
+ * On the car (2.12) both take the accent ink instead, AA on the preview's card (4.93 / 7.66). Cap the width with [modifier].
  */
 @Composable private fun SheetTabs(labels: List<String>, selected: Int, modifier: Modifier = Modifier, onSelect: (Int) -> Unit) {
     val car = LocalLayout.current.startAnchored
     val bounds = rememberItemBounds()
     val reduce = LocalReduceMotion.current
     val hairline = Scene.divider
+    val ink = if (isCar()) Car.skin.accentInk else Scene.glow
     BoxWithConstraints(modifier.fillMaxWidth().drawBehind {
         val stroke = 1.dp.toPx()
         drawRect(hairline, Offset(0f, size.height - stroke), Size(size.width, stroke))
@@ -228,11 +252,11 @@ internal fun sheetTabsNaturalWidth(count: Int): Dp = 72.dp * count + 4.dp * (cou
         // they share the width equally so every sheet stays visible instead of the last one being cut at the edge.
         val fits = maxWidth >= sheetTabsNaturalWidth(labels.size)
         Row((if (fits) Modifier.horizontalScroll(rememberScrollState()) else Modifier.fillMaxWidth())
-            .selectionGlide(bounds, selected, durationMs = 180, mark = GlideMark.UNDERLINE), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            .selectionGlide(bounds, selected, durationMs = 180, mark = GlideMark.UNDERLINE, underlineColor = ink), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             labels.forEachIndexed { index, label ->
                 val active = index == selected
                 val interaction = remember { MutableInteractionSource() }
-                val tint by animateColorAsState(if (active) Scene.glow else Scene.textSecondary, if (reduce) snap() else tween(180, easing = FastOutSlowInEasing), label = "sheet-tab")
+                val tint by animateColorAsState(if (active) ink else Scene.textSecondary, if (reduce) snap() else tween(180, easing = FastOutSlowInEasing), label = "sheet-tab")
                 Box(Modifier.reportBounds(bounds, index).then(if (fits) Modifier.widthIn(min = 72.dp) else Modifier.weight(1f))
                     .pressable(interaction, .98f).heightIn(min = if (car) 56.dp else 48.dp)
                     .clip(RoundedCornerShape(12.dp))

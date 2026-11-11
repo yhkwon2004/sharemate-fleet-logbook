@@ -1,5 +1,6 @@
 package ai.sharemate.app
 
+import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -69,6 +70,33 @@ class MonthCloseUiTest {
         assertEquals("운행이 기록되면 여기서 마감할 수 있어요.", monthCloseFootnote(MonthStatus(YearMonth.of(2026, 11), 0, 0, 0, null), today))
         assertEquals("운행이 없는 달은 마감하지 않아도 돼요.", monthCloseFootnote(MonthStatus(YearMonth.of(2026, 8), 0, 0, 0, null), today))
         assertEquals("남은 확인 3건을 끝내면 마감 버튼이 열려요.", monthCloseFootnote(MonthStatus(YearMonth.of(2026, 10), 10, 2, 1, null), today))
+    }
+
+    @Test fun theReportCardKeepsOneNoteAndFoldsTheRestBehindInfo() {
+        val today = LocalDate.of(2026, 11, 9)
+        val closed = MonthStatus(YearMonth.of(2026, 10), 10, 0, 0, MonthClose("2026-10", at(11, 1, 9), 10, 300.0, 280.0, 45_000))
+        assertEquals("마감 후 수정 1건 · 운행기록에 표시돼요" to emptyList<String>(), monthCloseNote(closed, today, edited = 1))
+        val folded = "마감 후에도 운행은 고칠 수 있어요" to listOf("고친 운행엔 ‘마감 후 수정’이 붙어요")
+        assertEquals("마감 후 수정이 없는 달", folded, monthCloseNote(closed, today, edited = 0))
+        assertEquals("마감할 수 있는 달도 같은 말", folded, monthCloseNote(MonthStatus(YearMonth.of(2026, 10), 10, 0, 0, null), today, edited = 0))
+        assertEquals("운행이 없는 지난달", "운행이 없는 달은 마감하지 않아도 돼요" to emptyList<String>(),
+            monthCloseNote(MonthStatus(YearMonth.of(2026, 8), 0, 0, 0, null), today, edited = 0))
+        // ④ already says what the close waits for ("운행이 없어요" / "①·②를 끝내면 열려요"), and TalkBack hears it on the button.
+        assertNull("운행이 없는 이번 달", monthCloseNote(MonthStatus(YearMonth.of(2026, 11), 0, 0, 0, null), today, edited = 0))
+        assertNull("남은 확인이 있는 달", monthCloseNote(MonthStatus(YearMonth.of(2026, 10), 10, 2, 1, null), today, edited = 0))
+        // Every note is one card line; its folded form may wrap.
+        listOf(monthCloseNote(closed, today, 12)!!, folded, monthCloseNote(MonthStatus(YearMonth.of(2026, 8), 0, 0, 0, null), today, 0)!!).forEach { (line, more) ->
+            assertOneLine(line, CARD_LINE_UNITS)
+            more.forEach { assertFalse(it, it.endsWith(".")) }
+        }
+    }
+
+    @Test fun theStepsGoAcrossOnlyWhereTheCardKeeps980Dp() {
+        assertTrue("FULL의 1064 dp 카드", closeStepsAcross(1064.dp, 1f))
+        assertTrue("열 없는 EXPANDED의 1056 dp", closeStepsAcross(1056.dp, 1f))
+        assertFalse("896 dp는 행으로", closeStepsAcross(896.dp, 1f))
+        assertFalse("1.3배 글꼴의 998 dp는 768 상당", closeStepsAcross(998.dp, 1.3f))
+        assertTrue("작은 글꼴은 1배로 셈", closeStepsAcross(980.dp, .85f))
     }
 
     @Test fun theBannerQuotesTheRealDeadlineAndTheRealCount() {

@@ -40,10 +40,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.AccountBox
 import androidx.compose.material.icons.outlined.LocationOn
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -929,9 +930,11 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
 /**
  * The business-use ratio as a ring: the arc sweeps to its value ([sweepProgress] under [sweepKey]: from empty the first time
  * in the process, from where it stood after that, so a return to 월간 or a view switch does not replay it) and the label
- * cross-fades; colours are read in composition.
+ * cross-fades; colours are read in composition. Without [showCaption] (2.12, a card whose title already names the ratio) the
+ * ring shows the figure alone; TalkBack hears "[caption] 80%" either way.
  */
-@Composable internal fun RatioRing(ratio: Double?, diameter: Dp, caption: String, modifier: Modifier = Modifier, sweepKey: String = "report-ratio-ring") {
+@Composable internal fun RatioRing(ratio: Double?, diameter: Dp, caption: String, modifier: Modifier = Modifier, sweepKey: String = "report-ratio-ring",
+    showCaption: Boolean = true) {
     val track = Scene.ringTrack
     val arcColor = LocalPleosColors.current.chartActive
     val sweep = sweepProgress(ratio?.toFloat() ?: 0f, key = sweepKey)
@@ -946,7 +949,7 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
         })
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             DigitChange(ratioText(ratio), style = if (diameter >= 200.dp) MaterialTheme.typography.displayMedium else MaterialTheme.typography.headlineLarge)
-            Text(caption, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (showCaption) Text(caption, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -1269,29 +1272,38 @@ internal fun logListWidth(layout: LayoutTokens, page: Dp, gap: Dp, fontScale: Fl
     }
 }
 
-/** The car's period stepper (운행기록, 월간·Excel): 64-dp glass arrows around a heading TalkBack re-reads when it changes. */
-@Composable private fun RowScope.PeriodStepper(copy: StepperCopy, canForward: Boolean, onBack: () -> Unit, onForward: () -> Unit) {
-    MonthStepButton(forward = false, description = copy.back, onClick = onBack)
-    Text(copy.label, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center, maxLines = 1,
-        modifier = Modifier.widthIn(min = 180.dp).semantics { heading(); liveRegion = LiveRegionMode.Polite })
-    MonthStepButton(forward = true, description = copy.forward, enabled = canForward, onClick = onForward)
+/**
+ * The car's period stepper (운행기록, 월간·Excel; 2.12): one 66-dp stadium on the card colour with its hairline, two round
+ * arrows inside 5 dp of padding and the period between them, a heading TalkBack re-reads when it changes. The arrows' names
+ * come from [copy] ([reportStepperCopy]), the dead › says why it is off.
+ */
+@Composable private fun PeriodStepper(copy: StepperCopy, canForward: Boolean, onBack: () -> Unit, onForward: () -> Unit) {
+    val skin = Car.skin
+    Surface(shape = RoundedCornerShape(50), color = skin.card, contentColor = Scene.text, border = BorderStroke(1.dp, skin.cardBorder)) {
+        Row(Modifier.padding(5.dp), verticalAlignment = Alignment.CenterVertically) {
+            MonthStepButton(forward = false, description = copy.back, onClick = onBack)
+            Text(copy.label, style = MaterialTheme.typography.headlineSmall, color = Scene.text, textAlign = TextAlign.Center, maxLines = 1,
+                modifier = Modifier.widthIn(min = 180.dp).padding(horizontal = 8.dp).semantics { heading(); liveRegion = LiveRegionMode.Polite })
+            MonthStepButton(forward = true, description = copy.forward, enabled = canForward, onClick = onForward)
+        }
+    }
 }
 
 /**
- * One arrow of a [PeriodStepper], a 64-dp target: a 28-dp chevron on glass with the scene's lit edge. Disabled, the container
- * goes transparent and the chevron drops to 38 %, so a dead arrow never reads stronger than a live one. Settles to .98 while
- * held; no ripple on the car. [description] is what TalkBack reads (이전 달 · 다음 해 …), with the reason when the arrow is off.
+ * One arrow of a [PeriodStepper]: a round 56-dp target on the icon disc with a 28-dp chevron in the ink of line icons. It settles
+ * to .98 under the press fill, never a ripple. Disabled, the disc goes and the chevron drops to 38 %, so a dead arrow never
+ * reads stronger than a live one. [description] is what TalkBack reads (이전 달 · 다음 해 …), with the reason when it is off.
  */
 @Composable private fun MonthStepButton(forward: Boolean, description: String, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(20.dp)
+    val skin = Car.skin
     val interaction = remember { MutableInteractionSource() }
-    val noRipple = LocalLayout.current.startAnchored
-    val tint = if (enabled) Scene.text else Scene.text.copy(alpha = .38f)
-    Box(modifier.size(64.dp).pressable(interaction, .98f).clip(shape)
-        .then(if (enabled) Modifier.background(Scene.glass).border(Scene.edge, shape) else Modifier)
-        .clickable(interactionSource = interaction, indication = if (noRipple) null else LocalIndication.current, enabled = enabled, role = Role.Button, onClick = onClick)
+    val tint = if (enabled) skin.icon else skin.icon.copy(alpha = skin.icon.alpha * .38f)
+    Box(modifier.size(56.dp).pressable(interaction, .98f).clip(CircleShape)
+        .then(if (enabled) Modifier.background(skin.disc) else Modifier)
+        .clickable(interactionSource = interaction, indication = null, enabled = enabled, role = Role.Button, onClick = onClick)
+        .pressFill(interaction)
         .semantics { contentDescription = description }, contentAlignment = Alignment.Center) {
-        Icon(if (forward) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null,
+        Icon(if (forward) Icons.AutoMirrored.Outlined.KeyboardArrowRight else Icons.AutoMirrored.Outlined.KeyboardArrowLeft, contentDescription = null,
             modifier = Modifier.size(28.dp), tint = tint)
     }
 }
@@ -1676,27 +1688,70 @@ internal fun auditHeadline(trips: Int, issues: Int): String = when {
 /** A year as the tax card names it: 올해 for this one, else 2025년 (as [monthLabel] names a month). */
 private fun yearLabel(year: Int, today: LocalDate): String = if (year == today.year) "올해" else "${year}년"
 
-/** The tax card's eyebrow: the year whose business ratio it applies, 올해 for this one. */
-internal fun taxEyebrow(year: Int, today: LocalDate): String = "비용 참고 · ${yearLabel(year, today)} 업무사용비율 기준"
+/** The tax card's basis tag (2.12, beside its title 비용 참고): the year whose business ratio it applies, 올해 for this one. */
+internal fun taxBasis(year: Int, today: LocalDate): String = "${yearLabel(year, today)} 업무사용비율 기준"
 
 /**
- * What the tax card says instead of its figures, or null when it can compute them. A missing annual cost comes first, and only
- * that state offers 설정에서 입력. With the cost set, a [year] without trips has no business ratio (the card reads the year on
- * screen, and the stepper has no floor) and no setting can give it one, so the card says that instead of asking for the cost.
+ * What the tax card says instead of its figures, one line, or null when it can compute them. A missing annual cost comes
+ * first, and only that state offers 설정에서 입력. With the cost set, a [year] without trips has no business ratio (the card
+ * reads the year on screen, and the stepper has no floor) and no setting can give it one, so the card says that instead of
+ * asking for the cost.
  */
 internal fun taxCardBlocker(cost: Long?, ratio: Double?, year: Int, today: LocalDate): String? = when {
-    cost == null -> "연간 차량 비용을 입력하면 운행기록부의 효과를 계산해요"
-    // In the pattern of logEmptyCopy and monthCloseHeadline ("… 운행 기록이 없어요"): says why there is no figure, asks for nothing.
-    ratio == null -> "${yearLabel(year, today)} 운행 기록이 없어 업무사용비율을 계산할 수 없어요"
+    cost == null -> "연간 차량 비용을 입력하면 계산해요"
+    // Says why there is no figure and asks for nothing: no setting gives a year without trips a ratio.
+    ratio == null -> "${yearLabel(year, today)} 운행이 없어 비율을 계산할 수 없어요"
     else -> null
 }
 
-/** The Excel view's save bar (72 dp, as wide as the preview above it), pinned to the bottom of the pane: one line of context and the save action, on glass. */
-@Composable private fun SaveBar(hint: String, modifier: Modifier = Modifier, action: @Composable () -> Unit) {
-    Surface(modifier.widthIn(max = EXCEL_VIEW_MAX_WIDTH).fillMaxWidth(), shape = RoundedCornerShape(22.dp), color = Scene.glass, border = Scene.edge) {
-        Row(Modifier.heightIn(min = 72.dp).padding(start = 22.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Muted(hint, Modifier.weight(1f), maxLines = 2)
+/**
+ * The tax card's last figure in words (pure, unit-tested): how far the ratio-applied amount stands above the no-logbook
+ * comparison, or, where it does not, that it is the smaller one or that the two are equal. One line in titleSmall.
+ */
+internal fun taxDifferenceLine(differenceWon: Long, ratio: Double): String = when {
+    differenceWon > 0 -> "두 계산의 차이 ${formatWon(differenceWon)}"
+    differenceWon < 0 -> "비율 ${ratioText(ratio)} 적용액이 더 작아요"
+    else -> "두 계산액이 같아요"
+}
+
+/**
+ * The body of the dialog before an Excel save with untidy trips (pure, unit-tested): one line for each thing that will be
+ * missing from the file, and only those that apply, unclassified distance first. The dialog joins them with line breaks.
+ */
+internal fun exportConfirmLines(unclassifiedKm: Double, driverless: Int): List<String> = listOfNotNull(
+    "미분류 ${kmText(unclassifiedKm)}는 업무 거리에서 빠져요".takeIf { unclassifiedKm > 0 },
+    "사용자 미지정 ${driverless}건은 ④란이 비어요".takeIf { driverless > 0 },
+)
+
+/** What the fuel settlement card says around its figures ([settlementCopy]). */
+@Immutable
+internal data class SettlementCopy(val tag: String?, val total: String, val empty: String)
+
+/**
+ * The settlement card's words for a [rateWon] per km and the [period] its totals cover (pure, unit-tested): the rate as a tag
+ * beside the title while one is set ("km당 300원"), the total's label and the line for a period without business trips. 월간·Excel
+ * has the period on screen and passes none; 설정 passes "이번 달", since nothing around its card says which month it sums.
+ */
+internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = SettlementCopy(
+    tag = if (rateWon > 0) "km당 ${formatWon(rateWon)}" else null,
+    total = listOfNotNull(period, "정산 참고 합계").joinToString(" "),
+    empty = "${period ?: "이 기간"} 업무용 운행이 없어요",
+)
+
+/**
+ * The Excel view's save bar (72 dp, as wide as the preview above it), pinned to the bottom of the pane (2.12): the card colour
+ * with its hairline, so it reads as a card over whatever scrolls under it; the phone mark, one [line] of context and the
+ * save [action].
+ */
+@Composable private fun SaveBar(line: String, modifier: Modifier = Modifier, action: @Composable () -> Unit) {
+    val skin = Car.skin
+    Surface(modifier.widthIn(max = EXCEL_VIEW_MAX_WIDTH).fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = skin.card, contentColor = Scene.text,
+        border = BorderStroke(1.dp, skin.cardBorder)) {
+        Row(Modifier.heightIn(min = 72.dp).padding(start = 22.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(painterResource(R.drawable.ic_phone), contentDescription = null, Modifier.size(22.dp), tint = skin.icon)
+            Spacer(Modifier.width(12.dp))
+            CarLine(line, Modifier.weight(1f))
+            Spacer(Modifier.width(16.dp))
             action()
         }
     }
@@ -1705,15 +1760,17 @@ internal fun taxCardBlocker(cost: Long?, ratio: Double?, year: Int, today: Local
 /**
  * 월간·Excel, one vertical scroll over one period on screen ([ReportPeriod]: a month under 월간, a year under 연간), stepped
  * like 운행기록 and never past this month. From EXPANDED up the stepper, 월간 · 연간 (320 wide) and Excel 저장 share one
- * 64-dp row; below that the stepper has its own row over the other two (480 wide). Then the month-close card of the month
- * on screen ([reportCloseStatus]) across the page, the four views as 56-dp tabs (max 960), the range line and the view. The
- * label, the card, the views, the preview, every Excel 저장 and its file name, and 정리하러 가기 all read the one range
- * [reportRange] gives. The pane opens on [initialMonth] when a button hands it one, else where the home card, the banner
- * and the tab badge point ([reportLandingMonth]); after that only the driver moves it. The Excel view fills the page like the
- * month-close card: the preview with its lighter sheet tabs at [excelPreviewHeight] (480 at least), its table paging to the
- * rows that fit, and the save bar (72 dp) pinned to the bottom of the pane while the rest scrolls under it; [onSaveBar] tells
- * the shell while the bar is pinned, so its follow-up bar rides above it. The two cards of the other views (검토's too) sit
- * side by side from EXPANDED up and stack below it. Every Excel 저장 follows one rule ([excelSaveAvailable]).
+ * row; below that the stepper has its own row over the other two (480 wide). Then the month-close card of the month on
+ * screen ([reportCloseStatus], [ReportCloseCard]) across the page, the four views as 56-dp tabs across the page (2.12, as
+ * the mock's sub-tabs), the range line and the view. The label, the card, the views, the preview, every Excel 저장 and its
+ * file name, and 정리하러 가기 all read the one range [reportRange] gives. The pane opens on [initialMonth] when a button
+ * hands it one, else where the home card, the banner and the tab badge point ([reportLandingMonth]); after that only the
+ * driver moves it. The Excel view fills the page like the month-close card: the preview, in a card of its own, with its
+ * lighter sheet tabs at [excelPreviewHeight] (480 at least), its table paging to the rows that fit, and the save bar (72 dp)
+ * pinned to the bottom of the pane while the rest scrolls under it; [onSaveBar] tells the shell while the bar is pinned, so
+ * its follow-up bar rides above it. The two cards of the other views (검토's too) sit side by side from EXPANDED up and stack
+ * below it. Every Excel 저장 follows one rule ([excelSaveAvailable]); before one with untidy trips the dialog lists what the
+ * file will miss ([exportConfirmLines]).
  */
 @Composable private fun ReportPane(state: TripLogState, now: Long, exporting: Boolean, saveFile: (String, String, ByteArray) -> Unit,
     act: Act, repository: TripLogRepository, goSettings: () -> Unit, goHome: () -> Unit, initialMonth: String? = null, onSaveBar: (Boolean) -> Unit = {},
@@ -1753,15 +1810,15 @@ internal fun taxCardBlocker(cost: Long?, ratio: Double?, year: Int, today: Local
     val closeStatus = remember(data, shown, today) { reportCloseStatus(data, shown, today, zone) }
     val ratio: @Composable (Modifier) -> Unit = { modifier -> RatioCard(totals, modifier, compact = !wide) }
     val tax: @Composable (Modifier) -> Unit = { modifier ->
-        TaxCard(data.profile, yearTotals, taxEyebrow(shown.month.year, today), taxCardBlocker(data.profile.annualCostWon, yearTotals.ratio, shown.month.year, today), modifier, goSettings)
+        TaxCard(data.profile, yearTotals, taxBasis(shown.month.year, today), taxCardBlocker(data.profile.annualCostWon, yearTotals.ratio, shown.month.year, today), modifier, goSettings)
     }
     val settle: @Composable (Modifier) -> Unit = { modifier -> SettlementCard(trips, data, modifier, goSettings) }
     // The header's three parts: the stepper (the same one as 운행기록), 월간 · 연간 and Excel 저장, placed per window below.
     val stepper: @Composable RowScope.() -> Unit = { PeriodStepper(reportStepperCopy(shown, today), reportCanGoForward(shown, today), { step(false) }) { step(true) } }
     val periodUnit: @Composable (Modifier) -> Unit = { modifier -> Segmented(listOf("월간", "연간"), period, modifier) { period = it } }
     val save: @Composable (Modifier) -> Unit = { modifier ->
-        LoadingAction("Excel 저장", loading = exporting, modifier = modifier.semantics { if (!canSave) stateDescription = "저장할 운행이 없어요" }, loadingLabel = "만드는 중…",
-            enabled = canSave, onClick = requestExport)
+        LoadingAction("Excel 저장", loading = exporting, modifier = modifier.semantics { if (!canSave) stateDescription = ReportCopy.NOTHING_TO_SAVE }, loadingLabel = "만드는 중…",
+            enabled = canSave, icon = painterResource(R.drawable.ic_export), onClick = requestExport)
     }
     val excel = view == 2
     // While the save bar is pinned the shell lifts its follow-up bar over it; a pane that goes takes the bar with it.
@@ -1796,33 +1853,28 @@ internal fun taxCardBlocker(cost: Long?, ratio: Double?, year: Int, today: Local
                 // One card instance per month: its bar lands at that month's completion, and a close in progress never carries over.
                 closeStatus?.let { s -> key(s.month) {
                     val edited = remember(data) { editedAfterCloseCount(data, s.month, zone) }
-                    MonthClosePanel(s, onIssues = { goReview(s.month) }, onReviews = goHome, onExport = requestExport, exporting = exporting, act = act, repository = repository,
-                        compact = !wide, editedAfterClose = edited, today = today, onPrevious = { month = s.month.minusMonths(1).toString() })
+                    ReportCloseCard(s, onIssues = { goReview(s.month) }, onReviews = goHome, onExport = requestExport, exporting = exporting, act = act, repository = repository,
+                        editedAfterClose = edited, today = today, onPrevious = { month = s.month.minusMonths(1).toString() })
                 } }
             }
-            Segmented(listOf("운행 현황", "경비·정산", "Excel", "검토"), view, Modifier.widthIn(max = 960.dp)) { view = it }
-            Text("${if (data.profile.demoMode) "시연 데이터 · " else ""}${from} ~ ${to} · ${totals.trips}건", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // The views fill the page, as the mock's sub-tabs do.
+            Segmented(listOf("운행 현황", "경비·정산", "Excel", "검토"), view, Modifier.fillMaxWidth()) { view = it }
+            Text("${if (data.profile.demoMode) "시연 데이터 · " else ""}${from} ~ ${to} · ${totals.trips}건", style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary)
             Crossfade(view, Modifier.fillMaxWidth(), animationSpec = pageFade(), label = "report-section") { page ->
-                // The preview has a height of its own in the scroll, and its table pages to the rows that fit in it.
-                if (page == 2) ExcelPreview(data.copy(profile = data.profile.copy(carModel = data.profile.carModel.ifBlank { state.vehicleModel.orEmpty() })), trips, from, to,
-                    Modifier.widthIn(max = EXCEL_VIEW_MAX_WIDTH).fillMaxWidth().height(previewHeight), compact = !wide, fillHeight = true)
+                // The preview has a height of its own in the scroll: its card takes it, the preview fills the card, and its table
+                // pages to the rows that fit.
+                if (page == 2) CarCard(Modifier.widthIn(max = EXCEL_VIEW_MAX_WIDTH).fillMaxWidth().height(previewHeight)) {
+                    ExcelPreview(data.copy(profile = data.profile.copy(carModel = data.profile.carModel.ifBlank { state.vehicleModel.orEmpty() })), trips, from, to,
+                        Modifier.fillMaxSize(), compact = !wide, fillHeight = true)
+                }
                 else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(layout.cardGap)) {
                     when (page) {
                         0 -> SideBySide(wide, layout.cardGap, ratio) { modifier -> EmployeeUsageCard(trips, data, modifier) }
                         1 -> SideBySide(wide, layout.cardGap, { modifier -> ExpenseOverview(trips, modifier) }, settle)
                         else -> {
-                            // The two reading panels share the page from EXPANDED up; stacked, each keeps to a 760-dp measure
-                            // instead of stretching its sentences across the page.
+                            // The two cards share the page from EXPANDED up; stacked, each keeps to a 760-dp measure.
                             val measure = if (wide) Modifier else Modifier.widthIn(max = 760.dp)
-                            SideBySide(wide, layout.cardGap, { modifier ->
-                                Panel(modifier.then(measure)) {
-                                    Eyebrow("증빙 준비 상태", Scene.brand)
-                                    val issues = auditTrips(trips)
-                                    Text(auditHeadline(trips.size, issues.size), style = MaterialTheme.typography.titleLarge)
-                                    Muted("직원·운행 목적·계기판 거리의 연결을 점검합니다. Excel 확인사항 시트에서 세부 항목을 볼 수 있어요.")
-                                    Muted("국세청 운행기록부 항목 참고 · 제출 전 검토용. 영수증과 세무 요건은 별도로 확인해야 합니다.")
-                                }
-                            }) { modifier -> tax(modifier.then(measure)) }
+                            SideBySide(wide, layout.cardGap, { modifier -> AuditCard(trips, modifier.then(measure)) }) { modifier -> tax(modifier.then(measure)) }
                         }
                     }
                 }
@@ -1831,42 +1883,58 @@ internal fun taxCardBlocker(cost: Long?, ratio: Double?, year: Int, today: Local
         // The Excel view's own action stays in reach wherever the pane is scrolled: pinned to its bottom while that view is
         // chosen, fading with the view change (a snap under reduced motion).
         AnimatedVisibility(excel, Modifier.align(Alignment.BottomStart), enter = fadeIn(pageFade()), exit = fadeOut(pageFade()), label = "save-bar") {
-            // The phone file carries the whole log, whatever period is on screen.
-            SaveBar("휴대폰 SHAREMATE에서 여는 전체 운행 파일이에요") {
-                LoadingAction("휴대폰용 운행파일 저장", loading = exporting, loadingLabel = "만드는 중…", enabled = data.trips.isNotEmpty()) {
+            // The phone file carries the whole log, whatever period is on screen; it is the page's second save, so it stays outlined.
+            val phoneFile = data.trips.isNotEmpty()
+            SaveBar(ReportCopy.SAVE_BAR_LINE) {
+                LoadingAction("휴대폰용 운행파일 저장", loading = exporting, modifier = Modifier.semantics { if (!phoneFile) stateDescription = ReportCopy.NOTHING_TO_SAVE },
+                    loadingLabel = "만드는 중…", enabled = phoneFile, quiet = true) {
                     saveFile("SHAREMATE_운행기록.smlog", LOGBOOK_MIME, TripLogCodec.encode(data.copy(open = null)))
                 }
             }
         }
     }
-    if (confirmExport) AlertDialog(onDismissRequest = { confirmExport = false }, title = { Text("정리되지 않은 운행이 있어요") },
-        text = { Text("미분류 ${kmText(totals.unclassifiedKm)}는 업무용 사용거리에서 제외되고, 사용자 미지정 운행은 ④란이 비어 있게 저장돼요. 그래도 저장할까요?") },
-        confirmButton = { DialogButton("저장") { confirmExport = false; export() } },
-        dismissButton = { DialogButton("정리하러 가기") { confirmExport = false; goReview(tidyMonth(trips, shown.month, zone)) } })
+    if (confirmExport) AlertDialog(onDismissRequest = { confirmExport = false }, title = { Text(ReportCopy.CONFIRM_TITLE) },
+        text = { Text(exportConfirmLines(totals.unclassifiedKm, trips.count { it.driverId == null }).joinToString("\n")) },
+        confirmButton = { DialogButton(ReportCopy.CONFIRM_SAVE) { confirmExport = false; export() } },
+        dismissButton = { DialogButton(ReportCopy.CONFIRM_TIDY) { confirmExport = false; goReview(tidyMonth(trips, shown.month, zone)) } })
 }
 
-@Composable private fun EmployeeUsageCard(trips: List<Trip>, data: TripLogData, modifier: Modifier) {
-    Panel(modifier) {
-        Eyebrow("EMPLOYEES / 직원별 이번 기간 이용", Scene.brand)
-        val rows = employeeUsage(trips, data.drivers, data.profile.reimbursePerKmWon)
-        if (rows.isEmpty()) Muted("완료된 운행이 없어요. 출발하면 자동으로 기록해요.")
-        rows.forEach { row ->
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Column(Modifier.weight(1f)) {
-                    Text(row.driver?.label ?: "직원 미지정", style = MaterialTheme.typography.titleMedium)
-                    Muted("${row.totals.trips}건 · 업무 ${kmText(row.totals.businessKm)}")
-                }
-                Text(kmText(row.totals.totalKm), style = MaterialTheme.typography.titleMedium)
-            }
-            HorizontalDivider(color = Scene.divider)
-        }
-        Muted("운전하는 직원은 ‘지금 운전’에서 바꾸고, 지난 운행은 운행 상세에서 고칠 수 있어요.")
+/**
+ * 검토's first card: how ready the period's evidence is ([auditHeadline]), where the details are, and, behind ⓘ, what the check
+ * covers and what it does not.
+ */
+@Composable private fun AuditCard(trips: List<Trip>, modifier: Modifier) {
+    CarCard(modifier, title = { CarSectionTitle(ReportCopy.AUDIT_TITLE, icon = painterResource(R.drawable.ic_journal)) }) {
+        val issues = remember(trips) { auditTrips(trips) }
+        Text(auditHeadline(trips.size, issues.size), style = MaterialTheme.typography.titleLarge, color = Scene.text)
+        CarLine(ReportCopy.AUDIT_LINE)
+        CarInfoRow(ReportCopy.AUDIT_NOTE, more = ReportCopy.AUDIT_NOTE_MORE)
     }
 }
 
+/**
+ * 운행 현황's second card (2.12): each employee's trips in the period as rows (the count and the business distance under the
+ * name, the total at the end), unassigned trips as 직원 미지정; where a past trip's employee is fixed sits behind ⓘ.
+ */
+@Composable private fun EmployeeUsageCard(trips: List<Trip>, data: TripLogData, modifier: Modifier) {
+    CarCard(modifier, title = { CarSectionTitle(ReportCopy.USAGE_TITLE, icon = rememberVectorPainter(Icons.Outlined.Person)) }) {
+        val rows = employeeUsage(trips, data.drivers, data.profile.reimbursePerKmWon)
+        if (rows.isEmpty()) CarLine(ReportCopy.USAGE_EMPTY)
+        else Column {
+            rows.forEachIndexed { index, row ->
+                if (index > 0) CarDivider()
+                CarRow(row.driver?.label ?: "직원 미지정", line = "${row.totals.trips}건 · 업무 ${kmText(row.totals.businessKm)}", trailing = {
+                    Text(kmText(row.totals.totalKm), style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"), color = Scene.text, maxLines = 1)
+                })
+            }
+        }
+        CarInfoRow(ReportCopy.USAGE_NOTE)
+    }
+}
+
+/** 경비·정산's first card (2.12): the registered expenses of the period, the total and one row per type; what they are not sits behind ⓘ. */
 @Composable private fun ExpenseOverview(trips: List<Trip>, modifier: Modifier) {
-    Panel(modifier) {
-        Eyebrow("EXPENSES / 등록 경비", Scene.brand)
+    CarCard(modifier, title = { CarSectionTitle(ReportCopy.EXPENSE_TITLE, icon = painterResource(R.drawable.ic_receipt)) }) {
         Stat("경비 합계", formatWon(trips.sumOf { it.expenseWon }), large = true)
         ExpenseType.entries.forEach { type ->
             Row {
@@ -1874,17 +1942,26 @@ internal fun taxCardBlocker(cost: Long?, ratio: Double?, year: Int, today: Local
                 Text(formatWon(trips.flatMap { it.expenses }.filter { it.type == type }.sumOf { it.amountWon }), style = MaterialTheme.typography.titleSmall)
             }
         }
-        Muted("직접 등록한 금액입니다. 영수증 인증이나 지급 완료를 의미하지 않습니다.")
+        CarInfoRow(ReportCopy.EXPENSE_NOTE, more = ReportCopy.EXPENSE_NOTE_MORE)
     }
 }
 
+/**
+ * 운행 현황's first card (2.12): the business ratio as the ring, without its caption (the title says it; TalkBack still hears
+ * "업무사용비율 80%"), the form's ⑬ = ⑫ ÷ ⑪ as a tag that reads as words, the four kinds of distance as bars and ⑪ under them.
+ */
 @Composable private fun RatioCard(totals: LogbookTotals, modifier: Modifier, compact: Boolean = false) {
     val pleos = LocalPleosColors.current
-    // The bar tracks share the ring's track token so they read on day glass as well as night.
+    // The bar tracks share the ring's track token so they read on the card by day as well as by night.
     val track = Scene.ringTrack
-    Panel(modifier.fillMaxHeight()) {
-        Eyebrow("업무사용비율 ⑬ = ⑫ ÷ ⑪", Scene.brand)
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { RatioRing(totals.ratio, if (compact) 148.dp else 220.dp, "업무사용비율") }
+    CarCard(modifier.fillMaxHeight(), title = {
+        CarSectionTitle(ReportCopy.RATIO_TITLE, icon = painterResource(R.drawable.ic_report), trailing = {
+            CarTag(ReportCopy.RATIO_FORMULA, description = ReportCopy.SPOKEN_RATIO_FORMULA)
+        })
+    }) {
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            RatioRing(totals.ratio, if (compact) 148.dp else 220.dp, ReportCopy.RATIO_TITLE, showCaption = false)
+        }
         val rows = listOf(
             Triple("출·퇴근 ⑧", totals.commuteKm, pleos.positive), Triple("일반 업무 ⑨", totals.generalKm, pleos.chartActive),
             Triple("개인", totals.personalKm, pleos.textTertiary), Triple("미분류", totals.unclassifiedKm, pleos.negative))
@@ -1903,66 +1980,68 @@ internal fun taxCardBlocker(cost: Long?, ratio: Double?, year: Int, today: Local
 }
 
 /**
- * The annual cost reference at the business ratio of [year], the totals of the year on screen, which [eyebrow] names
- * ([taxEyebrow]). While it cannot compute, [blocker] ([taxCardBlocker]) says why: a missing cost comes with the way to enter
- * it; a year without trips sits above the cost already entered, with no 설정 action, since the form already holds the value.
+ * The annual cost reference at the business ratio of [year], the totals of the year on screen, whose year the [basis] tag
+ * names ([taxBasis]). While it cannot compute, [blocker] ([taxCardBlocker]) says why in one line: a missing cost comes with
+ * why it matters (behind ⓘ) and the way to enter it; a year without trips sits above the cost already entered, with no 설정
+ * action, since the form already holds the value. Computed, the ratio-applied amount leads, the cost and the no-logbook
+ * comparison sit under it as two small figures, and [taxDifferenceLine] says how the two compare.
  */
-@Composable private fun TaxCard(profile: FleetProfile, year: LogbookTotals, eyebrow: String, blocker: String?, modifier: Modifier, goSettings: () -> Unit) {
-    Panel(modifier.fillMaxHeight()) {
-        Eyebrow(eyebrow, Scene.brand)
+@Composable private fun TaxCard(profile: FleetProfile, year: LogbookTotals, basis: String, blocker: String?, modifier: Modifier, goSettings: () -> Unit) {
+    val won = painterResource(R.drawable.ic_won)
+    CarCard(modifier.fillMaxHeight(), title = { CarSectionTitle(ReportCopy.TAX_TITLE, icon = won, trailing = { CarTag(basis) }) }) {
         val cost = profile.annualCostWon
         val ratio = year.ratio
         if (blocker != null) {
-            Text(blocker, style = MaterialTheme.typography.titleMedium)
+            Text(blocker, style = MaterialTheme.typography.titleSmall, color = Scene.text)
             if (cost == null) {
-                Muted("감가상각비·유류비·보험료·자동차세 등 해당 차량의 연간 비용입니다. 운행기록부가 없으면 차량 1대당 연 1,500만 원까지만 업무용으로 인정돼요.")
+                CarInfoRow(ReportCopy.TAX_CAP_NOTE, more = ReportCopy.TAX_CAP_MORE)
                 QuietAction("설정에서 입력", onClick = goSettings)
-            } else Stat("연간 차량 관련 비용", formatWon(cost))
+            } else CarMiniStat(won, ReportCopy.TAX_COST, formatWon(cost))
         } else if (cost != null && ratio != null) {
             val effect = taxEffect(cost, ratio)
-            Stat("연간 차량 관련 비용", formatWon(cost))
-            Stat("업무 비율 적용액 · 단순 비교", formatWon(effect.withLogWon), valueColor = MaterialTheme.colorScheme.onTertiaryContainer, large = true)
-            Stat("미작성 방식 비교액", formatWon(effect.withoutLogWon))
-            HorizontalDivider(color = Scene.divider)
-            Text(when {
-                effect.differenceWon > 0 -> "두 계산의 차이는 ${formatWon(effect.differenceWon)}입니다."
-                effect.differenceWon < 0 -> "업무 비율 ${ratioText(ratio)}에 따른 계산액이 비교액보다 작아요."
-                else -> "현재 입력 기준으로 두 계산액이 같아요."
-            }, style = MaterialTheme.typography.titleSmall)
+            Stat(ReportCopy.TAX_WITH_LOG, formatWon(effect.withLogWon), valueColor = MaterialTheme.colorScheme.onTertiaryContainer, large = true)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                CarMiniStat(won, ReportCopy.TAX_COST, formatWon(cost), Modifier.weight(1f))
+                CarMiniStat(won, ReportCopy.TAX_WITHOUT_LOG, formatWon(effect.withoutLogWon), Modifier.weight(1f))
+            }
+            CarDivider()
+            Text(taxDifferenceLine(effect.differenceWon, ratio), style = MaterialTheme.typography.titleSmall, color = Scene.text)
         }
-        Text("보험 가입·보유 기간·비용별 한도 등을 반영하지 않은 참고 계산입니다. 실제 인정액과 신고 요건은 담당 세무사에게 확인해 주세요.",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        CarInfoRow(ReportCopy.TAX_NOTE, more = ReportCopy.TAX_NOTE_MORE)
     }
 }
 
 /**
- * The fuel settlement of [trips] at the saved km rate, per employee. Without a rate it asks for one, with 설정에서 입력 where
- * [goSettings] is given; 설정 › 정산·세무 shows it beside the form that sets the rate and passes none. [period] (2.12) is for
- * the card's copy: the span the totals cover where the page around it does not say so (설정 passes "이번 달").
+ * The fuel settlement of [trips] at the saved km rate, per employee (2.12): the rate as a tag beside the title, a row per
+ * employee with business trips (the business distance under the name, the amount at the end), then the total. Without a rate
+ * it asks for one, with 설정에서 입력 where [goSettings] is given; 설정 › 정산·세무 shows it beside the form that sets the
+ * rate and passes none. [period] names the span the totals cover where the page around the card does not (설정 passes
+ * "이번 달"); the words come from [settlementCopy].
  */
 @Composable private fun SettlementCard(trips: List<Trip>, data: TripLogData, modifier: Modifier, goSettings: (() -> Unit)? = null, period: String? = null) {
     val rate = data.profile.reimbursePerKmWon
-    Panel(modifier.fillMaxHeight()) {
-        Eyebrow("유류비 정산 · 업무용 거리 × km당 단가", Scene.brand)
+    val copy = settlementCopy(rate, period)
+    val tag = copy.tag
+    CarCard(modifier.fillMaxHeight(), title = {
+        CarSectionTitle(ReportCopy.SETTLEMENT_TITLE, icon = painterResource(R.drawable.ic_won), trailing = if (tag != null) { { CarTag(tag) } } else null)
+    }) {
         if (rate <= 0) {
-            Text("km당 정산 단가를 입력하면 직원별 정산액을 계산해요", style = MaterialTheme.typography.titleMedium)
-            Muted("회사에서 정한 단가를 업무용 계기판 거리에 적용합니다. 실제 주유 경비와 별개로 표시해요.")
+            Text(ReportCopy.SETTLEMENT_ASK, style = MaterialTheme.typography.titleSmall, color = Scene.text)
             goSettings?.let { QuietAction("설정에서 입력", onClick = it) }
         } else {
             val list = employeeUsage(trips, data.drivers, rate).filter { it.driver != null && it.totals.businessKm > 0 }
-            if (list.isEmpty()) Muted("이 기간의 업무용 운행이 없어요.")
-            list.take(6).forEach { item ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(item.driver!!.label, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Muted(kmText(item.totals.businessKm))
-                    }
-                    Text(formatWon(item.reimbursementWon), style = MaterialTheme.typography.titleMedium)
+            if (list.isEmpty()) CarLine(copy.empty)
+            else Column {
+                list.take(6).forEachIndexed { index, item ->
+                    if (index > 0) CarDivider()
+                    CarRow(item.driver!!.label, line = kmText(item.totals.businessKm), trailing = {
+                        Text(formatWon(item.reimbursementWon), style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"), color = Scene.text, maxLines = 1)
+                    })
                 }
             }
-            HorizontalDivider(color = Scene.divider)
-            Stat("정산 참고 합계 · km당 ${formatWon(rate)}", formatWon(list.sumOf { it.reimbursementWon }), large = true)
-            Muted("직원 미지정 운행은 정산 보류입니다. 등록 경비를 이 금액에 자동으로 더하지 않아요.")
+            CarDivider()
+            Stat(copy.total, formatWon(list.sumOf { it.reimbursementWon }), large = true)
+            CarInfoRow(ReportCopy.SETTLEMENT_NOTE, more = ReportCopy.SETTLEMENT_NOTE_MORE)
         }
     }
 }

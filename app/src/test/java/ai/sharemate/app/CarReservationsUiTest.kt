@@ -80,7 +80,15 @@ class CarReservationsUiTest {
     }
 
     @Test fun emptyTextPromisesThePurposeOnlyWhenTheCarAppliesIt() {
-        assertTrue(carReservationsEmptyText(true).endsWith("바꾸고, 그 시간의 운행은 예약 목적으로 기록돼요."))
-        assertTrue(carReservationsEmptyText(false).endsWith("바꿔요."))
+        // 2.12: one ⓘ line, with what the car does when a booking starts folded under it.
+        val where = "휴대폰 앱 예약 탭에서 잡으면 여기 보여요"
+        assertEquals(where to listOf("예약 시간이 되면 예약한 직원으로 바꿔요", "그 시간 운행은 예약 목적으로 기록돼요"), carReservationsEmptyText(true))
+        assertEquals("자동 완성이 꺼져 있으면 목적 문장은 빠짐", where to listOf("예약 시간이 되면 예약한 직원으로 바꿔요"), carReservationsEmptyText(false))
+        assertOneLine(where, INFO_LINE_UNITS)
+    }
+
+    @Test fun theOverflowLineSaysHowManyAndWhere() {
+        assertEquals("외 3건은 휴대폰 앱 예약 탭에서 봐요", carReservationsOverflow(3))
+        assertOneLine(carReservationsOverflow(12), CARD_LINE_UNITS)
     }
 }

@@ -20,8 +20,13 @@ import kotlinx.coroutines.withContext
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -37,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
@@ -48,7 +54,6 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -275,7 +280,11 @@ private fun deleteIncident(incident: Incident, act: Act, repository: TripLogRepo
     }
 }
 
-/** History for the vehicle page; status can be flipped back if a report was closed too early. Rows arrive staggered the first time only. */
+/**
+ * History for the vehicle page (2.12): the count as a tag beside the title, then one row per report with its state as a dot
+ * (open in the negative, done in positive) and in words for TalkBack; a report closed too early can be reopened. Rows arrive
+ * staggered the first time only.
+ */
 @Composable internal fun IncidentHistory(data: TripLogData, act: Act, repository: TripLogRepository, modifier: Modifier = Modifier) {
     val items = recentIncidents(data)
     val followUp = LocalFollowUp.current
@@ -284,29 +293,33 @@ private fun deleteIncident(incident: Incident, act: Act, repository: TripLogRepo
     val stagger = remember { !introduced }
     val initial = remember { items.map { it.id }.toSet() }
     LaunchedEffect(Unit) { introduced = true }
-    Panel(modifier, padding = LocalLayout.current.panelPadding) {
-        Eyebrow("사고·특이사항 기록 · ${data.incidents.count { it.demo == data.profile.demoMode }}건")
-        if (items.isEmpty()) Muted("기록이 없어요. 홈의 사고·특이사항 버튼을 누르면 그 순간의 차량 정보가 저장돼요.")
-        items.forEachIndexed { index, incident ->
-            val open = incident.status == IncidentStatus.OPEN
-            val stamp = SimpleDateFormat("M/d HH:mm", Locale.KOREA).format(Date(incident.at))
-            Appear(index = index.coerceAtMost(CAR_APPEAR_CAP - 1), animate = stagger && incident.id in initial) {
-                Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).semantics(mergeDescendants = true) { stateDescription = incident.status.label },
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Box(Modifier.size(10.dp).clip(CircleShape).background(if (open) Scene.negative else Scene.positive))
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("${incident.kind.label} · $stamp", style = MaterialTheme.typography.titleSmall)
-                        Text(listOfNotNull(incident.odometerKm?.let(::km), incident.address, incident.photos.size.takeIf { it > 0 }?.let { "사진 ${it}장" }, incident.note.ifBlank { null }).joinToString(" · ").ifBlank { "상세 없음" },
-                            style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    TextButton(onClick = {
-                        if (open) closeIncident(incident, act, repository, followUp)
-                        else act {
-                            repository.updateIncident(incident.id, status = IncidentStatus.OPEN)
-                            followUp(FollowUp("${incident.kind.label} 기록을 다시 열었어요 · 홈에 대처 안내가 떠요", "되돌리기") { repository.updateIncident(incident.id, status = IncidentStatus.CLOSED) })
-                        }
-                    }, modifier = Modifier.heightIn(min = 56.dp).semantics { contentDescription = "${incident.kind.label} $stamp ${if (open) "처리 완료" else "다시 열기"}" }) {
-                        Text(if (open) "완료" else "다시 열기", modifier = Modifier.clearAndSetSemantics {})
+    CarCard(modifier, title = {
+        CarSectionTitle(VehicleCopy.INCIDENTS_TITLE, icon = rememberVectorPainter(Icons.Outlined.Warning), trailing = {
+            CarTag("${data.incidents.count { it.demo == data.profile.demoMode }}건")
+        })
+    }) {
+        if (items.isEmpty()) CarLine(VehicleCopy.INCIDENTS_EMPTY)
+        else Column {
+            items.forEachIndexed { index, incident ->
+                val open = incident.status == IncidentStatus.OPEN
+                val stamp = SimpleDateFormat("M/d HH:mm", Locale.KOREA).format(Date(incident.at))
+                val detail = listOfNotNull(incident.odometerKm?.let(::km), incident.address, incident.photos.size.takeIf { it > 0 }?.let { "사진 ${it}장" },
+                    incident.note.ifBlank { null }).joinToString(" · ").ifBlank { "상세 없음" }
+                // The rule above a row arrives with it.
+                Appear(index = index.coerceAtMost(CAR_APPEAR_CAP - 1), animate = stagger && incident.id in initial) {
+                    Column {
+                        if (index > 0) CarDivider()
+                        CarRow("${incident.kind.label} · $stamp", line = detail, state = incident.status.label,
+                            lead = { Box(Modifier.size(12.dp).clip(CircleShape).background(if (open) Scene.negative else Scene.positive)) },
+                            trailing = {
+                                CarPillButton(if (open) "완료" else "다시 열기", {
+                                    if (open) closeIncident(incident, act, repository, followUp)
+                                    else act {
+                                        repository.updateIncident(incident.id, status = IncidentStatus.OPEN)
+                                        followUp(FollowUp("${incident.kind.label} 기록을 다시 열었어요 · 홈에 대처 안내가 떠요", "되돌리기") { repository.updateIncident(incident.id, status = IncidentStatus.CLOSED) })
+                                    }
+                                }, description = "${incident.kind.label} $stamp ${if (open) "처리 완료" else "다시 열기"}")
+                            })
                     }
                 }
             }
@@ -452,32 +465,84 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
     }
 }
 
-/** Live-sync status for the vehicle page: the dot is the scene's positive while a phone is on the line, its negative when the server is down. */
+/**
+ * The phone link's state in a few words, with its tone (2.12, pure, unit-tested): off; the sync server down with an error, or
+ * still starting; a phone on the line right now ([online]); phones paired but none on the line; or none paired yet. Waiting
+ * and not-yet-paired take the ready tone: the server is up and listening.
+ */
+internal fun phoneLinkTag(enabled: Boolean, running: Boolean, error: String?, online: Boolean, paired: Int): Pair<String, PillTone> = when {
+    !enabled -> "꺼짐" to PillTone.QUIET
+    !running -> if (error != null) "서버 오류" to PillTone.NEGATIVE else "준비 중" to PillTone.QUIET
+    online -> "실시간 동기화 중" to PillTone.POSITIVE
+    paired > 0 -> "대기" to PillTone.READY
+    else -> "연결 전" to PillTone.READY
+}
+
+/**
+ * 휴대폰 연결 on the vehicle page (2.12): the link's state as a live tag beside the title ([phoneLinkTag]); while the link is on,
+ * three small figures (the record version, the phone's last call, the phones paired) and, while the server runs, the pairing:
+ * the code with its countdown, the vehicle key and the addresses a phone types, and a new code. The home keeps its own
+ * pairing card ([PairingCard]). What the link does sits behind ⓘ; switched off, one line says where to turn it on.
+ */
 @Composable internal fun PhoneSyncCard(state: TripLogState, now: Long, modifier: Modifier = Modifier) {
     val info = state.sync
     val enabled = state.data.profile.phoneSync
     val seen = info.lastPhoneSeenAt.takeIf { it > 0 }?.let { (now - it) / 1000 }
     // A long-poll is held for up to 20 s, so anything under 45 s means the phone is sitting on the line right now.
     val online = seen != null && seen < 45
-    val dot = when { !enabled -> Scene.textMuted; online -> Scene.positive; info.running -> Scene.glow; else -> Scene.negative }
-    Panel(modifier, padding = LocalLayout.current.panelPadding) {
+    val (tag, tone) = phoneLinkTag(enabled, info.running, info.error, online, info.pairedPhones)
+    val phone = painterResource(R.drawable.ic_phone)
+    CarCard(modifier, title = {
+        CarSectionTitle(VehicleCopy.PHONE_TITLE, icon = phone, trailing = { CarTag(tag, tone = tone, live = true) })
+    }) {
+        if (!enabled) CarLine(VehicleCopy.PHONE_OFF)
+        else {
+            // The server's own words for what went wrong; the tag already says that it did.
+            if (!info.running) info.error?.let { CarLine(it) }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                // The revision steps on every sync (it cross-fades); the seconds-ago figure is live and simply updates.
+                CarMiniStat(painterResource(R.drawable.ic_journal), "기록 버전", "#${state.dataRevision}", Modifier.weight(1f))
+                CarMiniStat(rememberVectorPainter(Icons.Outlined.Refresh), "최근 수신", seen?.let { if (it < 60) "${it}초 전" else "${it / 60}분 전" } ?: "없음",
+                    Modifier.weight(1f), live = true)
+                CarMiniStat(phone, "연결", "${info.pairedPhones}대", Modifier.weight(1f))
+            }
+            if (info.running) {
+                CarDivider()
+                PhonePairing(info, now)
+            }
+            CarInfoRow(VehicleCopy.PHONE_NOTE, more = VehicleCopy.PHONE_NOTE_MORE)
+        }
+    }
+}
+
+/**
+ * The pairing inside [PhoneSyncCard]: 연결 번호 with its countdown as a tag (it ticks in place, never announced), the six digits
+ * as the phone shows them, or why there is no code; the vehicle key (two lines: it is data a phone types, 64 characters) and
+ * the addresses, and the button for a new code.
+ */
+@Composable private fun PhonePairing(info: SyncInfo, now: Long) {
+    val code = info.pairingCode
+    val remaining = pairingRemaining(info, now)
+    val key = info.fingerprint.chunked(8).joinToString(" ")
+    val addresses = if (info.addresses.isEmpty()) VehicleCopy.PHONE_ADDRESS_PENDING else info.addresses.joinToString("  ·  ") { "$it:${info.port}" }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Box(Modifier.size(12.dp).clip(CircleShape).background(dot))
-            Text(when {
-                !enabled -> "휴대폰 실시간 연동 꺼짐"
-                !info.running -> info.error ?: "연결 서버 준비 중"
-                online -> "휴대폰과 실시간 동기화 중"
-                info.pairedPhones > 0 -> "연결된 휴대폰 ${info.pairedPhones}대 · 대기"
-                else -> "휴대폰을 연결해 주세요"
-            }, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite })
+            Text(VehicleCopy.PHONE_CODE, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, color = Scene.text)
+            if (code != null && remaining != null) CarTag("$remaining 남음")
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            // The revision is a count that steps on every sync; the seconds-ago figure beside it is live and simply updates.
-            DigitStat("기록 버전", "#${state.dataRevision}", Modifier.weight(1f))
-            Stat("휴대폰 최근 수신", seen?.let { if (it < 60) "${it}초 전" else "${it / 60}분 전" } ?: "없음", Modifier.weight(1f))
+        if (code != null) {
+            Text(pairingDisplay(code), style = MaterialTheme.typography.displayMedium.copy(fontFeatureSettings = "tnum"), fontWeight = FontWeight.Medium, color = Scene.text,
+                modifier = Modifier.semantics { contentDescription = "연결 번호 " + code.toCharArray().joinToString(" ") })
+            CarLine(VehicleCopy.PHONE_HOW)
+        } else Text(if (info.pairedPhones > 0) VehicleCopy.PHONE_ANOTHER else VehicleCopy.PHONE_EXPIRED, style = MaterialTheme.typography.titleSmall, color = Scene.text)
+        Column {
+            CarRow(key, line = VehicleCopy.PHONE_KEY, lead = { Icon(Icons.Outlined.Lock, contentDescription = null, Modifier.size(24.dp), tint = Car.skin.icon) },
+                titleMaxLines = 2, spoken = "${VehicleCopy.SPOKEN_PHONE_KEY}, $key")
+            // No icon of its own: an empty lead keeps the address under the key's text.
+            CarRow(addresses, line = VehicleCopy.PHONE_ADDRESS, lead = { Spacer(Modifier.size(24.dp)) }, titleMaxLines = 2,
+                spoken = "${VehicleCopy.SPOKEN_PHONE_ADDRESS}, $addresses")
         }
-        Muted(if (enabled) "차량이 원본이고 휴대폰은 거울이에요. 휴대폰에서 바꾼 목적·경비·특이사항은 차량 기록에 ‘휴대폰’ 출처로 남아요."
-            else "설정 › 기록에서 켜면 휴대폰 SHAREMATE가 운행·경비·특이사항을 실시간으로 받고, 정차 중 입력도 휴대폰에서 할 수 있어요.")
+        CarPillButton(if (code == null) "새 연결 번호" else "번호 다시 만들기", { SyncServer.active?.refreshPairingCode() })
     }
 }
 

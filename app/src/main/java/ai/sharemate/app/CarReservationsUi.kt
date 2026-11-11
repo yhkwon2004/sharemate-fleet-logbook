@@ -9,14 +9,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
@@ -28,11 +27,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.time.Instant
@@ -114,14 +112,24 @@ internal fun nextReservationLine(data: TripLogData, now: Long, zone: ZoneId): Ca
     return CarReservationLine(parts.joinToString(" · "), active = false)
 }
 
-/** What the empty card says; the purpose clause only when the car really applies booked purposes (automatic classification on). */
-internal fun carReservationsEmptyText(autopilot: Boolean): String =
-    "휴대폰 SHAREMATE의 예약 탭에서 예약하면 여기에 보여요. 예약한 시간이 되면 차량이 예약한 직원으로 " +
-        if (autopilot) "바꾸고, 그 시간의 운행은 예약 목적으로 기록돼요." else "바꿔요."
+/**
+ * What the empty card says (2.12, pure, unit-tested), as the ⓘ row's line and what it folds: where bookings come from, then what
+ * the car does when one starts; the purpose clause only when the car really applies booked purposes (automatic
+ * classification on).
+ */
+internal fun carReservationsEmptyText(autopilot: Boolean): Pair<String, List<String>> =
+    "휴대폰 앱 예약 탭에서 잡으면 여기 보여요" to listOfNotNull("예약 시간이 되면 예약한 직원으로 바꿔요", "그 시간 운행은 예약 목적으로 기록돼요".takeIf { autopilot })
+
+/** The line under the card's rows when more bookings wait than it lists (pure, unit-tested): how many, and where to see them. */
+internal fun carReservationsOverflow(more: Int): String = "외 ${more}건은 휴대폰 앱 예약 탭에서 봐요"
 
 // ───────────────────────── 차량 tab card ─────────────────────────
 
-/** The car's bookings: the one in use first, then the upcoming ones, each cancellable with undo. Rows arrive staggered the first time only. */
+/**
+ * The car's bookings (2.12): the title with the upcoming count as a tag, the one in use first (in glow), then the upcoming ones,
+ * each a row cancellable with undo. Empty, the same words as the 지금 column's 예약 tile, with where bookings come from behind
+ * ⓘ. Rows arrive staggered the first time only.
+ */
 @Composable internal fun CarReservationsCard(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, modifier: Modifier = Modifier) {
     val data = state.data
     val tz = remember { ZoneId.systemDefault() }
@@ -139,43 +147,49 @@ internal fun carReservationsEmptyText(autopilot: Boolean): String =
     val stagger = remember { !introduced }
     val initial = remember { (listOfNotNull(active) + upcoming).map { it.id }.toSet() }
     LaunchedEffect(Unit) { introduced = true }
-    Panel(modifier, padding = LocalLayout.current.panelPadding) {
-        Eyebrow("차량 예약 · 다가오는 ${upcoming.size}건")
+    val count = upcoming.size
+    CarCard(modifier, title = {
+        CarSectionTitle(VehicleCopy.RESERVATIONS_TITLE, icon = rememberVectorPainter(Icons.Outlined.Notifications),
+            trailing = if (count > 0) { { CarTag("다가오는 ${count}건") } } else null)
+    }) {
         if (active == null && upcoming.isEmpty()) {
-            Text("예정된 예약이 없어요", style = MaterialTheme.typography.titleMedium)
-            Muted(carReservationsEmptyText(data.profile.autopilot))
-        }
-        active?.let { r ->
-            Appear(index = 0, animate = stagger && r.id in initial) {
-                CarReservationRow(carActiveTitle(r, now, tz), reservationDetailText(data, r), highlighted = true,
-                    cancelDescription = "사용 중인 ${bookerLabel(data, r.driverId)} 예약 취소") { cancel(r) }
+            Text(VehicleCopy.RESERVATIONS_EMPTY, style = MaterialTheme.typography.titleSmall, color = Scene.text)
+            val (line, more) = carReservationsEmptyText(data.profile.autopilot)
+            CarInfoRow(line, more = more)
+        } else Column {
+            active?.let { r ->
+                Appear(index = 0, animate = stagger && r.id in initial) {
+                    CarReservationRow(carActiveTitle(r, now, tz), reservationDetailText(data, r), highlighted = true,
+                        cancelDescription = "사용 중인 ${bookerLabel(data, r.driverId)} 예약 취소") { cancel(r) }
+                }
             }
-            if (upcoming.isNotEmpty()) HorizontalDivider(color = Scene.divider)
-        }
-        upcoming.take(CAR_RESERVATION_ROWS).forEachIndexed { index, r ->
-            val window = reservationWindowText(r, tz)
-            val order = index + if (active != null) 1 else 0
-            Appear(index = order.coerceAtMost(CAR_APPEAR_CAP - 1), animate = stagger && r.id in initial) {
-                CarReservationRow(window, reservationDetailText(data, r), highlighted = false,
-                    cancelDescription = "$window ${bookerLabel(data, r.driverId)} 예약 취소") { cancel(r) }
+            upcoming.take(CAR_RESERVATION_ROWS).forEachIndexed { index, r ->
+                val window = reservationWindowText(r, tz)
+                val order = index + if (active != null) 1 else 0
+                // The rule above a row arrives with it.
+                Appear(index = order.coerceAtMost(CAR_APPEAR_CAP - 1), animate = stagger && r.id in initial) {
+                    Column {
+                        if (order > 0) CarDivider()
+                        CarReservationRow(window, reservationDetailText(data, r), highlighted = false,
+                            cancelDescription = "$window ${bookerLabel(data, r.driverId)} 예약 취소") { cancel(r) }
+                    }
+                }
             }
         }
-        if (upcoming.size > CAR_RESERVATION_ROWS) Muted("외 ${upcoming.size - CAR_RESERVATION_ROWS}건은 휴대폰 SHAREMATE의 예약 탭에서 볼 수 있어요.")
+        if (upcoming.size > CAR_RESERVATION_ROWS) CarLine(carReservationsOverflow(upcoming.size - CAR_RESERVATION_ROWS))
     }
 }
 
+/**
+ * One booking as a [CarRow]: a 12-dp dot (glow for the one in use, the brand at 70 % for the others), the window or the active
+ * headline as the title (two lines: a booking window is data, never cut), the booker and purpose under it, and 취소 in the
+ * scene's negative, which names the booking for TalkBack ([cancelDescription]).
+ */
 @Composable private fun CarReservationRow(title: String, detail: String, highlighted: Boolean, cancelDescription: String, onCancel: () -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        Box(Modifier.size(12.dp).clip(CircleShape).background(if (highlighted) Scene.glow else Scene.brand.copy(alpha = .7f)))
-        Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, color = if (highlighted) Scene.glow else Scene.text,
-                fontWeight = if (highlighted) FontWeight.Bold else null, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(detail, style = MaterialTheme.typography.bodyLarge, color = Scene.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        }
-        TextButton(onClick = onCancel, modifier = Modifier.heightIn(min = 56.dp).widthIn(min = 88.dp).semantics { contentDescription = cancelDescription }) {
-            Text("취소", style = MaterialTheme.typography.labelLarge, color = Scene.negative)
-        }
-    }
+    val dot = if (highlighted) Scene.glow else Scene.brand.copy(alpha = .7f)
+    CarRow(title, line = detail, lead = { Box(Modifier.size(12.dp).clip(CircleShape).background(dot)) },
+        titleColor = if (highlighted) Scene.glow else Scene.text, titleMaxLines = 2,
+        trailing = { CarPillButton("취소", onCancel, color = Scene.negative, description = cancelDescription) })
 }
 
 // ───────────────────────── home line ─────────────────────────
