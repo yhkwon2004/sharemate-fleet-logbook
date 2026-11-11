@@ -473,7 +473,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 /**
  * Whether the header's driver chip shows the person's avatar in [chipMax], the width the header row leaves the chip. The
  * avatar and the chip's padding take 74 dp (12 + 32 + 10 + 20); from 140 dp at 1×, more with a larger font, the caption
- * ‘지금 운전’ still fits beside them. Narrower, the chip is the text pill of 2.10, 20 dp in: its label ellipsises, then its
+ * ‘사용자’ still fits beside them. Narrower, the chip is the text pill of 2.10, 20 dp in: its label ellipsises, then its
  * caption, and the header keeps its one 68-dp row instead of wrapping the caption or squeezing the avatar into an oval.
  */
 internal fun driverChipAvatar(chipMax: Dp, fontScale: Float): Boolean = driverChipMode(chipMax, fontScale) == DriverChipMode.AVATAR_AND_NAME
@@ -482,7 +482,7 @@ internal fun driverChipAvatar(chipMax: Dp, fontScale: Float): Boolean = driverCh
 internal enum class DriverChipMode { AVATAR_AND_NAME, NAME, AVATAR }
 
 /**
- * How the header's driver chip draws itself in [chipMax]: the avatar beside ‘지금 운전’ and the name where both fit (74 dp of
+ * How the header's driver chip draws itself in [chipMax]: the avatar beside ‘사용자’ and the name where both fit (74 dp of
  * avatar and padding plus 66 dp of text at 1×, the text growing with the font); the text pill alone (40 dp of padding plus
  * the text); and in the tightest header (운행기록 or 월간·Excel in a narrow window, where the assistant button joins the row)
  * the avatar alone in a 56-dp pill. A pill of ellipses would say nothing; the person's initials still say who is driving,
@@ -702,8 +702,9 @@ private val HEADER_CHIP_RESERVE = 72.dp
 internal enum class PillTone { NEGATIVE, QUIET, READY, POSITIVE, DEMO }
 
 /**
- * The header pill's line and tone: a save failure first, then a signal that cannot record, then staleness, then what the
- * car is doing. [fresh] and [status] come from [drivingOverviewInfo], the same rule as the driving screen.
+ * The recording state's line and tone, for the header pill and (2.12) the 사용자 card's status tag: a save failure first,
+ * then a signal that cannot record, then staleness, then what the car is doing. [fresh] and [status] come from
+ * [drivingOverviewInfo], the same rule as the driving screen.
  */
 internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String): Pair<String, PillTone> {
     val recording = state.data.open != null

@@ -237,10 +237,11 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
 /**
  * The stepper of what is left: ① purposes and drivers, ② card questions, ③ Excel, ④ close. Each open step is a jump to
  * the place that finishes it; ④ opens only when the month is really ready. Closed shows the sign-off and 마감 해제.
- * The panel fills its column, in 월간·Excel (since 2.11) as on the home card ([compact]); its sentences keep to the reading
- * measure, so a wide page never stretches a line of text. That column can show any month, so the headline and the footnote
- * read [today] ([monthCloseHeadline], [monthCloseFootnote]) and a month without trips offers 이전 달 보기 when [onPrevious]
- * is given. The home card passes neither: its months always have trips.
+ * The panel fills its column on the home card ([MonthCloseCard], [compact]); its sentences keep to the reading measure, so a
+ * wide page never stretches a line of text. The headline and the footnote read [today] ([monthCloseHeadline],
+ * [monthCloseFootnote]). 월간·Excel drew this panel in 2.11; since 2.12 it has its own [ReportCloseCard] in the car's one-line
+ * look, so the wide form and [onPrevious] (이전 달 보기 for a month without trips) have no caller today. The home card passes
+ * neither: its months always have trips.
  */
 @Composable internal fun MonthClosePanel(status: MonthStatus, onIssues: () -> Unit, onReviews: () -> Unit, onExport: () -> Unit, exporting: Boolean,
     act: Act, repository: TripLogRepository, modifier: Modifier = Modifier, compact: Boolean = false, editedAfterClose: Int = 0, today: LocalDate = LocalDate.now(zone),
