@@ -408,6 +408,8 @@ private const val MOTION_FOLD_MS = 200
  * come back for the newly chosen driver. See [driverConfirmDue] for when the question is worth asking at all.
  * [confirmed] holds the day keys already answered; the shell owns it so the home hero and the other tabs ask once a day between them.
  * The row folds itself in and out; [modifier] applies inside the fold, so a gap the caller pads under the row folds with it.
+ * 2.12: it wears the car's card (opaque, the hairline, corner 20), the avatar sits on the disc, and the answers are the
+ * accent 네 and the outlined 다른 직원; under 560 dp the buttons still drop below the question.
  */
 @Composable internal fun DriverConfirmRow(state: TripLogState, now: Long, openDriver: (String?) -> Unit, confirmed: String, onConfirmed: (String) -> Unit,
     modifier: Modifier = Modifier) {
@@ -427,8 +429,9 @@ private const val MOTION_FOLD_MS = 200
         exit = if (reduce) fadeOut(snap()) else fadeOut(tween(MOTION_FOLD_MS, easing = ease)) + shrinkVertically(tween(MOTION_FOLD_MS, easing = ease)),
         label = "driver-confirm") {
         val answer = { onConfirmed((dates + dateKey(now, zone)).joined()) }
-        Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), color = Scene.glass, contentColor = Scene.text, border = Scene.edge) {
-            BoxWithConstraints(Modifier.padding(start = 12.dp, end = 10.dp, top = 8.dp, bottom = 8.dp)) {
+        val skin = Car.skin
+        Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = skin.card, contentColor = Scene.text, border = BorderStroke(1.dp, skin.cardBorder)) {
+            BoxWithConstraints(Modifier.padding(12.dp)) {
                 val question: @Composable (Modifier) -> Unit = { place ->
                     Row(place, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         DriverAvatar(driver, 40.dp)

@@ -115,10 +115,46 @@ class HomeDashboardTest {
         assertEquals("첫 운행 기록 중이면 대기가 아님", "기록 중", first.headline)
     }
 
+    @Test fun theMonthTilesLineIsTheDetailOrItsShortForm() {
+        val today = LocalDate.of(2026, 11, 20)
+        val first = monthWidgetInfo(TripLogData(open = Trip(id("o"), at(11, 20, 8), null, 100.0, 101.0)), today, zone)
+        assertEquals("첫 운행 기록 중: 지금 열의 한 줄은 짧게", "이번 달 첫 운행", first.line)
+        assertEquals("휴대폰과 홈 위젯은 그대로 문장", "이번 달 첫 운행을 기록하고 있어요", first.detail)
+        val empty = monthWidgetInfo(TripLogData(), today, zone)
+        assertEquals("이번 달 운행이 아직 없어요", empty.line)
+        val open = TripLogData(drivers = listOf(driver), trips = listOf(trip("a", 11, 3, km = 30.0), trip("b", 11, 5, TripPurpose.PERSONAL, km = 10.0)))
+        val info = monthWidgetInfo(open, today, zone)
+        assertEquals("그 밖에는 detail 그대로", "업무 75% · 40.0 km · 2건", info.line)
+        assertEquals(info.detail, info.line)
+        val closed = monthWidgetInfo(closeMonth(open, YearMonth.of(2026, 11), at(11, 20, 9), zone), today, zone)
+        assertEquals("마감된 달도 detail 그대로", closed.detail, closed.line)
+        listOf(first, empty).forEach { assertOneLine(it.line, NOW_LINE_UNITS) }
+    }
+
+    @Test fun theTodayTileCountsFinishedTripsWhileItsDistanceKeepsTheOneRecording() {
+        val now = at(11, 20, 12)
+        assertEquals("아무것도 모를 때", TodayTileInfo("—", "0건", "0원", "확인 필요", "오늘 운행 정보 없음, 완료 0건, 등록 경비 0원, 계기판 확인 필요"),
+            todayTileInfo(TripLogState(), now, zone))
+        val done = trip("a", 11, 20, km = 12.4).copy(expenses = listOf(TripExpense(ExpenseType.PARKING, 4_500, at(11, 20, 10), EditSource.DRIVER)))
+        val recording = Trip(id("o"), at(11, 20, 11), null, 200.0, 203.2)
+        val yesterday = trip("y", 11, 19, km = 50.0, start = 50.0)
+        val state = TripLogState(loaded = true, signal = SignalStatus.RECORDING,
+            data = TripLogData(drivers = listOf(driver), trips = listOf(yesterday, done, recording), open = recording))
+        val info = todayTileInfo(state, now, zone)
+        assertEquals("기록 중인 운행도 거리에는 들어감", "15.6", info.km)
+        assertEquals("완료 건수에는 기록 중인 운행이 빠짐", "1건", info.trips)
+        assertEquals("4,500원", info.expenses)
+        assertEquals("차량 신호가 없으면 계기판은 확인 필요", "확인 필요", info.odometer)
+        assertEquals("오늘 운행 15.6 km, 완료 1건, 등록 경비 4,500원, 계기판 확인 필요", info.spoken)
+        val live = state.copy(live = DriveSample(now - 5_000, GearState.MOVING, 51_300.0))
+        assertEquals("신호가 새로우면 계기판 값", "51,300.0 km", todayTileInfo(live, now, zone).odometer)
+        assertEquals("45초가 지난 신호는 확인 필요", "확인 필요", todayTileInfo(live, now + 60_000, zone).odometer)
+    }
+
     @Test fun homePlanFollowsTheWindowClassTheHeightAndTheFontScale() {
         val full = homePlan(carLayout(1680.dp, 1200.dp), 1f, 1200.dp)
         assertEquals(3, full.cardColumns)
-        assertTrue(full.widgetsSideBySide && full.showEyebrow && !full.compactWidgets && !full.clockInHeader)
+        assertTrue(full.widgetsSideBySide && full.showEyebrow && !full.compactWidgets)
         assertEquals("히어로는 창의 70%, 420~600dp 사이", 600.dp, full.heroMin)
         // The class comes from width ÷ font scale, so the full window at 1.3× lands in EXPANDED: cards go 2 + 1.
         assertEquals(2, homePlan(carLayout(1292.dp, 1200.dp), 1.3f, 1200.dp).cardColumns)
@@ -128,7 +164,7 @@ class HomeDashboardTest {
         assertEquals("MEDIUM은 카드 한 줄씩", 1, medium.cardColumns)
         assertFalse("위젯은 세로로", medium.widgetsSideBySide)
         val short = homePlan(carLayout(1680.dp, 500.dp), 1f, 500.dp)
-        assertTrue("낮은 창: 위젯 한 줄, 시계는 헤더로, 브랜드 줄 숨김", short.compactWidgets && short.widgetsSideBySide && short.clockInHeader && !short.showEyebrow)
+        assertTrue("낮은 창: 위젯 한 줄, 브랜드 줄 숨김", short.compactWidgets && short.widgetsSideBySide && !short.showEyebrow)
         assertEquals(300.dp, short.heroMin)
         // Today, this month and the next booking leave the page only for the 지금 column beside it.
         listOf(full, medium, short, homePlan(carLayout(1292.dp, 1200.dp), 1.3f, 1200.dp)).forEach { assertFalse("지금 열이 없으면 페이지에", it.widgetsInColumn) }

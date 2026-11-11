@@ -46,6 +46,32 @@ class CarReservationsUiTest {
         assertNull(nextReservationLine(cancelled, at(4, 9), zone))
     }
 
+    @Test fun theTileLineReadsEveryUpcomingBookingAndNamesOnlySomeoneElse() {
+        val data = TripLogData(drivers = listOf(kim), reservations = listOf(booking("a", at(4, 14), at(4, 17))))
+        val matched = reservationTileLine(data.copy(currentDriverId = kim.id), at(4, 15), zone)
+        assertEquals("운전자가 이미 예약한 직원이면 이름 없이", "사용 중 · 17:00까지", matched.text)
+        assertEquals("예약, 사용 중, 17:00까지, 영업 · 김, 운전자를 예약한 직원으로 맞췄어요", matched.spoken)
+        assertTrue(matched.spoken.endsWith("운전자를 예약한 직원으로 맞췄어요"))
+        val inUse = reservationTileLine(data, at(4, 15), zone)
+        assertEquals("사용 중 · 17:00까지 · 김 님", inUse.text)
+        assertEquals("예약, 사용 중, 17:00까지, 영업 · 김", inUse.spoken)
+        val soon = reservationTileLine(data, at(4, 13, 50), zone)
+        assertEquals("15분 전부터 곧 시작", "곧 시작 · 14:00부터 · 김 님", soon.text)
+        assertEquals("예약, 곧 시작, 14:00부터 17:00까지, 영업 · 김", soon.spoken)
+        val today = reservationTileLine(data, at(4, 9), zone)
+        assertEquals("오늘 14:00 · 김 님", today.text)
+        assertEquals("예약, 다음 예약 오늘 14:00, 영업 · 김 · 목적 미정", today.spoken)
+        assertTrue(today.spoken.startsWith("예약, 다음 예약 오늘 14:00, 영업 · 김"))
+        assertNull("홈의 줄은 24시간 안만", nextReservationLine(data, at(3, 13), zone))
+        assertEquals("타일은 24시간 너머도 읽음", "내일 14:00 · 김 님", reservationTileLine(data, at(3, 13), zone).text)
+        assertEquals("11월 4일 (수) 14:00 · 김 님", reservationTileLine(data, at(1, 9), zone).text)
+        val none = ReservationTileLine("현재 잡힌 예약이 없어요", "예약, 현재 잡힌 예약이 없어요")
+        assertEquals(none, reservationTileLine(TripLogData(drivers = listOf(kim)), at(4, 9), zone))
+        assertEquals("취소된 예약", none, reservationTileLine(data.copy(reservations = data.reservations.map { it.copy(status = ReservationStatus.CANCELLED) }), at(4, 9), zone))
+        assertEquals("시연 예약은 실제 화면에 없음", none, reservationTileLine(data.copy(reservations = data.reservations.map { it.copy(demo = true) }), at(4, 9), zone))
+        assertEquals("목록에 없는 직원의 예약은 이름 없이", "오늘 14:00", reservationTileLine(data.copy(drivers = emptyList()), at(4, 9), zone).text)
+    }
+
     @Test fun bookerNameFallsBack() {
         val data = TripLogData(drivers = listOf(kim, Driver(id("x"), "총무", "")))
         assertEquals("김", bookerName(data, kim.id))

@@ -365,9 +365,9 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                         val tabs = listOf(
                             NavTab("홈", R.drawable.ic_dashboard, parkedTaskBadge(homeTasks)),
                             NavTab("운행기록", R.drawable.ic_journal, reviewCount),
-                            NavTab("월간·Excel", R.drawable.ic_report, closeIssues),
+                            NavTab("월간·Excel", R.drawable.ic_calendar, closeIssues),
                             NavTab("차량", R.drawable.ic_vehicle, openIncidents(state.data).size),
-                            NavTab("설정", R.drawable.ic_tune, 0),
+                            NavTab("설정", R.drawable.ic_settings, 0),
                         )
                         // The rail fills the window between the gutters. On a wide, tall window it splits into the page column, where
                         // the five pages slide, and the 지금 column beside it, which stands outside the page change like the header
@@ -377,8 +377,8 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                         Box(Modifier.fillMaxSize().padding(horizontal = layout.gutter)) {
                             Box(Modifier.contentWidth().fillMaxHeight().align(if (layout.startAnchored) Alignment.TopStart else Alignment.TopCenter)) {
                                 Column(Modifier.fillMaxSize()) {
-                                    TopBar(state, layout, tabs, tab, { tab = it }, { openDriver(null) }, { tutorial = true }, { assistant = true },
-                                        clock = if (layout.short) hm(now) else null, showDriver = !columns.split)
+                                    TopBar(state, now, layout, tabs, tab, { tab = it }, { openDriver(null) }, { tutorial = true }, { assistant = true },
+                                        nowColumn = columns.split)
                                     // Without the column, the daily question rides under the header. The 네 row folds itself away (200 ms,
                                     // a snap under reduced motion) once the driver has answered, still showing the question it answered while
                                     // it folds; the gap under it folds with it.
@@ -408,11 +408,13 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                                           }
                                         }
                                         // Who is driving (asking today's question while it is due, on the same answered days as the narrow
-                                        // window's row), the next booking, today and this month. The card's 직원 추가 opens 설정 › 직원.
+                                        // window's row), the next booking, today and this month. The card's 직원 추가 opens 설정 › 직원; 오늘 운행
+                                        // opens 운행기록 on this month, whose list starts with the newest day (today's, once it has a trip).
                                         if (columns.split) NowColumn(state, now,
                                             driverCard = { modifier -> DriverNowCard(state, now, driverConfirmed, { driverConfirmed = it }, openPicker = { openDriver(null) },
                                                 openDrivers = { goSettings(1) }, modifier = modifier) },
-                                            openVehicle = { tab = 3 }, openMonth = { goReport(YearMonth.from(localDate(now))) },
+                                            openVehicle = { tab = 3 }, openToday = { openLog(0, YearMonth.from(localDate(now))) },
+                                            openMonth = { goReport(YearMonth.from(localDate(now))) },
                                             modifier = Modifier.width(columns.side).fillMaxHeight().padding(top = 8.dp, bottom = 20.dp))
                                     }
                                 }
@@ -492,24 +494,65 @@ internal fun driverChipMode(chipMax: Dp, fontScale: Float): DriverChipMode {
 }
 
 /**
- * The header of every page, spanning the rail: the brand mark and the five tabs with their counts at the start; at the rail's
- * end (over the 지금 column when it stands) the short window's clock, the recording state and the tools. The driver chip
- * joins them only where there is no 지금 column ([showDriver]), whose top card says who is driving; in a tight header it is
- * the one that gives ([driverChipAvatar]). In a narrow window the tabs drop to their own scrolling row.
+ * How the header lays itself out (2.12, pure, unit-tested). [oneRow]: the mark, the tabs and everything else share one row,
+ * which the windows with the 지금 column have room for (its 사용자 card takes the chip and the recording state off the
+ * header), and so does the full window without it (a short one). [clockInline]: from EXPANDED up the clock may set the date
+ * beside the time ([clockFitsInline] decides in the room its row leaves); narrower, it always stacks them. [statusInHeader]:
+ * the driver chip and the recording state are header pills wherever no 지금 column carries them.
  */
-@Composable private fun TopBar(state: TripLogState, layout: LayoutTokens, tabs: List<NavTab>, selected: Int, onSelect: (Int) -> Unit,
-    onDriver: () -> Unit, onTutorial: () -> Unit, onAssistant: () -> Unit = {}, clock: String? = null, showDriver: Boolean = true) {
+@Immutable internal data class HeaderPlan(val oneRow: Boolean, val clockInline: Boolean, val statusInHeader: Boolean)
+
+internal fun headerPlan(layout: LayoutTokens, nowColumn: Boolean): HeaderPlan =
+    HeaderPlan(oneRow = nowColumn || layout.full, clockInline = layout.expanded, statusInHeader = !nowColumn)
+
+/**
+ * Whether the inline clock ("11월 9일 (월)  22:20", about 232 dp at 1×) fits in [space] (pure, unit-tested): 52 dp of padding
+ * and gap that stay put, and 180 dp of text that grows with the font (one below 1× counts as 1×). Where it does not fit, the
+ * clock stacks the date over the time (about 128 dp), so the tab pill never scrolls earlier than it would beside a bare time.
+ */
+internal fun clockFitsInline(space: Dp, fontScale: Float): Boolean = space >= 52.dp + 180.dp * fontScale.coerceAtLeast(1f)
+
+/**
+ * What TalkBack says for the header's driver chip (pure, unit-tested): the caption on screen first, then the person's label
+ * and what a tap does, "사용자 Sales · Kim Jiwoo, 바꾸기", so the spoken name starts with the visible words (WCAG 2.5.3); with
+ * nobody chosen, "사용자 미선택, 운전자 선택".
+ */
+internal fun driverChipLabel(driver: Driver?): String = driver?.let { "사용자 ${it.label}, 바꾸기" } ?: "사용자 미선택, 운전자 선택"
+
+/**
+ * What a one-row header holds back for the driver chip before its clock may go inline: the chip's narrowest form, the 56-dp
+ * avatar pill, and its 16-dp gap. The chip is measured after the clock and is the one that gives ([driverChipMode]).
+ */
+private val HEADER_CHIP_RESERVE = 72.dp
+
+/**
+ * The header of every page (2.12), spanning the rail and laid out by [headerPlan]: the mark and the five tabs at the start,
+ * and at the far end the clock with the date, on every page and in every window class (the time is always at the top
+ * right). Beside the 지금 column one row holds the tools and the clock: the column's 사용자 card says who drives and what
+ * the car is doing. Without the column the driver chip and the recording state join the header, the state right of the chip.
+ * The full window keeps them on its one row, where the chip gives way first and the clock stacks only where not even the
+ * chip's avatar pill would fit beside it; a narrower window puts them on a second row under the tabs, which scroll from
+ * MEDIUM down. Every piece sits on an opaque card pill: over the 홈 sky, textSecondary on its own would read 2.76:1.
+ */
+@Composable private fun TopBar(state: TripLogState, now: Long, layout: LayoutTokens, tabs: List<NavTab>, selected: Int, onSelect: (Int) -> Unit,
+    onDriver: () -> Unit, onTutorial: () -> Unit, onAssistant: () -> Unit, nowColumn: Boolean) {
+    val plan = headerPlan(layout, nowColumn)
     val wide = layout.expanded
+    val fontScale = LocalDensity.current.fontScale
+    val skin = Car.skin
     val driver = state.data.drivers.firstOrNull { it.id == state.data.currentDriverId }
     // The tutorial is for a car that has not recorded anything yet; once real trips exist it stays reachable from settings.
     val showTutorial = state.data.trips.none { !it.demo }
-    val employee: @Composable (Modifier) -> Unit = { modifier ->
+    // The shell ticks every second; the clock's words change only with the minute (or the time zone).
+    val clockText = remember(now / 60_000, zone) { headerClock(now, zone) }
+    val chip: @Composable (Modifier) -> Unit = { modifier ->
         val interaction = remember { MutableInteractionSource() }
-        if (showDriver) Surface(onClick = onDriver, shape = RoundedCornerShape(50), color = Scene.glass, border = Scene.edge, interactionSource = interaction,
-            modifier = modifier.heightIn(min = 56.dp).pressable(interaction, .98f).semantics { contentDescription = "지금 운전 ${driver?.label ?: "미선택"}, 바꾸기" }) {
+        // A control, so it is outlined in the chip border (3.47 / 3.69 on the card) where the pills that only inform take the hairline.
+        Surface(onClick = onDriver, shape = RoundedCornerShape(50), color = skin.card, contentColor = Scene.text, border = BorderStroke(1.dp, skin.chipBorder),
+            interactionSource = interaction, modifier = modifier.heightIn(min = 56.dp).pressable(interaction, .98f).semantics { contentDescription = driverChipLabel(driver) }) {
             // The person's avatar (the one the picker and 설정 › 직원 show) sits 12 dp in, concentric with the pill's round end;
             // the chip keeps what the header leaves it ([driverChipMode]). The pill's 56-dp minimum still reaches the row.
-            BoxWithConstraints(propagateMinConstraints = true) {
+            BoxWithConstraints(Modifier.pressFill(interaction), propagateMinConstraints = true) {
                 val mode = driverChipMode(maxWidth, LocalDensity.current.fontScale)
                 if (mode == DriverChipMode.AVATAR) Box(Modifier.padding(12.dp), contentAlignment = Alignment.Center) { DriverAvatar(driver, 32.dp) }
                 else Row(Modifier.padding(start = if (mode == DriverChipMode.AVATAR_AND_NAME) 12.dp else 20.dp, end = 20.dp, top = 6.dp, bottom = 6.dp),
@@ -518,7 +561,7 @@ internal fun driverChipMode(chipMax: Dp, fontScale: Float): DriverChipMode {
                     Column {
                         // One line each: in a tight header the caption ellipsises too, rather than wrapping and growing the row. The
                         // name alone (the department is in the spoken label and in the picker): it is what tells the drivers apart.
-                        Text("지금 운전", style = MaterialTheme.typography.labelSmall, color = Scene.textSecondary, maxLines = 1, softWrap = false,
+                        Text("사용자", style = MaterialTheme.typography.labelSmall, color = Scene.textSecondary, maxLines = 1, softWrap = false,
                             overflow = TextOverflow.Ellipsis)
                         Text(driver?.let { it.name.ifBlank { it.label } } ?: "직원 선택", style = MaterialTheme.typography.labelLarge, color = Scene.text, maxLines = 1,
                             overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = if (wide) 230.dp else 140.dp))
@@ -528,55 +571,123 @@ internal fun driverChipMode(chipMax: Dp, fontScale: Float): DriverChipMode {
         }
     }
     val tools: @Composable () -> Unit = {
-        // On home the hero's search bar is the assistant entry; one entry per screen keeps focus order and TalkBack simple. The
-        // wide header has no slack beside the tab pill, so there the entry is its icon alone (56 dp) and the tutorial button
-        // keeps to home (it stays reachable from 설정 › 기록).
-        if (selected != 0) OutlinedButton(onClick = onAssistant, border = BorderStroke(1.dp, Scene.outline),
-            modifier = Modifier.heightIn(min = 56.dp).then(if (wide) Modifier.widthIn(min = 56.dp) else Modifier).semantics { contentDescription = "운행 비서 열기" },
-            contentPadding = if (wide) PaddingValues(0.dp) else ButtonDefaults.ContentPadding) {
-            Icon(painterResource(R.drawable.ic_search), null, Modifier.size(22.dp))
-            if (!wide) { Spacer(Modifier.width(8.dp)); Text("운행 비서") }
-        }
-        if (showTutorial && (selected == 0 || !wide)) OutlinedButton(onClick = onTutorial, modifier = Modifier.heightIn(min = 56.dp), border = BorderStroke(1.dp, Scene.outline)) { Text("시연 체험") }
+        // On home the hero's search bar is the assistant entry; one entry per screen keeps focus order and TalkBack simple. A
+        // one-row header has no slack beside the tab pill, so there (and in the narrowest class) the entry is its icon alone,
+        // and the tutorial pill keeps to home (it stays reachable from 설정 › 기록).
+        if (selected != 0) HeaderTool(painterResource(R.drawable.ic_search), label = if (plan.oneRow || layout.compact) null else "운행 비서",
+            description = "운행 비서 열기", onClick = onAssistant)
+        if (showTutorial && (selected == 0 || !plan.oneRow)) HeaderTool(icon = null, label = "시연 체험", description = null, onClick = onTutorial)
     }
+    // In the text colour: black by day, as in the mock, and white by night.
     val mark: @Composable () -> Unit = {
-        Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = "SHAREMATE", tint = Scene.brand, modifier = Modifier.size(52.dp))
+        Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = "SHAREMATE", tint = Scene.text, modifier = Modifier.size(52.dp))
     }
-    // The short window's clock: plain text, updated in place every second (never a cross-fade).
-    val time: @Composable () -> Unit = {
-        if (clock != null) Text(clock, style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum"), color = Scene.text, fontWeight = FontWeight.Bold,
-            modifier = Modifier.semantics { contentDescription = "현재 시각 $clock" })
+    // The clock in the room its row leaves it: inline where [clockFitsInline] allows once [reserve] is held back for a chip
+    // that shares the row, stacked otherwise, and always stacked below EXPANDED.
+    val clock: @Composable (Modifier, Dp) -> Unit = { modifier, reserve ->
+        if (!plan.clockInline) HeaderClock(clockText, inline = false, modifier)
+        else BoxWithConstraints(modifier, contentAlignment = Alignment.CenterEnd) {
+            HeaderClock(clockText, inline = clockFitsInline(maxWidth - reserve, fontScale))
+        }
     }
-    // The header pill is 68 dp (56-dp tabs inside 6 dp of padding); the short header trims the padding to 4.
-    Column(Modifier.fillMaxWidth().padding(vertical = if (layout.short) 4.dp else 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (wide) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                mark()
-                GlassTabs(tabs, selected, onSelect, compact = layout.short)
+    // The second row of a two-row header: the tools at its start, the chip at its end with the recording state right of it.
+    val secondRow: @Composable (Dp) -> Unit = { gap ->
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(gap)) {
+            tools()
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { if (plan.statusInHeader) chip(Modifier) }
+            if (plan.statusInHeader) StatusPill(state, now)
+        }
+    }
+    // Rows 12 dp apart inside 8 dp of padding, 8 and 4 in a short window. The tab pill is 68 dp (56-dp tabs inside 6 dp of
+    // padding, 4 when short), so one row makes an 84-dp header (76 short) and two rows 152 (136).
+    Column(Modifier.fillMaxWidth().padding(vertical = if (layout.short) 4.dp else 8.dp), verticalArrangement = Arrangement.spacedBy(if (layout.short) 8.dp else 12.dp)) {
+        when {
+            plan.oneRow -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    mark()
+                    GlassTabs(tabs, selected, onSelect, compact = layout.short)
+                }
+                // The cluster takes what the pill leaves of the rail, flush with its end: tools, chip, status, clock. A Row measures
+                // its unweighted children first and in order, so the clock gets what the tools and the status leave; the chip,
+                // weighted, is measured last and is the one that gives ([driverChipMode]: its avatar steps out, then its words),
+                // never the clock or the state.
+                Row(Modifier.weight(1f).padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.End)) {
+                    tools()
+                    if (plan.statusInHeader) {
+                        chip(Modifier.weight(1f, fill = false))
+                        StatusPill(state, now)
+                    }
+                    clock(Modifier, if (plan.statusInHeader) HEADER_CHIP_RESERVE else 0.dp)
+                }
             }
-            // The right cluster takes what the pill leaves of the rail, flush with its end. The driver chip is the one that gives,
-            // its label ellipsising (then its avatar stepping out) before anything is pushed past the rail's edge.
-            Row(Modifier.weight(1f, fill = false).padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                time()
-                StatusPill(state)
-                employee(Modifier.weight(1f, fill = false))
-                tools()
+            wide -> {
+                // EXPANDED without the column: the clock ends the tab row, and the tools, the chip and the state make the second.
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        mark()
+                        GlassTabs(tabs, selected, onSelect, compact = layout.short)
+                    }
+                    clock(Modifier.weight(1f).padding(start = 16.dp), 0.dp)
+                }
+                secondRow(16.dp)
             }
-        } else {
-            // Narrow windows: the mark sits beside the tab pill (which scrolls when it does not fit), then one row for the
-            // recording state, the short window's clock, the employee and the tools. Two rows instead of three, so a short,
-            // narrow window keeps most of its height for the page.
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                mark()
-                GlassTabs(tabs, selected, onSelect, Modifier.weight(1f, fill = false).horizontalScroll(rememberScrollState()), compact = layout.short)
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Box(Modifier.weight(1f)) { StatusPill(state) }
-                time()
-                employee(Modifier.weight(1f, fill = false))
-                tools()
+            else -> {
+                // MEDIUM and COMPACT: the tab pill scrolls between the mark and the stacked clock when it does not fit.
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    mark()
+                    Box(Modifier.weight(1f)) { GlassTabs(tabs, selected, onSelect, Modifier.horizontalScroll(rememberScrollState()), compact = layout.short) }
+                    clock(Modifier, 0.dp)
+                }
+                secondRow(12.dp)
             }
         }
+    }
+}
+
+/**
+ * The header clock (2.12): the date and the time on an opaque card pill with the hairline, at the header's far end on every
+ * page. [inline] sets the date beside the time on one baseline ("11월 9일 (월)  22:20"); otherwise the date stands over the
+ * time, centred, and the pill grows past 56 dp with a larger font. Not a control and not a live region: it updates in place
+ * with the minute, never animated, and TalkBack reads it in words, "11월 9일 월요일 22시 20분" ([headerClock]).
+ */
+@Composable private fun HeaderClock(text: ClockText, inline: Boolean, modifier: Modifier = Modifier) {
+    val skin = Car.skin
+    val shape = RoundedCornerShape(50)
+    // Tabular figures, so the time keeps its width as the minutes change and the pill never twitches.
+    Box(modifier.heightIn(min = 56.dp).clip(shape).background(skin.card).border(1.dp, skin.cardBorder, shape)
+        .clearAndSetSemantics { contentDescription = text.spoken }
+        .padding(horizontal = if (inline) 20.dp else 16.dp, vertical = if (inline) 0.dp else 3.dp), contentAlignment = Alignment.Center) {
+        if (inline) Row {
+            Text(text.date, Modifier.alignByBaseline(), style = MaterialTheme.typography.labelLarge, color = Scene.textSecondary, maxLines = 1, softWrap = false)
+            Spacer(Modifier.width(12.dp))
+            Text(text.time, Modifier.alignByBaseline(), style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum"), color = Scene.text,
+                fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+        } else Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(text.date, style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, maxLines = 1, softWrap = false)
+            Text(text.time, style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"), color = Scene.text, fontWeight = FontWeight.Bold,
+                maxLines = 1, softWrap = false)
+        }
+    }
+}
+
+/**
+ * A header tool (2.12): a 56-dp stadium on the card, outlined in the chip border like every control in the header, 56 × 56
+ * with its [icon] alone. The icon takes the line ink, the [label] the text colour. It settles to .98 with the press fill (no
+ * ripple on the car). [description] replaces what it shows for TalkBack and contains its label ("운행 비서 열기").
+ */
+@Composable private fun HeaderTool(icon: Painter?, label: String?, description: String?, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val skin = Car.skin
+    val shape = RoundedCornerShape(50)
+    Row(Modifier.pressable(interaction, .98f).heightIn(min = 56.dp).widthIn(min = 56.dp).clip(shape).background(skin.card).border(1.dp, skin.chipBorder, shape)
+        .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick)
+        .then(if (description != null) Modifier.semantics { contentDescription = description } else Modifier)
+        .pressFill(interaction).padding(horizontal = if (label != null) 18.dp else 0.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
+        if (icon != null) Icon(icon, contentDescription = null, Modifier.size(22.dp), tint = skin.icon)
+        if (label != null) Text(label, style = MaterialTheme.typography.labelLarge, color = Scene.text, maxLines = 1, softWrap = false,
+            modifier = if (description != null) Modifier.clearAndSetSemantics {} else Modifier)
     }
 }
 
@@ -604,19 +715,23 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
     }
 }
 
-@Composable private fun StatusPill(state: TripLogState) {
-    // Freshness comes from the same rule as the driving screen, so a stale signal never reads as "ready".
-    val overview = drivingOverviewInfo(state, System.currentTimeMillis(), true, zone)
+/**
+ * The recording state as a header pill (2.12), only where no 지금 column carries it (the 사용자 card shows the same words as a
+ * tag): a 56-dp stadium on the card with the hairline, a 12-dp dot in its tone ([pillDotColor]) and the label. Freshness is
+ * read at [now], the shell's tick, by the driving screen's rule, so a stale signal never reads as "ready".
+ */
+@Composable private fun StatusPill(state: TripLogState, now: Long) {
+    val overview = drivingOverviewInfo(state, now, true, zone)
     val (label, tone) = statusPillInfo(state, overview.fresh, overview.status)
-    // A status colour never animates (spec C): a changed state swaps the dot at once, with no tint transition and no pulse.
-    val dot = pillDotColor(tone)
-    Surface(shape = RoundedCornerShape(20.dp), color = Scene.glass, border = Scene.edge) {
-        // Polite live region: TalkBack announces recording start/stop without the driver touching the screen.
-        Row(Modifier.heightIn(min = 56.dp).padding(horizontal = 18.dp).semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(Modifier.size(12.dp).clip(CircleShape).background(dot))
-            Text(label, style = MaterialTheme.typography.labelLarge, color = Scene.text, maxLines = 1)
-        }
+    val skin = Car.skin
+    val shape = RoundedCornerShape(50)
+    // Polite live region: TalkBack announces recording start/stop without the driver touching the screen. A status colour never
+    // animates (spec C): a changed state swaps the dot at once, with no tint transition and no pulse.
+    Row(Modifier.heightIn(min = 56.dp).clip(shape).background(skin.card).border(1.dp, skin.cardBorder, shape)
+        .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }.padding(horizontal = 18.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Box(Modifier.size(12.dp).clip(CircleShape).background(pillDotColor(tone)))
+        Text(label, style = MaterialTheme.typography.labelLarge, color = Scene.text, maxLines = 1)
     }
 }
 

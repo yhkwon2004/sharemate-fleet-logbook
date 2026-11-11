@@ -3,7 +3,9 @@ package ai.sharemate.app
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.coerceIn
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.max
 import java.text.Collator
 import java.time.Instant
 import java.time.LocalDate
@@ -137,6 +139,16 @@ internal fun driverRowDescription(row: DriverRowInfo): String =
  * effect, so a 1.3× font gets one card per row and its longer lines; a font below 1× counts as 1×, as for the window classes.
  */
 internal fun pickerColumns(contentWidth: Dp, fontScale: Float): Int = if (contentWidth / fontScale.coerceAtLeast(1f) >= 600.dp) 2 else 1
+
+/**
+ * The width of the 사용자 card's 바꾸기 (2.12, pure, unit-tested). [space] is what the name and the button share beside the
+ * avatar (the card's content less the 56-dp avatar, its 12-dp gap and the button's 16; 268 dp at 1×), [nameWidth] the name in
+ * titleLarge Bold and [labelWidth] the label in labelLarge. The button keeps the mock's 151 dp while the name leaves it room
+ * ("Kim Jiwoo" measures 111), then gives way down to 112 dp before the name ellipsises; it never drops under its label plus
+ * its 24-dp padding a side, which a larger font can make the width on its own.
+ */
+internal fun changeButtonWidth(space: Dp, nameWidth: Dp, labelWidth: Dp): Dp =
+    (space - nameWidth).coerceIn(max(112.dp, labelWidth + 48.dp), max(151.dp, labelWidth + 48.dp))
 
 /** How a picker card is painted: its fill and the colour of its status line ([pickerCardStyle]). */
 @Immutable
