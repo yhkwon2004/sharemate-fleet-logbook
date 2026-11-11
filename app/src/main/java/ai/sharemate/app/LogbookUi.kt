@@ -1591,19 +1591,34 @@ private class LastShown<T> { var value: T? = null }
 internal val SAVE_BAR_RESERVE = 72.dp + 16.dp
 
 /**
- * The car's Excel preview height (spec B): the pane's height less the sticky save bar's room and the view tabs and range line
- * above the preview, so a scroll to the end shows the tabs, the whole preview and the bar together. Never under
- * [EXCEL_PREVIEW_MIN_HEIGHT] (scaled up with a large font, whose taller text the preview's chrome needs), where the pane
- * scrolls further instead of squeezing the table. An unbounded pane gets the minimum.
+ * The height of the car's Excel preview card, folded (spec B; the preview sits in a card since 2.12): the pane's height less
+ * the sticky save bar's room and the view tabs and range line above the card, so a scroll to the end shows the tabs, the whole
+ * card and the bar together. Never under [EXCEL_PREVIEW_MIN_HEIGHT] (scaled up with a large font, whose taller text the
+ * preview's chrome needs) plus 80 dp for the card: its padding (2 × 24 dp from EXPANDED) and the 32 dp more that the ⓘ row's
+ * 56-dp toggle takes than 2.11's one-line note. So a short pane still leaves the table about 2.11's room, a row with the pager
+ * and the hint under it, and scrolls further instead of squeezing them. An unbounded pane gets the minimum.
  */
 internal fun excelPreviewHeight(pane: Dp, fontScale: Float = 1f): Dp {
     val scale = fontScale.coerceAtLeast(1f)
-    val floor = EXCEL_PREVIEW_MIN_HEIGHT * scale
+    val floor = EXCEL_PREVIEW_MIN_HEIGHT * scale + 80.dp
     if (!pane.value.isFinite()) return floor
     // The view tabs (56-dp segments in 5 dp of padding), a 16-dp gap, the range line (one labelMedium line) and the gap under it.
     val viewHeader = 66.dp + 16.dp + 16.dp * scale + 16.dp
     return (pane - SAVE_BAR_RESERVE - viewHeader).coerceAtLeast(floor)
 }
+
+/**
+ * What the car's Excel preview card keeps under the preview (2.12): the card's 16-dp gap and the ⓘ row's 56-dp toggle, folded.
+ * The caveat sits there, outside the preview, so opening it lengthens the card in the scroll instead of taking the table's
+ * room or paging the table again.
+ */
+internal val PREVIEW_NOTE_RESERVE = 16.dp + 56.dp
+
+/**
+ * The preview's own height inside its card: the folded [card] height ([excelPreviewHeight]) less the card's [padding] above and
+ * below and the ⓘ row ([PREVIEW_NOTE_RESERVE]). It does not change while the ⓘ is open, so the table keeps its page.
+ */
+internal fun excelPreviewInnerHeight(card: Dp, padding: Dp): Dp = card - padding * 2 - PREVIEW_NOTE_RESERVE
 
 /**
  * The one period 월간·Excel shows: [month] under 월간, its year under 연간. Both units keep the same anchor [month]: from
@@ -1766,9 +1781,10 @@ internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = Se
  * the mock's sub-tabs), the range line and the view. The label, the card, the views, the preview, every Excel 저장 and its
  * file name, and 정리하러 가기 all read the one range [reportRange] gives. The pane opens on [initialMonth] when a button
  * hands it one, else where the home card, the banner and the tab badge point ([reportLandingMonth]); after that only the
- * driver moves it. The Excel view fills the page like the month-close card: the preview, in a card of its own, with its
- * lighter sheet tabs at [excelPreviewHeight] (480 at least), its table paging to the rows that fit, and the save bar (72 dp)
- * pinned to the bottom of the pane while the rest scrolls under it; [onSaveBar] tells the shell while the bar is pinned, so
+ * driver moves it. The Excel view fills the page like the month-close card: the preview in a card of its own, folded at
+ * [excelPreviewHeight] (560 at least), with its lighter sheet tabs, its table paging to the rows that fit and its caveat as an
+ * ⓘ row under it, which lengthens the card when opened instead of squeezing the table; and the save bar (72 dp) pinned to
+ * the bottom of the pane while the rest scrolls under it; [onSaveBar] tells the shell while the bar is pinned, so
  * its follow-up bar rides above it. The two cards of the other views (검토's too) sit side by side from EXPANDED up and stack
  * below it. Every Excel 저장 follows one rule ([excelSaveAvailable]); before one with untidy trips the dialog lists what the
  * file will miss ([exportConfirmLines]).
@@ -1862,11 +1878,13 @@ internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = Se
             Segmented(listOf("운행 현황", "경비·정산", "Excel", "검토"), view, Modifier.fillMaxWidth()) { view = it }
             Text("${if (data.profile.demoMode) "시연 데이터 · " else ""}${from} ~ ${to} · ${totals.trips}건", style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary)
             Crossfade(view, Modifier.fillMaxWidth(), animationSpec = pageFade(), label = "report-section") { page ->
-                // The preview has a height of its own in the scroll: its card takes it, the preview fills the card, and its table
-                // pages to the rows that fit.
-                if (page == 2) CarCard(Modifier.widthIn(max = EXCEL_VIEW_MAX_WIDTH).fillMaxWidth().height(previewHeight)) {
+                // The preview has a height of its own in the scroll: folded, its card is that tall, the preview takes what the
+                // card's padding and the ⓘ row leave, and its table pages to the rows that fit. Opened, the ⓘ lengthens the card
+                // instead, so the table never loses its pager or jumps to another page.
+                if (page == 2) CarCard(Modifier.widthIn(max = EXCEL_VIEW_MAX_WIDTH).fillMaxWidth()) {
                     ExcelPreview(data.copy(profile = data.profile.copy(carModel = data.profile.carModel.ifBlank { state.vehicleModel.orEmpty() })), trips, from, to,
-                        Modifier.fillMaxSize(), compact = !wide, fillHeight = true)
+                        Modifier.fillMaxWidth().height(excelPreviewInnerHeight(previewHeight, carCardPadding())), compact = !wide, fillHeight = true)
+                    CarInfoRow(ReportCopy.PREVIEW_NOTE, more = ReportCopy.PREVIEW_NOTE_MORE)
                 }
                 else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(layout.cardGap)) {
                     when (page) {

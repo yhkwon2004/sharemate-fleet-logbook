@@ -50,7 +50,11 @@ private val ROW_NUMBER_WIDTH = 48.dp
  */
 internal val EXCEL_VIEW_MAX_WIDTH = Dp.Infinity
 
-/** The car's Excel preview never gets less height than this; a shorter pane scrolls further instead of squeezing the table. */
+/**
+ * The car's Excel preview floor as 2.11 drew it: the preview alone, with its one-line note. Since 2.12 the preview sits in a
+ * card over an ⓘ row, and [excelPreviewHeight] adds their room on top; a shorter pane scrolls further instead of squeezing
+ * the table.
+ */
 internal val EXCEL_PREVIEW_MIN_HEIGHT = 480.dp
 
 /** The most rows one page holds when the table pages to fit its height (the skeleton draws at most as many). */
@@ -102,8 +106,9 @@ internal fun previewCell(value: Any): String = when (value) {
  * phone's 현황 card) it wraps its content and pages a fixed count, so an empty sheet leaves no blank under it.
  *
  * On the car (2.12, [isCar]) the preview sits in its own card, so it speaks the car's one line: the closed month as a tag, an
- * empty sheet or a failed build as a title over one line instead of a nested panel, the caveat as an ⓘ row with its long form
- * folded, and the chosen sheet in the accent ink. The phone draws it as before.
+ * empty sheet or a failed build as a title over one line instead of a nested panel, and the chosen sheet in the accent ink.
+ * The caveat leaves the preview for the card's ⓘ row under it, so its long form never takes the table's room. The phone
+ * draws it as before.
  */
 @Composable
 internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate, to: LocalDate,
@@ -164,14 +169,15 @@ internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate,
                     val showPage: @Composable (Int) -> Unit = { rowsPerPage ->
                         SheetPage(sheet, rowsPerPage, page, compact, tapHeight, onPage = { page = it }) { number, row -> detail = number to row }
                     }
-                    // In a definite height the page gets what the rest of the preview leaves (the note under it included), and the
-                    // table what the pager and the hint leave of that; the page wraps its rows, so the note follows right under it.
+                    // In a definite height (the car's) the page gets what the rest of the preview leaves, and the table what the
+                    // pager and the hint leave of that; the page wraps its rows, so any slack stays at the bottom of the preview.
                     if (fillHeight) BoxWithConstraints(Modifier.weight(1f, fill = false).fillMaxWidth()) {
                         showPage(previewRowsPerPage(maxHeight - previewPagerHeight(tapHeight, fontScale), compact, fontScale))
                     } else showPage(previewRowsPerPage(null, compact))
                 }
-                if (car) CarInfoRow(ReportCopy.PREVIEW_NOTE, more = ReportCopy.PREVIEW_NOTE_MORE)
-                else Text("실제 저장 데이터 · Excel 인쇄 배치와 다를 수 있어요. 증빙·세무 요건은 제출 전 별도로 확인하세요.", style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary)
+                // The car's caveat is its card's ⓘ row under the preview (ReportPane), where opening it lengthens the card
+                // instead of taking the table's room; the phone keeps its line here.
+                if (!car) Text("실제 저장 데이터 · Excel 인쇄 배치와 다를 수 있어요. 증빙·세무 요건은 제출 전 별도로 확인하세요.", style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary)
                 detail?.let { (number, row) -> AlertDialog(onDismissRequest = { detail = null }, title = { Text("${sheet.name} · ${number}행") },
                     text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         row.forEachIndexed { index, cell -> Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {

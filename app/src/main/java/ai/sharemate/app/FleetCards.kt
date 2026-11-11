@@ -517,8 +517,9 @@ internal fun phoneLinkTag(enabled: Boolean, running: Boolean, error: String?, on
 
 /**
  * The pairing inside [PhoneSyncCard]: 연결 번호 with its countdown as a tag (it ticks in place, never announced), the six digits
- * as the phone shows them, or why there is no code; the vehicle key (two lines: it is data a phone types, 64 characters) and
- * the addresses, and the button for a new code.
+ * as the phone shows them, or why there is no code; the vehicle key, wrapping onto as many lines as it needs and never cut
+ * (a phone types all 64 characters, and a 1.3× font in a narrow window takes three lines); the addresses, two lines at most;
+ * and the button for a new code.
  */
 @Composable private fun PhonePairing(info: SyncInfo, now: Long) {
     val code = info.pairingCode
@@ -537,7 +538,7 @@ internal fun phoneLinkTag(enabled: Boolean, running: Boolean, error: String?, on
         } else Text(if (info.pairedPhones > 0) VehicleCopy.PHONE_ANOTHER else VehicleCopy.PHONE_EXPIRED, style = MaterialTheme.typography.titleSmall, color = Scene.text)
         Column {
             CarRow(key, line = VehicleCopy.PHONE_KEY, lead = { Icon(Icons.Outlined.Lock, contentDescription = null, Modifier.size(24.dp), tint = Car.skin.icon) },
-                titleMaxLines = 2, spoken = "${VehicleCopy.SPOKEN_PHONE_KEY}, $key")
+                titleMaxLines = Int.MAX_VALUE, spoken = "${VehicleCopy.SPOKEN_PHONE_KEY}, $key")
             // No icon of its own: an empty lead keeps the address under the key's text.
             CarRow(addresses, line = VehicleCopy.PHONE_ADDRESS, lead = { Spacer(Modifier.size(24.dp)) }, titleMaxLines = 2,
                 spoken = "${VehicleCopy.SPOKEN_PHONE_ADDRESS}, $addresses")

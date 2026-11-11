@@ -38,15 +38,35 @@ class LogbookUiTest {
         assertEquals("시연 데이터" to PillTone.DEMO, statusPillInfo(ready.copy(signal = SignalStatus.DEMO), fresh = true, status = "수신 중"))
     }
 
-    @Test fun theExcelPreviewFillsThePaneUnderTheViewTabsAndNeverDropsUnder480() {
+    @Test fun theExcelPreviewCardFillsThePaneUnderTheViewTabsAndNeverDropsUnder560() {
         // FULL car pane, about 950 dp: less the pinned save bar (72 + 16) and the view tabs with the range line (66 + 16 + 16 + 16).
         assertEquals(748f, excelPreviewHeight(950.dp).value, .01f)
         assertEquals("큰 글꼴은 범위 줄이 커진 만큼만 줄어듦", 743.2f, excelPreviewHeight(950.dp, 1.3f).value, .01f)
-        assertEquals("짧은 창은 480에서 멈추고 창이 더 스크롤", EXCEL_PREVIEW_MIN_HEIGHT, excelPreviewHeight(400.dp))
+        // 2.11's 480 plus 80 for the card: its padding (2 × 24) and the 32 dp more that the 56-dp ⓘ row takes than 2.11's note.
+        assertEquals("짧은 창은 560에서 멈추고 창이 더 스크롤", 560f, excelPreviewHeight(400.dp).value, .01f)
         assertEquals(480f, EXCEL_PREVIEW_MIN_HEIGHT.value, .01f)
-        assertEquals("큰 글꼴의 최소 높이는 글꼴만큼 커짐", 624f, excelPreviewHeight(400.dp, 1.3f).value, .01f)
-        assertEquals("높이가 정해지지 않으면 최소값", EXCEL_PREVIEW_MIN_HEIGHT, excelPreviewHeight(Dp.Infinity))
+        assertEquals("큰 글꼴은 미리보기 몫만 글꼴만큼 커짐", 704f, excelPreviewHeight(400.dp, 1.3f).value, .01f)
+        assertEquals("높이가 정해지지 않으면 최소값", 560f, excelPreviewHeight(Dp.Infinity).value, .01f)
         assertEquals("저장 바 72 + 위 간격 16", 88f, SAVE_BAR_RESERVE.value, .01f)
+    }
+
+    @Test fun thePreviewKeepsItsHeightInTheCardSoAShortPaneStillPagesTheTable() {
+        assertEquals("카드 간격 16 + 접힌 ⓘ 줄 56", 72f, PREVIEW_NOTE_RESERVE.value, .01f)
+        // Folded, the card is excelPreviewHeight tall and the preview takes what the padding and the ⓘ row leave. The ⓘ opens
+        // below the preview, so the preview's height (and with it the table's page) stays as it is.
+        val floor = excelPreviewHeight(400.dp)
+        assertEquals("EXPANDED 이상은 패딩 24", 440f, excelPreviewInnerHeight(floor, 24.dp).value, .01f)
+        assertEquals("MEDIUM·COMPACT는 패딩 20", 448f, excelPreviewInnerHeight(floor, 20.dp).value, .01f)
+        assertEquals("FULL 창", 628f, excelPreviewInnerHeight(excelPreviewHeight(950.dp), 24.dp).value, .01f)
+        assertEquals("큰 글꼴", 584f, excelPreviewInnerHeight(excelPreviewHeight(400.dp, 1.3f), 24.dp).value, .01f)
+        // At the floor, what the preview draws above its page at 1× (the title block 32 + 4 + 22, the sheet tabs 56, the sheet
+        // name 30, three 12-dp gaps and the 8-dp bottom padding) still leaves one page: the table's header and a row as
+        // previewRowsPerPage counts them, then the pager and the hint, so the pager never shrinks under its 56-dp target.
+        val chrome = 58.dp + 56.dp + 30.dp + 12.dp * 3 + 8.dp
+        val wide = excelPreviewInnerHeight(floor, 24.dp) - chrome
+        assertTrue("넓은 창 최소 높이에도 한 행·페이지 버튼·안내: $wide", wide >= 66.dp + 73.dp + previewPagerHeight(56.dp))
+        val narrow = excelPreviewInnerHeight(floor, 20.dp) - chrome
+        assertTrue("좁은 창은 64 dp 행: $narrow", narrow >= 66.dp + 65.dp + previewPagerHeight(56.dp))
     }
 
     @Test fun logFilterLabelsCarryTheCountsAndShortenWhereTheRowIsNarrow() {
