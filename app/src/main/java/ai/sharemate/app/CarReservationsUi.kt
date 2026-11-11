@@ -65,6 +65,36 @@ internal fun carActiveTitle(reservation: Reservation, now: Long, zone: ZoneId): 
     if (now < reservation.startAt) "곧 예약 시작 · ${carClockText(reservation.startAt, now, zone)}부터 ${carClockText(reservation.endAt, now, zone)}까지"
     else "예약 사용 중 · ${carClockText(reservation.endAt, now, zone)}까지"
 
+/** The 지금 column's 예약 tile: its one [text] line, and what TalkBack hears for the whole tile ([spoken]). */
+@Immutable
+internal data class ReservationTileLine(val text: String, val spoken: String)
+
+/**
+ * The 예약 tile's line (2.12, pure, unit-tested): the booking in use ("사용 중 · 17:00까지"), or starting within the lead
+ * ("곧 시작 · 14:00부터"), else the next confirmed booking however far ahead ("오늘 14:00", "내일 09:30", "11월 21일 (토)
+ * 18:00"), else "현재 잡힌 예약이 없어요". Unlike the home's line ([nextReservationLine], 24 hours) it reads every upcoming
+ * booking, so "none" is only said when it is true. The booker's name ends the line (" · 김 님") unless they are the 사용자
+ * already or not on the roster. [ReservationTileLine.spoken] is the long form: "예약, 사용 중, 17:00까지, 영업 · 김", with
+ * "운전자를 예약한 직원으로 맞췄어요" once the car has made the booker the driver (the reason their name left the line).
+ */
+internal fun reservationTileLine(data: TripLogData, now: Long, zone: ZoneId): ReservationTileLine {
+    val none = "현재 잡힌 예약이 없어요"
+    fun name(r: Reservation) = if (r.driverId == data.currentDriverId || data.drivers.none { it.id == r.driverId }) "" else " · ${bookerName(data, r.driverId)} 님"
+    activeReservation(data, now)?.let { r ->
+        val matched = data.currentDriverId == r.driverId && data.drivers.any { it.id == r.driverId }
+        val note = if (matched) ", 운전자를 예약한 직원으로 맞췄어요" else ""
+        val until = "${carClockText(r.endAt, now, zone)}까지"
+        if (now < r.startAt) {
+            val from = "${carClockText(r.startAt, now, zone)}부터"
+            return ReservationTileLine("곧 시작 · $from${name(r)}", "예약, 곧 시작, $from $until, ${bookerLabel(data, r.driverId)}$note")
+        }
+        return ReservationTileLine("사용 중 · $until${name(r)}", "예약, 사용 중, $until, ${bookerLabel(data, r.driverId)}$note")
+    }
+    val next = upcomingReservations(data, now).firstOrNull { it.startAt > now } ?: return ReservationTileLine(none, "예약, $none")
+    val start = reservationStartText(next, now, zone)
+    return ReservationTileLine("$start${name(next)}", "예약, 다음 예약 $start, ${reservationDetailText(data, next)}")
+}
+
 @Immutable
 internal data class CarReservationLine(val text: String, val active: Boolean)
 

@@ -118,6 +118,17 @@ class DriverRosterTest {
         assertEquals("작은 글꼴은 1배로 셈", 1, pickerColumns(560.dp, .85f))
     }
 
+    @Test fun theChangeButtonGivesWayBeforeTheNameEllipsises() {
+        // The 사용자 card at 1×: 352 dp of content less the avatar 56, its gap 12 and the button's 16; "바꾸기" is 57 dp.
+        assertEquals("이름이 짧으면 목업의 151", 151.dp, changeButtonWidth(268.dp, 112.dp, 57.dp))
+        assertEquals("이름이 길면 버튼이 먼저 줄어듦", 128.dp, changeButtonWidth(268.dp, 140.dp, 57.dp))
+        assertEquals("112 아래로는 줄지 않음 (그다음 이름이 말줄임)", 112.dp, changeButtonWidth(268.dp, 200.dp, 57.dp))
+        assertEquals("큰 글꼴의 긴 라벨은 라벨 + 48", 168.dp, changeButtonWidth(268.dp, 112.dp, 120.dp))
+        // With nobody to show, the card's one line beside the avatar keeps to the 지금 column's budget; TalkBack has the long form.
+        assertOneLine(NOW_CARD_NO_DRIVERS_LINE, NOW_LINE_UNITS)
+        assertTrue(NOW_CARD_NO_DRIVERS_SPOKEN.startsWith("운행기록부 ④ 사용자 칸"))
+    }
+
     @Test fun everyPickerStatusLineClearsAaOnTheDialog() {
         // The dialog's container is AlertDialogDefaults.containerColor: surfaceContainerHigh of the day and night Material schemes.
         val dialogs = listOf(DaySceneColors to Color(0xFFE9EFF7), NightSceneColors to Color(0xFF1D2738))

@@ -20,10 +20,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -40,7 +43,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.AlertDialogDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -76,6 +78,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -91,7 +94,7 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 /*
- * Driver management on the car (2.11): one avatar per person, the 지금 운전 card that heads the 지금 column, the picker that
+ * Driver management on the car (2.11): one avatar per person, the 사용자 card that heads the 지금 column, the picker that
  * switches the driver in one tap with undo, and 설정 › 직원 as a list beside its editor. Switching never needs typing, targets
  * are 56-88 dp, nothing ripples (the .98 press and the press fill instead), and none of it is reachable while driving: the
  * shell composes none of it while blocked. The pure rules live in DriverRoster.kt.
@@ -120,20 +123,26 @@ import java.util.UUID
     }
 }
 
-// ───────────────────────── 지금 운전 ─────────────────────────
+// ───────────────────────── 사용자 ─────────────────────────
 
 /** The answered question folds away in 200 ms (spec C), as the narrow window's question row does. */
 private const val NOW_FOLD_MS = 200
 
+/** The no-직원 card's one line beside the avatar (2.12), and the long form TalkBack hears in its place. */
+internal const val NOW_CARD_NO_DRIVERS_LINE = "부서·성명이 ④ 사용자 칸에 들어가요"
+internal const val NOW_CARD_NO_DRIVERS_SPOKEN = "운행기록부 ④ 사용자 칸에 들어갈 부서와 성명을 등록해 주세요"
+
 /**
- * 지금 운전, the card at the top of the 지금 column (2.11): who drives now, and today's question while [driverConfirmDue] asks
- * it. By default the label, avatar 64 · name over department · 바꾸기, then [driverStatusLine]; TalkBack hears the block as one
- * heading ([driverNowDescription]). While the question is due, a divider and "오늘도 … 님이 운전하나요?" join with 네 and
- * 다른 직원 (half width each) and 바꾸기 steps aside. Both answers record today in [confirmed], the shell's day keys shared with
- * the narrow window's [DriverConfirmRow]; 다른 직원 also opens the picker. The answered block folds away in 200 ms
- * (FastOutSlowIn, a snap under reduced motion) and the status line gains "오늘 확인함". With nobody chosen it asks "누가
- * 운전하나요?"; with no 직원 it leads to 설정 › 직원 ([openDrivers]). The status line is remembered on the data and the day,
- * since [now] ticks every second.
+ * 사용자, the card at the top of the 지금 column (2.12, the mock's card; 지금 운전 in 2.11): who drives now, and today's
+ * question while [driverConfirmDue] asks it. The title row is drawn in every state, the heading, with the recording state at
+ * its end ([StatusTag]: 자동 기록 대기 sits right of 사용자, where 2.11 had it in the header). By default the avatar 56 ·
+ * name over department · 바꾸기, then the last drive on one line; TalkBack hears the person as one stop
+ * ([driverNowDescription], which also says whether today is confirmed). While the question is due, a divider and "오늘도 …
+ * 님이 운전하나요?" join with 네 and 다른 직원 (half width each) and 바꾸기 steps aside. Both answers record today in
+ * [confirmed], the shell's day keys shared with the narrow window's [DriverConfirmRow]; 다른 직원 also opens the picker. The
+ * answered block folds away in 200 ms (FastOutSlowIn, a snap under reduced motion). With nobody chosen it asks "누가
+ * 운전하나요?"; with no 직원 it leads to 설정 › 직원 ([openDrivers]). The lines are remembered on the data and the day, since
+ * [now] ticks every second.
  */
 @Composable internal fun DriverNowCard(state: TripLogState, now: Long, confirmed: String, onConfirmed: (String) -> Unit, openPicker: () -> Unit,
     openDrivers: () -> Unit, modifier: Modifier = Modifier) {
@@ -147,51 +156,71 @@ private const val NOW_FOLD_MS = 200
     val question = remember { MutableTransitionState(due != null) }
     question.targetState = due != null
     val reduce = LocalReduceMotion.current
-    // The 지금 column's tile glass: opaque by day, so the towers never show through the white, and the night glass at .78.
-    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), color = homeCardGlass(translucent = .78f), contentColor = Scene.text, border = Scene.edge) {
-        Column(Modifier.padding(22.dp)) {
-            when {
-                data.drivers.isEmpty() -> NowCardPrompt("등록된 직원이 없어요", "운행기록부 ④ 사용자 칸에 들어갈 부서와 성명을 등록해 주세요.", "직원 추가", openDrivers)
-                driver == null -> NowCardPrompt("누가 운전하나요?", null, "운전자 선택", openPicker)
-                else -> {
-                    val lastAt = remember(data.trips, data.profile.demoMode, driver.id) { lastDriveAt(data, driver.id) }
-                    val answered = dateKey(now, zone) in dates
-                    val day = localDate(now)
-                    val status = remember(lastAt, day, answered) { driverStatusLine(lastAt, now, zone, answered) }
-                    Column(Modifier.fillMaxWidth().semantics(mergeDescendants = true) { contentDescription = driverNowDescription(driver, status); heading() },
-                        verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        NowCardLabel()
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            DriverAvatar(driver, 64.dp)
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(driverName(driver), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Scene.text,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                if (driver.department.isNotBlank()) Text(driver.department, style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+    // The blocks keep their own gaps (gap 0), so the question's fold can carry the gap above it and close it with itself.
+    CarCard(modifier, padding = NOW_TILE_PADDING, gap = 0.dp, title = { CarSectionTitle("사용자", trailing = { StatusTag(state, now) }) }) {
+        when {
+            data.drivers.isEmpty() -> NowCardPrompt("등록된 직원이 없어요", NOW_CARD_NO_DRIVERS_LINE, NOW_CARD_NO_DRIVERS_SPOKEN, "직원 추가", openDrivers)
+            driver == null -> NowCardPrompt("누가 운전하나요?", null, null, "운전자 선택", openPicker)
+            else -> {
+                val lastAt = remember(data.trips, data.profile.demoMode, driver.id) { lastDriveAt(data, driver.id) }
+                val answered = dateKey(now, zone) in dates
+                val day = localDate(now)
+                val status = remember(lastAt, day, answered) { driverStatusLine(lastAt, now, zone, answered) }
+                val lastDrive = remember(lastAt, day) { lastDriveLabel(lastAt, now, zone) }
+                val name = driverName(driver)
+                // 바꾸기 keeps the mock's 151 dp until the name needs the room, then gives way down to 112 before the name ellipsises
+                // ([changeButtonWidth]); both are measured in the styles they are drawn in, at the font in effect.
+                val measurer = rememberTextMeasurer()
+                val density = LocalDensity.current
+                val nameStyle = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                val labelStyle = MaterialTheme.typography.labelLarge
+                val nameWidth = remember(name, nameStyle, density) { with(density) { measurer.measure(name, nameStyle, maxLines = 1, softWrap = false).size.width.toDp() } }
+                val labelWidth = remember(labelStyle, density) { with(density) { measurer.measure("바꾸기", labelStyle, maxLines = 1, softWrap = false).size.width.toDp() } }
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    BoxWithConstraints(Modifier.fillMaxWidth()) {
+                        val changeWidth = changeButtonWidth(maxWidth - 56.dp - 12.dp - 16.dp, nameWidth, labelWidth)
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            // The person, one stop for TalkBack; the heading is the title row's.
+                            Row(Modifier.weight(1f).semantics(mergeDescendants = true) { contentDescription = driverNowDescription(driver, status) },
+                                verticalAlignment = Alignment.CenterVertically) {
+                                DriverAvatar(driver, 56.dp)
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(name, style = nameStyle, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    if (driver.department.isNotBlank()) Text(driver.department, style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
                             }
                             // 바꾸기 steps aside while the question offers 다른 직원, and fades back once it is answered.
                             AnimatedVisibility(due == null, enter = fadeIn(if (reduce) snap() else tween(NOW_FOLD_MS, easing = FastOutSlowInEasing)),
                                 exit = ExitTransition.None, label = "driver-now-change") {
-                                QuietAction("바꾸기", description = "운전자 바꾸기", onClick = openPicker)
+                                Row {
+                                    Spacer(Modifier.width(16.dp))
+                                    CarPillButton("바꾸기", openPicker, width = changeWidth, description = "운전자 바꾸기")
+                                }
                             }
                         }
-                        Text(status, style = MaterialTheme.typography.bodyMedium, color = Scene.textMuted, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }
-                    asked?.let { person ->
-                        val ease = FastOutSlowInEasing
-                        // The gap above the divider sits inside the fold, so it closes with the block instead of jumping after it.
-                        AnimatedVisibility(visibleState = question, label = "driver-now-question",
-                            enter = if (reduce) fadeIn(snap()) else fadeIn(tween(NOW_FOLD_MS, easing = ease)) + expandVertically(tween(NOW_FOLD_MS, easing = ease)),
-                            exit = if (reduce) fadeOut(snap()) else fadeOut(tween(NOW_FOLD_MS, easing = ease)) + shrinkVertically(tween(NOW_FOLD_MS, easing = ease))) {
-                            val answer = { onConfirmed((dates + dateKey(now, zone)).joined()) }
-                            Column(Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                HorizontalDivider(color = Scene.divider)
-                                Text(driverQuestion(person), style = MaterialTheme.typography.titleMedium, color = Scene.text,
-                                    modifier = Modifier.semantics { heading(); liveRegion = LiveRegionMode.Polite })
-                                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    PrimaryAction("네", Modifier.weight(1f), onClick = answer)
-                                    QuietAction("다른 직원", Modifier.weight(1f)) { answer(); openPicker() }
-                                }
+                    // The last drive keeps the card's full width. TalkBack already heard it in the person's stop.
+                    CarLine(lastDrive, Modifier.clearAndSetSemantics {}, color = Scene.textSecondary)
+                }
+                asked?.let { person ->
+                    val ease = FastOutSlowInEasing
+                    // The gap above the divider sits inside the fold, so it closes with the block instead of jumping after it.
+                    AnimatedVisibility(visibleState = question, label = "driver-now-question",
+                        enter = if (reduce) fadeIn(snap()) else fadeIn(tween(NOW_FOLD_MS, easing = ease)) + expandVertically(tween(NOW_FOLD_MS, easing = ease)),
+                        exit = if (reduce) fadeOut(snap()) else fadeOut(tween(NOW_FOLD_MS, easing = ease)) + shrinkVertically(tween(NOW_FOLD_MS, easing = ease))) {
+                        val answer = { onConfirmed((dates + dateKey(now, zone)).joined()) }
+                        Column(Modifier.padding(top = 16.dp)) {
+                            CarDivider()
+                            Spacer(Modifier.height(16.dp))
+                            // Content, not a supporting line: it may take two lines (a long name, a larger font).
+                            Text(driverQuestion(person), style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.semantics { heading(); liveRegion = LiveRegionMode.Polite })
+                            Spacer(Modifier.height(12.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                PrimaryAction("네", Modifier.weight(1f), onClick = answer)
+                                QuietAction("다른 직원", Modifier.weight(1f)) { answer(); openPicker() }
                             }
                         }
                     }
@@ -201,17 +230,32 @@ private const val NOW_FOLD_MS = 200
     }
 }
 
-/** The card's label, a heading for TalkBack's heading navigation. */
-@Composable private fun NowCardLabel() =
-    Text("지금 운전", style = MaterialTheme.typography.labelLarge, color = Scene.textMuted, modifier = Modifier.semantics { heading() })
+/**
+ * The 사용자 title row's tag: what the car is doing ([statusPillInfo], the header pill's words and tone, read at [now] by the
+ * driving screen's rule), so 자동 기록 대기 stands right of 사용자 as the user asked. Its own polite live region: TalkBack
+ * announces a recording that starts or stops without a touch.
+ */
+@Composable private fun StatusTag(state: TripLogState, now: Long) {
+    val overview = drivingOverviewInfo(state, now, true, zone)
+    val (label, tone) = statusPillInfo(state, overview.fresh, overview.status)
+    CarTag(label, tone = tone, live = true)
+}
 
-/** The card when there is nobody to show: the label, what is missing, and the one action that fixes it. */
-@Composable private fun NowCardPrompt(title: String, detail: String?, action: String, onAction: () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        NowCardLabel()
-        Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Scene.text)
-        detail?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary) }
-        PrimaryAction(action, Modifier.fillMaxWidth().padding(top = 4.dp), onClick = onAction)
+/**
+ * The card when there is nobody to show: the person glyph beside what is missing (and, for no 직원 at all, one [line] that
+ * TalkBack hears as [spoken]), then the one action that fixes it across the card.
+ */
+@Composable private fun NowCardPrompt(title: String, line: String?, spoken: String?, action: String, onAction: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            DriverAvatar(null, 56.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Scene.text)
+                line?.let { CarLine(it, spoken = spoken) }
+            }
+        }
+        PrimaryAction(action, Modifier.fillMaxWidth(), onClick = onAction)
     }
 }
 
