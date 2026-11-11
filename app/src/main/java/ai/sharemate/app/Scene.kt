@@ -6,6 +6,8 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
@@ -20,6 +22,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -351,8 +357,25 @@ internal fun sceneModeHint(mode: SceneMode, phase: ScenePhase, morning: Boolean 
 }
 
 /**
- * The settings row for the scene, shared by the car (설정 › 화면) and the phone (설정): a segmented 자동 · 낮 · 밤 with one line
- * under it, which on the car says so while the light sensor holds the night scene ([LocalSceneVeto]).
+ * The car's 화면 밝기 card says the scene in a few words at the end of its title row (2.12, pure, unit-tested): what the screen
+ * is now under 자동 ("지금 낮 화면", "지금 해 뜰 무렵"), why while the light sensor holds it at night ("어두운 곳이라 밤 화면":
+ * the sensor fires in car parks as well as tunnels), or the fixed choice ("항상 낮 화면"). At most ten syllables and no 요, as
+ * it is a state, not a sentence; TalkBack reads the full [sceneModeHint] in its place. Same cases as [sceneModeHint].
+ */
+internal fun sceneStateLine(mode: SceneMode, phase: ScenePhase, morning: Boolean = false, vetoed: Boolean = false): String = when (mode) {
+    SceneMode.AUTO -> when {
+        vetoed -> "어두운 곳이라 밤 화면"
+        phase == ScenePhase.DAY -> "지금 낮 화면"
+        phase == ScenePhase.DUSK -> if (morning) "지금 해 뜰 무렵" else "지금 해 질 무렵"
+        else -> "지금 밤 화면"
+    }
+    SceneMode.DAY -> "항상 낮 화면"
+    SceneMode.NIGHT -> "항상 밤 화면"
+}
+
+/**
+ * The phone's settings row for the scene (설정): a segmented 자동 · 낮 · 밤 with one line under it. The car draws [CarSceneCard]
+ * instead (2.12), so this card is the phone's alone; it still reads [LocalSceneVeto], which only the car's theme raises.
  */
 @Composable internal fun SceneModeCard(modifier: Modifier = Modifier, compact: Boolean = false) {
     val context = LocalContext.current
@@ -366,6 +389,34 @@ internal fun sceneModeHint(mode: SceneMode, phase: ScenePhase, morning: Boolean 
         }
         // A change of phase recomposes the card, so the clock is read again then; sunrise and sunset never share a side of noon.
         Muted(sceneModeHint(mode, phase, morning = LocalDateTime.now().hour < 12, vetoed = vetoed))
+    }
+}
+
+/**
+ * 화면 밝기, the car's scene card (2.12; 설정 › 기록, as in the mock): the title with the sun, the state at the end of its row
+ * ([sceneStateLine]; TalkBack reads the full [sceneModeHint], which also says what comes next), and 자동 · 낮 · 밤 as three
+ * separate pills with their icons, radio buttons in one group. The chosen pill swaps at once: the scene's fade-through that
+ * follows a choice is the motion. Replaces [SceneModeCard] on the car, whose hint line under the control leaves the view.
+ */
+@Composable internal fun CarSceneCard(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val mode = rememberSceneMode()
+    val phase = LocalScenePhase.current
+    val vetoed = LocalSceneVeto.current
+    // A change of phase recomposes the card, so the clock is read again then; sunrise and sunset never share a side of noon.
+    val morning = LocalDateTime.now().hour < 12
+    val state = sceneStateLine(mode, phase, morning, vetoed)
+    val hint = sceneModeHint(mode, phase, morning, vetoed)
+    val icons = listOf(painterResource(R.drawable.ic_bolt), painterResource(R.drawable.ic_sun), painterResource(R.drawable.ic_moon))
+    CarCard(modifier, title = {
+        CarSectionTitle(SettingsCopy.SCENE_TITLE, icon = painterResource(R.drawable.ic_sun)) {
+            Text(state, style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.semantics { contentDescription = hint })
+        }
+    }) {
+        Segmented(SceneMode.entries.map { it.label }, SceneMode.entries.indexOf(mode), icons = icons, separated = true) {
+            ScenePrefs.set(context, SceneMode.entries[it])
+        }
     }
 }
 

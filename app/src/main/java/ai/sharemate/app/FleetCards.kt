@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -547,17 +548,26 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
     }
 }
 
-/** Settings for the hands-off behaviour: the switch and which cards count as the company's. */
+/**
+ * Which card payments the car takes, as the saved [cards] stand (2.12, pure, unit-tested): with none registered only those it
+ * recognises as fuel, charging, tolls or parking; with some, only theirs ("등록한 카드 2장의 결제만 받아요").
+ */
+internal fun cardRegistryLine(cards: List<String>): String =
+    if (cards.isEmpty()) "카드 미등록 · 주유·충전·통행료·주차 결제만 받아요" else "등록한 카드 ${cards.size}장의 결제만 받아요"
+
+/**
+ * 설정 › 기록's 자동 완성 card (2.12): which cards count as the company's. One line says what the saved cards mean
+ * ([cardRegistryLine]); TalkBack hears the whole of it instead ([SettingsCopy.SPOKEN_CARDS]). Then the field, its error and
+ * 카드 저장, the card's one solid action. The switch itself is 기록 및 개인정보's.
+ */
 @Composable internal fun AutopilotSettings(saved: FleetProfile, act: Act, repository: TripLogRepository, field: @Composable (String, (String) -> Unit) -> Unit) {
     var cards by rememberSaveable(saved.cards) { mutableStateOf(saved.cards.joinToString(", ")) }
     val parsed = cards.split(',', ' ').map { it.trim() }.filter { it.isNotEmpty() }
     val valid = parsed.size <= 10 && parsed.all { it.matches(Regex("[0-9]{4}")) }
-    Panel {
-        Eyebrow("자동 완성")
-        Muted("반복 도착지는 목적을 스스로 채우고, 휴대폰이 받은 카드 승인을 차량 기록과 맞춰 비용에 넣습니다. 자동으로 들어간 항목은 ‘자동 분류’·‘카드 자동 매칭’으로 표시되고 언제든 고칠 수 있어요.")
+    CarCard(title = { CarSectionTitle(SettingsCopy.AUTOFILL_TITLE, icon = painterResource(R.drawable.ic_autofill)) }) {
+        CarLine(cardRegistryLine(saved.cards), spoken = SettingsCopy.SPOKEN_CARDS)
         field(cards) { value -> if (value.length <= 60 && value.all { it.isDigit() || it == ',' || it == ' ' }) cards = value }
-        if (!valid) Text("끝 4자리 숫자를 쉼표로 구분해 입력해 주세요.", color = Scene.negative, style = MaterialTheme.typography.bodyMedium)
-        Muted("등록하면 다른 카드의 알림은 무시하고, 가맹점 이름만으로 알 수 없는 결제도 차량 기록과 맞춰 봅니다. 등록하지 않으면 주유·충전·통행료·주차로 확인되는 결제만 받습니다.")
+        if (!valid) Text(SettingsCopy.CARDS_ERROR, color = Scene.negative, style = MaterialTheme.typography.bodyMedium)
         PrimaryAction("카드 저장", Modifier.fillMaxWidth(), enabled = valid && parsed != saved.cards) { act { repository.updateProfile(saved.copy(cards = parsed)) } }
     }
 }

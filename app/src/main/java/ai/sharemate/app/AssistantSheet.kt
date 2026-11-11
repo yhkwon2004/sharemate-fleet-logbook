@@ -51,6 +51,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -493,33 +494,26 @@ internal fun AssistantBody(
 // ───────────────────────── 홈·설정 진입점 ─────────────────────────
 
 /**
- * Replaces the old Gleo preview card: the same three phrases, but each one now does something. Tapping a phrase opens
- * the sheet with the words already in the field ([onOpenWith]); the button opens it empty. [compact] (the window) sets
- * the padding and how many phrases show; the device sets the targets, so a narrow car window keeps 56-dp chips and the
- * 64-dp button.
+ * 운행 비서 in 설정 › 기록 (2.12; the car is its only caller): three of the phrases the sheet understands, each a chip that
+ * opens it with the words already in the field ([onOpenWith]; TalkBack names that action), and 운행 비서 열기, the card's one
+ * solid action, which opens it empty. The title carries what the assistant is ([ASSISTANT_LABEL], a tag that wraps under the
+ * title at a large font). The last row is the ⓘ of how it works today ([ASSISTANT_NOTE]); unfolded, where Gleo's voice
+ * stands. [compact] (below EXPANDED) shows two phrases; chips and the button are 56-dp targets in every window.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AssistantPreviewCard(compact: Boolean, onOpen: () -> Unit, modifier: Modifier = Modifier, onOpenWith: ((String) -> Unit)? = null) {
-    val car = LocalLayout.current.startAnchored
-    val tap = assistantTapTarget(car, compact).coerceAtMost(56.dp)
-    Panel(modifier, padding = if (compact) 20.dp else 28.dp) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(ASSISTANT_TITLE, style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
-            Surface(shape = RoundedCornerShape(10.dp), color = Scene.fill, contentColor = Scene.textSecondary, border = BorderStroke(1.dp, Scene.divider)) {
-                Text(ASSISTANT_LABEL, style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-        }
-        Text("말하듯 적으면 운행 목적을 기록하고 비용을 더하고 이달을 요약해요.", style = MaterialTheme.typography.bodyLarge)
+    CarCard(modifier, title = {
+        CarSectionTitle(ASSISTANT_TITLE, icon = painterResource(R.drawable.ic_assistant)) { CarTag(ASSISTANT_LABEL) }
+    }) {
+        CarLine(SettingsCopy.ASSISTANT_LINE)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             (if (compact) ASSISTANT_EXAMPLES.take(2) else ASSISTANT_EXAMPLES).forEach { phrase ->
-                PromptChip("“$phrase”", tap, enabled = true) { onOpenWith?.invoke(phrase) ?: onOpen() }
+                CarExampleChip("“$phrase”", onClick = { onOpenWith?.invoke(phrase) ?: onOpen() }, actionLabel = SettingsCopy.ASSISTANT_CHIP_ACTION)
             }
         }
-        Muted("$ASSISTANT_NOTE · Gleo 음성 연동은 승인 후 같은 세 동작으로 이어져요.")
-        if (compact && !car) FilledTonalButton(onClick = onOpen, Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = RoundedCornerShape(16.dp)) { Text("운행 비서 열기") }
-        else PrimaryAction("운행 비서 열기", Modifier.fillMaxWidth(), onClick = onOpen)
+        PrimaryAction("운행 비서 열기", Modifier.fillMaxWidth(), onClick = onOpen)
+        CarInfoRow(ASSISTANT_NOTE, more = SettingsCopy.ASSISTANT_MORE)
     }
 }
 

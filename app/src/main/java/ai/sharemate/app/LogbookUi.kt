@@ -42,6 +42,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.AccountBox
+import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -59,6 +61,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -1971,18 +1974,21 @@ internal fun settingsFieldColumns(layout: LayoutTokens, fontScale: Float): Int =
 
 /**
  * How many cards a 설정 section sets side by side (pure, unit-tested): two from EXPANDED up while the [page] keeps 760 dp of
- * effective width (its width ÷ the font scale), so 2 × 544 at FULL and still two at a 1.3× font (1046 ÷ 1.3 = 805); one
- * below that, in the 720-dp form column.
+ * effective width (its width ÷ the font scale) and is at least 984 dp wide, so 2 × 544 at FULL (a line beside a switch gets
+ * 368 dp) and still two at a 1.3× font (1046 ÷ 1.3 = 805; 2 × 513); one below that, in the 720-dp form column. The 984-dp
+ * floor (2.12) sends the 1296–1400-dp windows beside the 지금 column (pages of 780–884 dp) to one column, where two up would
+ * leave a line beside a switch less than about 306 dp.
  */
 internal fun settingsCardColumns(layout: LayoutTokens, page: Dp, fontScale: Float): Int =
-    if (layout.expanded && page / fontScale.coerceAtLeast(1f) >= 760.dp) 2 else 1
+    if (layout.expanded && page / fontScale.coerceAtLeast(1f) >= 760.dp && page >= 984.dp) 2 else 1
 
 /**
- * 설정: four sub-tabs as 56-dp text tabs (max 960) over the section, which scrolls under them. Where the page has room
- * ([settingsCardColumns]) a section's cards sit two up, each with its fields in one column: the profile beside 차량 관리
- * 기한, 정산·세무 beside this month's settlement at the saved rate, the scene and privacy cards beside 자동 완성, the
- * assistant and the SDK note; 직원 takes the whole page. Otherwise one form column at the start of the page (max 720), with
- * fields paired from EXPANDED at the normal font ([settingsFieldColumns]). 화면 분위기 leads 기록. The shell holds the
+ * 설정 (2.12): the four sub-tabs as the car's segmented bar across the whole page, as in the mock, over the section, which
+ * scrolls under them. Every card is a [CarCard]. Where the page has room ([settingsCardColumns]) a section's cards sit two
+ * up, each with its fields in one column: the profile beside 차량 관리 기한, 정산·세무 beside this month's settlement at the
+ * saved rate, 화면 밝기 above 기록 및 개인정보 beside 자동 완성 above 운행 비서; 직원 takes the whole page. Otherwise one form
+ * column at the start of the page (max 720), in the same order, with fields paired from EXPANDED at the normal font
+ * ([settingsFieldColumns]). The PLEOS SDK card of 2.11 is gone: its facts are an ⓘ row of 기록 및 개인정보. The shell holds the
  * [section], so a button that opens 설정 on one lands there and the header's tab returns to the last one.
  */
 @Composable private fun SettingsPane(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, section: Int, onSection: (Int) -> Unit,
@@ -2007,31 +2013,25 @@ internal fun settingsCardColumns(layout: LayoutTokens, page: Dp, fontScale: Floa
         val drivers: @Composable () -> Unit = { DriversCard(state.data, act, repository, pairFields) }
         val costs: @Composable () -> Unit = {
             SideBySide(twoUp, gap, { modifier -> CostCard(state.data.profile, act, repository, showInfo, modifier, twoColumns) }) { modifier ->
-                SettlementCard(monthTrips, state.data, modifier)
+                SettlementCard(monthTrips, state.data, modifier, period = SettingsCopy.SETTLEMENT_PERIOD)
             }
         }
         val privacy: @Composable () -> Unit = {
             SideBySide(twoUp, gap, { modifier ->
                 Column(modifier, verticalArrangement = Arrangement.spacedBy(gap)) {
                     // The scene choice leads the section: it is the one setting a driver changes on the spot.
-                    SceneModeCard()
+                    CarSceneCard()
                     PrivacyCard(state.data.profile, act, repository, onTutorial)
                 }
             }) { modifier ->
                 Column(modifier, verticalArrangement = Arrangement.spacedBy(gap)) {
                     AutopilotSettings(state.data.profile, act, repository) { value, change -> Field("법인카드 끝 4자리 (쉼표로 구분)", value, change, number = true, done = true, hint = "예: 1234, 5678") }
                     AssistantPreviewCard(compact = !layout.expanded, onOpen = { onAssistant(null) }, onOpenWith = { phrase -> onAssistant(phrase) })
-                    Panel {
-                        Eyebrow("PLEOS SDK / 필요한 신호만 사용", Scene.brand)
-                        Text("${state.signal.label} · 기어·누적거리·충전상태·배터리·VIN", style = MaterialTheme.typography.titleMedium)
-                        Muted("Vehicle SDK로 거리·배터리·VIN을, AAOS로 기어와 충전 상태를 읽습니다. NaviHelper 주소는 수신한 경우에만 기록합니다.")
-                        Muted("권한·미지원·수신 지연은 확인 필요로 표시합니다. 차량 제어와 내비 목적지 변경은 하지 않습니다.")
-                    }
                 }
             }
         }
         Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Segmented(listOf("법인·차량", "직원", "정산·세무", "기록"), section, Modifier.widthIn(max = 960.dp)) { onSection(it) }
+            Segmented(SettingsCopy.SECTIONS, section, Modifier.fillMaxWidth()) { onSection(it) }
             Crossfade(section, Modifier.weight(1f).fillMaxWidth(), animationSpec = pageFade(), label = "settings-section") { page ->
                 sections.SaveableStateProvider(page) {
                     // Two up, the cards share the page; one up, a form column at the start of the page, 720 at most. The section
@@ -2048,6 +2048,10 @@ internal fun settingsCardColumns(layout: LayoutTokens, page: Dp, fontScale: Floa
     }
 }
 
+/**
+ * 법인·차량 정보 (2.12): the company and the car as the logbook's header cells carry them, saved together. One line says where
+ * they go; 차량에서 가져오기 offers the model the car reports when it differs from the typed one.
+ */
 @Composable private fun ProfileCard(state: TripLogState, act: Act, repository: TripLogRepository, showInfo: (String) -> Unit, modifier: Modifier = Modifier,
     twoColumns: Boolean = false) {
     val saved = state.data.profile
@@ -2057,10 +2061,8 @@ internal fun settingsCardColumns(layout: LayoutTokens, page: Dp, fontScale: Floa
     var plate by rememberSaveable(saved.plateNumber) { mutableStateOf(saved.plateNumber) }
     val numberError = if (number.isNotBlank() && !BUSINESS_NUMBER.matches(number.trim())) "000-00-00000 형식으로 입력해 주세요" else null
     val vehicleModel = state.vehicleModel?.takeIf { it.isNotBlank() && it != "시연 차량" }
-    Panel(modifier) {
-        Eyebrow("FLEET PROFILE", Scene.brand)
-        Text("운행일지의 기본 정보", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
-        Muted("한 번 저장하면 이후 운행과 Excel에 함께 사용합니다.")
+    CarCard(modifier, title = { CarSectionTitle(SettingsCopy.PROFILE_TITLE, icon = rememberVectorPainter(Icons.Outlined.AccountBox)) }) {
+        CarLine(SettingsCopy.PROFILE_LINE)
         // 법인명 and 사업자등록번호 pair up only when the form has two columns ([settingsFieldColumns]).
         SideBySide(twoColumns, 16.dp, { field -> Field("법인명", company, { if (it.length <= 60) company = it }, field) }) { field ->
             Field("사업자등록번호", number, { value -> if (value.length <= 12 && value.all { it.isDigit() || it == '-' }) number = value }, field,
@@ -2072,10 +2074,10 @@ internal fun settingsCardColumns(layout: LayoutTokens, page: Dp, fontScale: Floa
         }
         Field("② 자동차등록번호", plate, { if (it.length <= 20) plate = it }, done = true, hint = "예: 123가 4567")
         val changed = company != saved.companyName || number != saved.businessNumber || model != saved.carModel || plate != saved.plateNumber
-        PrimaryAction(if (changed) "변경 내용 저장" else "저장된 정보", Modifier.fillMaxWidth(), enabled = changed && numberError == null) {
+        PrimaryAction(if (changed) SettingsCopy.PROFILE_SAVE else SettingsCopy.PROFILE_SAVED, Modifier.fillMaxWidth(), enabled = changed && numberError == null) {
             act {
                 repository.updateProfile(saved.copy(companyName = company.trim(), businessNumber = number.trim(), carModel = model.trim(), plateNumber = plate.trim()))
-                showInfo("법인·차량 정보를 저장했어요.")
+                showInfo(SettingsCopy.PROFILE_DONE)
             }
         }
     }
@@ -2086,54 +2088,67 @@ internal fun settingsCardColumns(layout: LayoutTokens, page: Dp, fontScale: Floa
     DriverManager(data, act, repository, twoColumns = twoColumns)
 }
 
+/**
+ * 정산·세무 기준 (2.12): the km rate the settlement applies and the car's yearly cost the tax note compares. The yearly cost's
+ * hint says what the sum covers while the field is empty, where 2.11 had a paragraph under the form.
+ */
 @Composable private fun CostCard(saved: FleetProfile, act: Act, repository: TripLogRepository, showInfo: (String) -> Unit, modifier: Modifier = Modifier,
     twoColumns: Boolean = false) {
     var rate by rememberSaveable(saved.reimbursePerKmWon) { mutableStateOf(saved.reimbursePerKmWon.takeIf { it > 0 }?.toString().orEmpty()) }
     var cost by rememberSaveable(saved.annualCostWon) { mutableStateOf(saved.annualCostWon?.toString().orEmpty()) }
     val updated = saved.copy(reimbursePerKmWon = rate.toLongOrNull() ?: 0, annualCostWon = cost.toLongOrNull())
     val validation = runCatching { validateProfile(updated) }.exceptionOrNull()?.message
-    Panel(modifier) {
-        Eyebrow("정산·세무", Scene.brand)
+    CarCard(modifier, title = { CarSectionTitle(SettingsCopy.COST_TITLE, icon = painterResource(R.drawable.ic_tune)) }) {
         SideBySide(twoColumns, 16.dp, { field -> Field("유류비 정산 단가 (km당)", rate, { if (it.length <= 6 && it.all(Char::isDigit)) rate = it }, field, number = true, suffix = "원",
             hint = rate.toLongOrNull()?.let(::formatWon) ?: "회사에서 정한 km당 단가") }) { field ->
-            Field("연간 차량 관련 비용", cost, { if (it.length <= 11 && it.all(Char::isDigit)) cost = it }, field, number = true, suffix = "원", done = true, hint = cost.toLongOrNull()?.let(::formatWon))
+            Field("연간 차량 관련 비용", cost, { if (it.length <= 11 && it.all(Char::isDigit)) cost = it }, field, number = true, suffix = "원", done = true,
+                hint = cost.toLongOrNull()?.let(::formatWon) ?: SettingsCopy.COST_HINT)
         }
         validation?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
-        Muted("연간 비용은 감가상각비(또는 리스·렌트료), 유류비, 보험료, 자동차세, 수선비, 통행료 등의 합계입니다.")
         val changed = (rate.toLongOrNull() ?: 0) != saved.reimbursePerKmWon || cost.toLongOrNull() != saved.annualCostWon
-        PrimaryAction("변경 내용 저장", Modifier.fillMaxWidth(), enabled = changed && validation == null) {
+        PrimaryAction(if (changed) SettingsCopy.COST_SAVE else SettingsCopy.COST_SAVED, Modifier.fillMaxWidth(), enabled = changed && validation == null) {
             act {
                 repository.updateProfile(updated)
-                showInfo("정산·세무 기준을 저장했어요.")
+                showInfo(SettingsCopy.COST_DONE)
             }
         }
     }
 }
 
+/**
+ * 기록 및 개인정보 (2.12, as in the mock): 시연 체험 다시보기 as a link in the title row, then the four switches, each on its icon
+ * disc with one line (TalkBack hears the long form) and a hairline above it, and two ⓘ rows: where the records live, and which
+ * car signals are read (the facts of 2.11's PLEOS SDK card). Turning 시연 모드 off also stops the demo drive.
+ */
 @Composable private fun PrivacyCard(saved: FleetProfile, act: Act, repository: TripLogRepository, onTutorial: () -> Unit = {}) {
-    Panel {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Eyebrow("기록 방식·개인정보", Scene.brand)
-            Spacer(Modifier.weight(1f))
-            TextButton(onClick = onTutorial, modifier = Modifier.heightIn(min = 56.dp)) { Text("시연 체험 다시 보기") }
-        }
-        SwitchRow("출발·도착 주소 저장", "끄면 계기판 거리와 시각만 남기고 내비 주소는 저장하지 않아요.", saved.storeAddresses) { value ->
+    // The rows carry their own 8-dp padding and a hairline between them, so the card's blocks sit closer than its default 16.
+    CarCard(gap = 4.dp, title = {
+        CarSectionTitle(SettingsCopy.PRIVACY_TITLE, icon = painterResource(R.drawable.ic_journal)) { CarLink(SettingsCopy.TUTORIAL_LINK, onClick = onTutorial) }
+    }) {
+        CarDivider()
+        SwitchRow(SettingsCopy.ADDRESS_TITLE, SettingsCopy.ADDRESS_LINE, saved.storeAddresses, icon = rememberVectorPainter(Icons.Outlined.LocationOn),
+            spoken = SettingsCopy.SPOKEN_ADDRESS) { value ->
             act { repository.updateProfile(saved.copy(storeAddresses = value)) }
         }
         // 출발 전 운전자 확인 lives with the people it asks about, in 설정 › 직원 (DriverManager), since 2.11.
-        SwitchRow("자동 완성 · 기본 켜짐", "반복 도착지의 목적과 카드 결제 비용을 사람 손 없이 채웁니다. 자동으로 들어간 항목은 ‘자동 분류’·‘카드 자동 매칭’으로 표시되고 언제든 되돌릴 수 있어요. 끄면 정차 후 직접 확인해요.", saved.autopilot) { value ->
+        CarDivider()
+        SwitchRow(SettingsCopy.AUTOPILOT_TITLE, SettingsCopy.AUTOPILOT_LINE, saved.autopilot, icon = painterResource(R.drawable.ic_bolt),
+            spoken = SettingsCopy.SPOKEN_AUTOPILOT) { value ->
             act { repository.updateProfile(saved.copy(autopilot = value)) }
         }
-        SwitchRow("휴대폰 실시간 연동", "같은 Wi-Fi·핫스팟의 휴대폰 SHAREMATE와 암호화 연결로 운행·경비·특이사항을 실시간 공유해요. 휴대폰에서 바꾼 내용은 ‘휴대폰’ 출처로 차량에 기록돼요.", saved.phoneSync) { value ->
+        CarDivider()
+        SwitchRow(SettingsCopy.PHONE_SYNC_TITLE, SettingsCopy.PHONE_SYNC_LINE, saved.phoneSync, icon = painterResource(R.drawable.ic_phone),
+            spoken = SettingsCopy.SPOKEN_PHONE_SYNC) { value ->
             act { repository.updateProfile(saved.copy(phoneSync = value)) }
         }
-        SwitchRow("시연 모드", "실제 차량 대신 15배속 시연 주행으로 기록해요. 시연 기록은 따로 표시되고 실제 기록과 섞이지 않아요.", saved.demoMode) { value ->
+        CarDivider()
+        SwitchRow(SettingsCopy.DEMO_TITLE, SettingsCopy.DEMO_LINE, saved.demoMode, icon = painterResource(R.drawable.ic_clock), spoken = SettingsCopy.SPOKEN_DEMO) { value ->
             if (!value) { DemoDrive.setMoving(false); DemoDrive.setCharging(false) }
             act { repository.updateProfile(saved.copy(demoMode = value)) }
         }
-        HorizontalDivider(color = Scene.divider)
-        Muted("기록은 이 차량의 앱 저장소에 보관되고 백업·외부 서버로 전송하지 않아요. 내비 주소는 초기 연결, 출발·주차 전환과 운행 중에 조회하며 저장 여부는 위 설정을 따릅니다.")
-        Muted("Gleo 음성 연동은 심사·호출자 검증 후 제공 예정입니다. 운행 목적과 비용은 정차 후 화면에서 기록해 주세요.")
+        CarDivider()
+        CarInfoRow(SettingsCopy.STORAGE_INFO, more = SettingsCopy.STORAGE_MORE)
+        CarInfoRow(SettingsCopy.SIGNALS_INFO, more = SettingsCopy.SIGNALS_MORE)
     }
 }
 

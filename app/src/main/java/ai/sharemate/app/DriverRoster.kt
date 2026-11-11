@@ -82,6 +82,14 @@ internal fun driverHistoryLine(trips: Int, lastAt: Long?, now: Long, zone: ZoneI
     return "운행 ${trips}건 · 마지막 운행 ${driveDate(Instant.ofEpochMilli(lastAt).atZone(zone).toLocalDate(), today)}"
 }
 
+/**
+ * A person's one line in 설정 › 직원 (2.12), in the list and under the editor's name: the department, then the record
+ * ([driverHistoryLine]), "Sales · 운행 12건 · 마지막 운행 11월 8일" or "영업1팀 · 운행 기록 없음"; a blank department is left
+ * out. Data, so a long one may ellipsise on the row; TalkBack reads it whole.
+ */
+internal fun driverListLine(driver: Driver, trips: Int, lastAt: Long?, now: Long, zone: ZoneId): String =
+    listOf(driver.department.trim(), driverHistoryLine(trips, lastAt, now, zone)).filter { it.isNotBlank() }.joinToString(" · ")
+
 private fun driveDate(date: LocalDate, today: LocalDate): String =
     if (date.year == today.year) "${date.monthValue}월 ${date.dayOfMonth}일" else "${date.year}년 ${date.monthValue}월 ${date.dayOfMonth}일"
 
