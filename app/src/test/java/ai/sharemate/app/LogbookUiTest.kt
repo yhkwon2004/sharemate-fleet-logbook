@@ -174,17 +174,18 @@ class LogbookUiTest {
     }
 
     @Test fun theTaxCardNamesTheYearItReads() {
-        assertEquals("비용 참고 · 올해 업무사용비율 기준", taxEyebrow(2026, reportToday))
-        assertEquals("비용 참고 · 2025년 업무사용비율 기준", taxEyebrow(2025, reportToday))
+        // 2.12: the year rides in a tag beside the title 비용 참고.
+        assertEquals("올해 업무사용비율 기준", taxBasis(2026, reportToday))
+        assertEquals("2025년 업무사용비율 기준", taxBasis(2025, reportToday))
     }
 
     @Test fun theTaxCardAsksForTheCostOnlyWhenItIsMissing() {
-        val ask = "연간 차량 비용을 입력하면 운행기록부의 효과를 계산해요"
+        val ask = "연간 차량 비용을 입력하면 계산해요"
         assertEquals(ask, taxCardBlocker(null, .8, 2026, reportToday))
         assertEquals("비용이 없으면 운행이 없어도 비용부터", ask, taxCardBlocker(null, null, 2025, reportToday))
         // A year without trips has no ratio, and no setting fixes that: the card names the year instead of asking for the cost again.
-        assertEquals("비용이 있으면 운행 없는 해라고 말함", "2025년 운행 기록이 없어 업무사용비율을 계산할 수 없어요", taxCardBlocker(15_000_000, null, 2025, reportToday))
-        assertEquals("올해 운행 기록이 없어 업무사용비율을 계산할 수 없어요", taxCardBlocker(15_000_000, null, 2026, reportToday))
+        assertEquals("비용이 있으면 운행 없는 해라고 말함", "2025년 운행이 없어 비율을 계산할 수 없어요", taxCardBlocker(15_000_000, null, 2025, reportToday))
+        assertEquals("올해 운행이 없어 비율을 계산할 수 없어요", taxCardBlocker(15_000_000, null, 2026, reportToday))
         assertNull("비용과 비율이 있으면 계산함", taxCardBlocker(15_000_000, .8, 2025, reportToday))
     }
 

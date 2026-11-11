@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,8 +13,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -29,6 +34,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -39,6 +48,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import java.time.Instant
 import java.time.LocalDate
@@ -139,6 +149,29 @@ internal fun monthCloseFootnote(status: MonthStatus, today: LocalDate): String =
     status.trips == 0 -> "운행이 기록되면 여기서 마감할 수 있어요."
     else -> "남은 확인 ${status.issues}건을 끝내면 마감 버튼이 열려요."
 }
+
+/**
+ * The one note of 월간·Excel's close card (2.12, pure, unit-tested), as a line and what an ⓘ row folds under it: with
+ * nothing to fold it is a plain line. A closed month counts its edits after the close; a closed month without edits, and a
+ * month ready to close, say once that a close locks nothing. A past month without trips needs no close. Otherwise null:
+ * step ④ already says what the close waits for, and TalkBack hears it on the button ([monthCloseFootnote]).
+ */
+internal fun monthCloseNote(status: MonthStatus, today: LocalDate, edited: Int): Pair<String, List<String>>? = when {
+    status.closed != null && edited > 0 -> "마감 후 수정 ${edited}건 · 운행기록에 표시돼요" to emptyList()
+    status.closed != null || status.ready -> ReportCopy.CLOSE_NOTE to listOf(ReportCopy.CLOSE_NOTE_MORE)
+    status.trips == 0 && status.month < YearMonth.from(today) -> ReportCopy.CLOSE_NOTHING to emptyList()
+    else -> null
+}
+
+/** The least effective width (dp ÷ font scale) at which the close card sets its four steps side by side. */
+private val CLOSE_STEPS_ACROSS_MIN = 980.dp
+
+/**
+ * Whether the close card sets its four steps across (pure, unit-tested): where its [content] width keeps 980 dp at the font
+ * scale (a page-wide card at FULL, 1064 dp, or beside no column, 1056), each step a column of about 250 dp. Narrower, or at a
+ * large font, they stack as rows.
+ */
+internal fun closeStepsAcross(content: Dp, fontScale: Float): Boolean = content / fontScale.coerceAtLeast(1f) >= CLOSE_STEPS_ACROSS_MIN
 
 internal fun closedStamp(at: Long, zone: ZoneId = ZoneId.systemDefault()): String =
     Instant.ofEpochMilli(at).atZone(zone).let { "%d/%d %02d:%02d".format(it.monthValue, it.dayOfMonth, it.hour, it.minute) }
@@ -293,4 +326,145 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
             Text(if (busy) "저장 중…" else step.action)
         }
     }
+}
+
+// ───────────────────────── 월간·Excel 마감 카드 (2.12) ─────────────────────────
+
+/**
+ * 월간·Excel's month card (2.12) in the car's one-line look; the home keeps [MonthClosePanel]. The title counts the month's
+ * trips and, once it is closed, carries a 마감됨 tag; then the headline and the completion bar (keyed for this card alone, so
+ * the home card's sweep never carries over). A closed month shows its three figures, the note and 마감 해제 · Excel 저장. An
+ * open one shows the four steps ([monthCloseSteps]): across where the card has the room ([closeStepsAcross]), as rows
+ * otherwise; under them the note and the close button, which is solid only when the month is ready and tells TalkBack what
+ * it waits for while it is not ([monthCloseFootnote]). One note at most ([monthCloseNote]): what the old paragraphs added sits
+ * behind its ⓘ. A past month without trips offers 이전 달 보기 where [onPrevious] is given.
+ */
+@Composable internal fun ReportCloseCard(status: MonthStatus, onIssues: () -> Unit, onReviews: () -> Unit, onExport: () -> Unit, exporting: Boolean,
+    act: Act, repository: TripLogRepository, modifier: Modifier = Modifier, editedAfterClose: Int = 0, today: LocalDate = LocalDate.now(zone),
+    onPrevious: (() -> Unit)? = null) {
+    val followUp = LocalFollowUp.current
+    val name = monthLabel(status.month, today)
+    val key = monthKey(status.month)
+    val closed = status.closed
+    val percent = status.percent
+    // The bar sweeps from the previous value to the new one (spec C); TalkBack hears the real figure.
+    val progress = sweepProgress((percent ?: 0) / 100f, key = "report-close-bar")
+    val note = monthCloseNote(status, today, editedAfterClose)
+    CarCard(modifier, title = {
+        CarSectionTitle("월 마감 · ${status.trips}건", icon = rememberVectorPainter(Icons.Outlined.CheckCircle),
+            trailing = if (closed != null) { { CarTag("마감됨 · ${closedDay(closed.closedAt)}", tone = PillTone.POSITIVE) } } else null)
+    }) {
+        Text(monthCloseHeadline(status, today), style = MaterialTheme.typography.headlineMedium, color = Scene.text, modifier = Modifier.semantics { heading() })
+        if (percent != null) LinearProgressIndicator(progress = { progress.value }, modifier = Modifier.fillMaxWidth().height(10.dp)
+            .semantics { contentDescription = "완성률 ${percent}퍼센트" }, color = Scene.positive, trackColor = Scene.ringTrack, drawStopIndicator = {})
+        if (closed != null) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                CarMiniStat(painterResource(R.drawable.ic_vehicle), "운행", "${closed.trips}건", Modifier.weight(1f))
+                CarMiniStat(painterResource(R.drawable.ic_gauge), "총주행", kmText(closed.totalKm), Modifier.weight(1f))
+                CarMiniStat(painterResource(R.drawable.ic_won), "경비", formatWon(closed.expenseWon), Modifier.weight(1f))
+            }
+            note?.let { CloseNote(it) }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                QuietAction("마감 해제", Modifier.weight(1f)) {
+                    act {
+                        repository.reopenMonth(key)
+                        followUp(FollowUp("$name 마감을 해제했어요", "다시 마감") { repository.closeMonth(key) })
+                    }
+                }
+                QuietAction(if (exporting) "저장 중…" else "Excel 저장", Modifier.weight(1f), enabled = !exporting && excelSaveAvailable(status.trips), onClick = onExport)
+            }
+        } else {
+            val steps = monthCloseSteps(status)
+            val actions = listOf(onIssues, onReviews, onExport, null)
+            val fontScale = LocalDensity.current.fontScale
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                if (closeStepsAcross(maxWidth, fontScale)) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    steps.forEachIndexed { index, step -> StepCell(index + 1, step, exporting && index == 2, actions[index], Modifier.weight(1f)) }
+                } else Column(Modifier.fillMaxWidth()) {
+                    steps.forEachIndexed { index, step ->
+                        // The rule starts where the text does: the 32-dp disc and its 12-dp gap.
+                        if (index > 0) CarDivider(Modifier.padding(start = 44.dp))
+                        StepLine(index + 1, step, exporting && index == 2, actions[index])
+                    }
+                }
+            }
+            val close: @Composable (Modifier) -> Unit = { place ->
+                LoadingAction("$name 마감", "마감 중…", act, place.widthIn(min = 240.dp).semantics {
+                    if (!status.ready) stateDescription = monthCloseFootnote(status, today)
+                }, enabled = status.ready) {
+                    repository.closeMonth(key)
+                    followUp(FollowUp("${name}을 마감했어요", "마감 해제") { repository.reopenMonth(key) })
+                }
+            }
+            // The note and the button share a row; a narrow card (under 560 dp, as the home's daily question) stacks them.
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                if (maxWidth >= 560.dp) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Box(Modifier.weight(1f).heightIn(min = 56.dp), contentAlignment = Alignment.CenterStart) { note?.let { CloseNote(it) } }
+                    close(Modifier)
+                } else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    note?.let { CloseNote(it) }
+                    close(Modifier.fillMaxWidth())
+                }
+            }
+            // A month without trips has nothing to finish here; the way on is the month before it.
+            if (status.trips == 0) onPrevious?.let { QuietAction("이전 달 보기", onClick = it) }
+        }
+    }
+}
+
+/** The close card's note ([monthCloseNote]): a plain line, or an ⓘ row when it folds a longer form. */
+@Composable private fun CloseNote(note: Pair<String, List<String>>) {
+    val (line, more) = note
+    if (more.isEmpty()) CarLine(line) else CarInfoRow(line, more = more)
+}
+
+/** What TalkBack says of a step's state, as on the home card: 완료, 대기 (nothing to act on yet), 선택 (Excel) or 남음. */
+private fun closeStepState(step: CloseStep): String = when { step.done -> "완료"; step.idle -> "대기"; step.optional -> "선택"; else -> "남음" }
+
+/** What TalkBack reads for a step: its number, its label and its detail, in one node. */
+private fun closeStepSpoken(number: Int, step: CloseStep): String = "${number}단계, ${step.label}, ${step.detail}"
+
+/** A step's detail in the scene's negative while it still waits on the driver (an action that is not optional), else muted. */
+@Composable private fun closeStepDetailColor(step: CloseStep): Color =
+    if (!step.done && !step.optional && step.action != null) Scene.negative else Scene.textMuted
+
+/**
+ * A step's disc (2.12): done, the scene's positive with a check in the scheme's text for it (6.21 / 7.44); otherwise the icon
+ * disc with the number in text, a quieter number while the step is idle. Decorative: the step's node says the number.
+ */
+@Composable private fun StepDisc(number: Int, step: CloseStep) {
+    Box(Modifier.size(32.dp).clip(CircleShape).background(if (step.done) Scene.positive else Car.skin.disc), contentAlignment = Alignment.Center) {
+        Text(if (step.done) "✓" else number.toString(), style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center,
+            color = when { step.done -> MaterialTheme.colorScheme.onTertiary; step.idle -> Scene.textSecondary; else -> Scene.text },
+            modifier = Modifier.clearAndSetSemantics {})
+    }
+}
+
+/**
+ * One step of four across ([closeStepsAcross]): the disc beside the label, the detail under the label ([CarLine]) and the
+ * step's action as a pill under that. The words are one node with the step's state; the pill keeps its own.
+ */
+@Composable private fun StepCell(number: Int, step: CloseStep, busy: Boolean, onAction: (() -> Unit)?, modifier: Modifier = Modifier) {
+    val action = step.action
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = closeStepSpoken(number, step); stateDescription = closeStepState(step) },
+            verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                StepDisc(number, step)
+                Spacer(Modifier.width(10.dp))
+                Text(step.label, style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            // Under the label, not the disc: 32 dp of disc and 10 of gap.
+            CarLine(step.detail, Modifier.padding(start = 42.dp), color = closeStepDetailColor(step))
+        }
+        if (action != null && onAction != null) CarPillButton(if (busy) "저장 중…" else action, onAction, Modifier.padding(start = 42.dp), enabled = !busy)
+    }
+}
+
+/** One step as a row ([CarRow]) where the four do not fit across: the disc as its lead, the action as a pill at its end. */
+@Composable private fun StepLine(number: Int, step: CloseStep, busy: Boolean, onAction: (() -> Unit)?) {
+    val action = step.action
+    CarRow(step.label, line = step.detail, lead = { StepDisc(number, step) }, lineColor = closeStepDetailColor(step),
+        state = closeStepState(step), spoken = closeStepSpoken(number, step),
+        trailing = if (action != null && onAction != null) { { CarPillButton(if (busy) "저장 중…" else action, onAction, enabled = !busy) } } else null)
 }

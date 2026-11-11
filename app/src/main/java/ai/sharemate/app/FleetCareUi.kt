@@ -2,8 +2,8 @@ package ai.sharemate.app
 
 import androidx.core.content.edit
 import android.content.Context
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,14 +18,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
@@ -37,15 +38,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.text.SimpleDateFormat
@@ -261,106 +262,136 @@ internal fun careLevelState(level: CareLevel) = when (level) { CareLevel.OVERDUE
 
 // ───────────────────────── 차량 탭 ─────────────────────────
 
+/** The odometer the care card names beside its title (2.12): not yet received, the live value, or the last one received. */
+private fun careOdometerTag(odometer: Double?, fresh: Boolean): String = when {
+    odometer == null -> "계기판 수신 전"
+    fresh -> "계기판 ${kmLabel(odometer)}"
+    else -> "계기판 ${kmLabel(odometer)} · 마지막 수신값"
+}
+
 /**
- * The car's own care page: one row per configured deadline, the service interval as a bar from the last service to the
- * next at the odometer the car reports, and the recent maintenance with a way to add or remove a record (undo in the bar).
+ * The car's deadlines (2.12; the maintenance records have their own card, [MaintenanceCard]): the odometer the car trusts as a
+ * tag beside the title, then one row per configured deadline, the service interval with a bar from the last service to the
+ * next. Without one it says so in one line and offers 기한 입력하기 where [goSettings] is given.
  */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable internal fun VehicleCareCard(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, modifier: Modifier = Modifier, goSettings: (() -> Unit)? = null) {
-    val data = state.data
-    val care = data.care
-    val followUp = LocalFollowUp.current
+@Composable internal fun VehicleCareCard(state: TripLogState, now: Long, modifier: Modifier = Modifier, goSettings: (() -> Unit)? = null) {
+    val care = state.data.care
     val (odometer, fresh) = careOdometer(state, now)
     val today = localDate(now)
     val alerts = remember(care, odometer, today) { careAlerts(care, odometer, today) }
-    val all = data.maintenance.filter { it.demo == data.profile.demoMode }
-    val records = all.sortedByDescending { it.at }.take(5)
-    var adding by rememberSaveable { mutableStateOf(false) }
-    Panel(modifier, padding = LocalLayout.current.panelPadding) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Eyebrow("차량 관리")
-            Spacer(Modifier.weight(1f))
-            Text(when { odometer == null -> "계기판 수신 전"; fresh -> "계기판 ${kmLabel(odometer)}"; else -> "계기판 ${kmLabel(odometer)} · 마지막 수신값" },
-                style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
+    CarCard(modifier, title = {
+        CarSectionTitle(VehicleCopy.CARE_TITLE, icon = painterResource(R.drawable.ic_calendar), trailing = { CarTag(careOdometerTag(odometer, fresh)) })
+    }) {
         if (alerts.isEmpty()) {
-            Text(if (care.serviceIntervalKm != null && care.lastServiceKm != null && odometer == null) "정비 주기는 계기판 값을 받으면 계산해요" else "등록된 기한이 없어요", style = MaterialTheme.typography.titleSmall)
-            Muted("설정 › 법인·차량에 검사·보험·리스 기한과 정비 주기를 적어 두면 30일 전부터 여기와 홈에서 알려요. 등록된 날짜 기준이에요.")
+            Text(if (care.serviceIntervalKm != null && care.lastServiceKm != null && odometer == null) VehicleCopy.CARE_WAITING else VehicleCopy.CARE_EMPTY,
+                style = MaterialTheme.typography.titleSmall, color = Scene.text)
+            CarLine(VehicleCopy.CARE_LINE)
             goSettings?.let { QuietAction("기한 입력하기", onClick = it) }
-        }
-        alerts.forEach { alert -> CareAlertRow(alert, care, odometer) }
-        HorizontalDivider(color = Scene.divider)
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Eyebrow("정비 기록 · ${all.size}건")
-            Spacer(Modifier.weight(1f))
-            TextButton(onClick = { adding = !adding }, modifier = Modifier.heightIn(min = 56.dp)) { Text(if (adding) "닫기" else "정비 기록 추가") }
-        }
-        if (adding) MaintenanceForm(odometer, act, repository) { adding = false }
-        if (records.isEmpty()) Muted("정비 기록이 없어요. 정비소에서 법인카드로 결제하면 자동으로 들어오고, 직접 추가할 수도 있어요.")
-        records.forEach { record ->
-            MaintenanceRow(record) {
-                act {
-                    repository.removeMaintenance(record.id)
-                    followUp(FollowUp("${record.kind.label} 기록을 삭제했어요", "실행 취소") {
-                        repository.addMaintenance(record.kind, record.amountWon, record.merchant, record.note, record.odometerKm, record.source)
-                    })
-                }
+        } else Column {
+            alerts.forEachIndexed { index, alert ->
+                if (index > 0) CarDivider()
+                CareAlertRow(alert, care, odometer)
             }
         }
-        if (all.size > records.size) Muted("최근 5건만 표시해요. 전체 기록은 Excel 차량관리 시트에 들어가요.")
     }
 }
 
+/**
+ * One deadline as a [CarRow]: its level as a 12-dp dot (overdue in the negative, soon in warn, room to spare in positive) and
+ * in words for TalkBack ([careLevelState]); an overdue title takes the negative too. The service interval adds its bar under
+ * the row, starting where the text does.
+ */
 @Composable private fun CareAlertRow(alert: CareAlert, care: VehicleCare, odometer: Double?) {
     val color = careLevelColor(alert.level)
     val progress = if (alert.kind == CareKind.SERVICE) serviceProgress(care, odometer) else null
-    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).semantics(mergeDescendants = true) { stateDescription = careLevelState(alert.level) },
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        Box(Modifier.size(12.dp).clip(CircleShape).background(color))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(alert.title, style = MaterialTheme.typography.titleSmall, color = if (alert.level == CareLevel.OVERDUE) color else Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(alert.detail, style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (progress != null) {
-                val percent = (progress * 100).roundToInt()
-                // The bar sweeps from the previous value to the new one (spec C); the figure TalkBack hears is the real one. Keyed, so
-                // coming back to the 차량 tab shows it at its value instead of sweeping again from empty.
-                val shown = sweepProgress(progress, key = "vehicle-care-service")
-                LinearProgressIndicator(progress = { shown.value }, modifier = Modifier.fillMaxWidth().height(8.dp).padding(top = 2.dp)
-                    .semantics { contentDescription = "정비 주기 ${percent}퍼센트 사용" },
-                    color = color, trackColor = Scene.ringTrack, drawStopIndicator = {})
-            }
+    Column {
+        CarRow(alert.title, line = alert.detail, lead = { Box(Modifier.size(12.dp).clip(CircleShape).background(color)) },
+            titleColor = if (alert.level == CareLevel.OVERDUE) color else Scene.text, state = careLevelState(alert.level))
+        if (progress != null) {
+            val percent = (progress * 100).roundToInt()
+            // The bar sweeps from the previous value to the new one (spec C); the figure TalkBack hears is the real one. Keyed, so
+            // coming back to the 차량 tab shows it at its value instead of sweeping again from empty.
+            val shown = sweepProgress(progress, key = "vehicle-care-service")
+            LinearProgressIndicator(progress = { shown.value }, modifier = Modifier.padding(start = 36.dp, bottom = 12.dp).fillMaxWidth().height(8.dp)
+                .semantics { contentDescription = "정비 주기 ${percent}퍼센트 사용" },
+                color = color, trackColor = Scene.ringTrack, drawStopIndicator = {})
         }
     }
 }
 
+/**
+ * The maintenance records (2.12, split from 차량 관리): the count as a tag and 추가 / 닫기 beside the title, the form inline while
+ * it is open, then the five latest records, each removable with undo in the bar. Card payments at a garage arrive by
+ * themselves; the rest is in the Excel 차량관리 sheet.
+ */
+@Composable internal fun MaintenanceCard(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, modifier: Modifier = Modifier) {
+    val data = state.data
+    val followUp = LocalFollowUp.current
+    val (odometer, _) = careOdometer(state, now)
+    val all = data.maintenance.filter { it.demo == data.profile.demoMode }
+    val records = all.sortedByDescending { it.at }.take(5)
+    var adding by rememberSaveable { mutableStateOf(false) }
+    CarCard(modifier, title = {
+        CarSectionTitle(VehicleCopy.MAINTENANCE_TITLE, icon = rememberVectorPainter(Icons.Outlined.Build), trailing = {
+            CarTag("${all.size}건")
+            CarPillButton(if (adding) "닫기" else "추가", { adding = !adding }, description = if (adding) "정비 기록 입력 닫기" else "정비 기록 추가")
+        })
+    }) {
+        if (adding) {
+            MaintenanceForm(odometer, act, repository) { adding = false }
+            CarDivider()
+        }
+        if (records.isEmpty()) CarLine(VehicleCopy.MAINTENANCE_EMPTY)
+        else Column {
+            records.forEachIndexed { index, record ->
+                if (index > 0) CarDivider()
+                MaintenanceRow(record) {
+                    act {
+                        repository.removeMaintenance(record.id)
+                        followUp(FollowUp("${record.kind.label} 기록을 삭제했어요", "실행 취소") {
+                            repository.addMaintenance(record.kind, record.amountWon, record.merchant, record.note, record.odometerKm, record.source)
+                        })
+                    }
+                }
+            }
+        }
+        if (all.size > records.size) CarLine(VehicleCopy.MAINTENANCE_MORE)
+    }
+}
+
+/** One record as a [CarRow]: date · kind · amount over its details, and 삭제 in the negative, which names the record for TalkBack. */
 @Composable private fun MaintenanceRow(record: MaintenanceRecord, onDelete: () -> Unit) {
     val detail = listOfNotNull(record.odometerKm?.let(::kmLabel), record.merchant, record.note.ifBlank { null },
         if (record.source == EditSource.CARD) "카드 자동 매칭" else if (record.source == EditSource.PHONE) "휴대폰" else null).joinToString(" · ")
-    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text("${shortDate(record.at)} · ${record.kind.label} · ${if (record.amountWon == 0L) "금액 없음" else formatWon(record.amountWon)}",
-                style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (detail.isNotBlank()) Text(detail, style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        TextButton(onClick = onDelete, modifier = Modifier.heightIn(min = 56.dp).semantics { contentDescription = "${shortDate(record.at)} ${record.kind.label} 기록 삭제" }) {
-            Text("삭제", color = Scene.negative)
-        }
-    }
+    CarRow("${shortDate(record.at)} · ${record.kind.label} · ${if (record.amountWon == 0L) "금액 없음" else formatWon(record.amountWon)}",
+        line = detail.ifBlank { null }, trailing = {
+            CarPillButton("삭제", onDelete, color = Scene.negative, description = "${shortDate(record.at)} ${record.kind.label} 기록 삭제")
+        })
 }
 
-/** A 56-dp choice chip: the chosen one carries the scene's selection fill, its 1.5 dp ring and the glow label, never colour alone. */
+/**
+ * A maintenance kind (2.12): a 46-dp stadium in a 56-dp target, a radio button of the form's group. The chosen one is filled
+ * with the accent (the label in onAccent, 4.93; the press darkens the fill under it), the others are outlined with the chip
+ * border. The swap is instant; the press settles to .98.
+ */
 @Composable private fun ChoiceChip(label: String, active: Boolean, onClick: () -> Unit) {
-    val source = remember { MutableInteractionSource() }
-    Surface(Modifier.heightIn(min = 56.dp).carTap(source, role = Role.RadioButton, onClick = onClick).semantics { selected = active },
-        shape = RoundedCornerShape(16.dp), color = if (active) Scene.selectionFill else Scene.fill, contentColor = if (active) Scene.glow else Scene.text,
-        border = if (active) BorderStroke(1.5.dp, Scene.selectionRing) else Scene.edge) {
-        Box(Modifier.heightIn(min = 56.dp).padding(horizontal = 18.dp), contentAlignment = Alignment.Center) {
-            Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
-        }
+    val skin = Car.skin
+    val interaction = remember { MutableInteractionSource() }
+    val shape = RoundedCornerShape(50)
+    Box(Modifier.pressable(interaction, .98f)
+        .selectable(selected = active, interactionSource = interaction, indication = null, role = Role.RadioButton, onClick = onClick)
+        .padding(vertical = 5.dp).heightIn(min = 46.dp).clip(shape), contentAlignment = Alignment.Center) {
+        Box(Modifier.matchParentSize().then(if (active) Modifier.background(skin.accent) else Modifier.border(1.dp, skin.chipBorder, shape))
+            .pressFill(interaction, if (active) skin.pressOnAccent else Scene.fill))
+        Text(label, Modifier.padding(horizontal = 18.dp), style = MaterialTheme.typography.labelLarge, color = if (active) skin.onAccent else Scene.text, maxLines = 1)
     }
 }
 
-/** Kind first (seven chips, one row or two), then amount, merchant and note; the odometer is prefilled from the car. */
+/**
+ * The record form, inline in [MaintenanceCard] (2.12): the kind first (seven radio chips, one row or two), then amount and
+ * odometer (prefilled from the car), merchant and note. While 엔진오일·소모품 is chosen one line says that it also moves the
+ * last service.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable private fun MaintenanceForm(odometer: Double?, act: Act, repository: TripLogRepository, done: () -> Unit) {
     val followUp = LocalFollowUp.current
@@ -371,37 +402,35 @@ internal fun careLevelState(level: CareLevel) = when (level) { CareLevel.OVERDUE
     var km by rememberSaveable(odometer) { mutableStateOf(odometer?.let { String.format(Locale.US, "%.0f", it) }.orEmpty()) }
     val amountError = amount.toLongOrNull()?.takeIf { it > 10_000_000 }?.let { "1,000만 원까지 입력할 수 있어요" }
     val kmError = careKmError(km)
-    Surface(shape = RoundedCornerShape(20.dp), color = Scene.rail, contentColor = Scene.text, border = Scene.edge) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("어떤 정비였나요?", style = MaterialTheme.typography.titleSmall)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                MaintenanceKind.values().forEach { option -> ChoiceChip(option.label, option == kind) { kind = option } }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Field("금액", amount, { if (it.length <= 8 && it.all(Char::isDigit)) amount = it }, Modifier.weight(1f), number = true, suffix = "원",
-                    hint = amount.toLongOrNull()?.let(::formatWon) ?: "보증·무상이면 비워 두세요", error = amountError)
-                Field("계기판", km, { if (it.length <= 9 && it.all { c -> c.isDigit() || c == '.' }) km = it }, Modifier.weight(1f), number = true, suffix = "km",
-                    hint = if (odometer != null) "차량 수신값" else "선택", error = kmError)
-            }
-            Field("업체 (선택)", merchant, { if (it.length <= 60) merchant = it }, hint = "예: 블루핸즈 판교점")
-            Field("메모 (선택)", note, { if (it.length <= 300) note = it }, done = true, hint = "예: 앞 타이어 2본 교체")
-            if (kind == MaintenanceKind.OIL) Muted("엔진오일·소모품 기록은 마지막 정비 계기판 값을 함께 갱신해요.")
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                PrimaryAction("기록 추가", Modifier.weight(1f), enabled = amountError == null && kmError == null) {
-                    val won = amount.toLongOrNull() ?: 0L
-                    val chosen = kind; val shop = merchant; val memo = note; val odo = km.toDoubleOrNull()
-                    act {
-                        val previousCare = repository.state.value.data.care
-                        val record = repository.addMaintenance(chosen, won, shop.ifBlank { null }, memo, odo)
-                        followUp(FollowUp("${chosen.label} 기록을 추가했어요", "실행 취소") {
-                            repository.removeMaintenance(record.id)
-                            if (chosen == MaintenanceKind.OIL) repository.updateCare(previousCare)
-                        })
-                    }
-                    amount = ""; merchant = ""; note = ""; done()
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text(VehicleCopy.MAINTENANCE_KIND, style = MaterialTheme.typography.titleSmall, color = Scene.text)
+        FlowRow(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            MaintenanceKind.entries.forEach { option -> ChoiceChip(option.label, option == kind) { kind = option } }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Field("금액", amount, { if (it.length <= 8 && it.all(Char::isDigit)) amount = it }, Modifier.weight(1f), number = true, suffix = "원",
+                hint = amount.toLongOrNull()?.let(::formatWon) ?: "보증·무상이면 비워 두세요", error = amountError)
+            Field("계기판", km, { if (it.length <= 9 && it.all { c -> c.isDigit() || c == '.' }) km = it }, Modifier.weight(1f), number = true, suffix = "km",
+                hint = if (odometer != null) "차량 수신값" else "선택", error = kmError)
+        }
+        Field("업체 (선택)", merchant, { if (it.length <= 60) merchant = it }, hint = "예: 블루핸즈 판교점")
+        Field("메모 (선택)", note, { if (it.length <= 300) note = it }, done = true, hint = "예: 앞 타이어 2본 교체")
+        if (kind == MaintenanceKind.OIL) CarLine(VehicleCopy.MAINTENANCE_OIL)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            PrimaryAction("기록 추가", Modifier.weight(1f), enabled = amountError == null && kmError == null) {
+                val won = amount.toLongOrNull() ?: 0L
+                val chosen = kind; val shop = merchant; val memo = note; val odo = km.toDoubleOrNull()
+                act {
+                    val previousCare = repository.state.value.data.care
+                    val record = repository.addMaintenance(chosen, won, shop.ifBlank { null }, memo, odo)
+                    followUp(FollowUp("${chosen.label} 기록을 추가했어요", "실행 취소") {
+                        repository.removeMaintenance(record.id)
+                        if (chosen == MaintenanceKind.OIL) repository.updateCare(previousCare)
+                    })
                 }
-                QuietAction("취소", onClick = done)
+                amount = ""; merchant = ""; note = ""; done()
             }
+            QuietAction("취소", onClick = done)
         }
     }
 }

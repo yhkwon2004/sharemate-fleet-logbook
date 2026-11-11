@@ -44,4 +44,32 @@ class VehiclePaneTest {
         assertFalse(shortNarrow.twoColumn)
         assertEquals(0.dp, shortNarrow.drawingHeight)
     }
+
+    @Test fun theCarCardSaysTheSignalInOneTag() {
+        val footer = "차량에서 받은 정보만 보여요"
+        assertEquals(VehicleHeroCopy("수신 중", PillTone.POSITIVE, "P", footer), vehicleHeroCopy(demo = false, fresh = true, signal = SignalStatus.READY, gear = GearState.PARK))
+        val starting = vehicleHeroCopy(demo = false, fresh = false, signal = SignalStatus.STARTING, gear = null)
+        assertEquals("연결 중" to PillTone.QUIET, starting.tag to starting.tone)
+        val denied = vehicleHeroCopy(demo = false, fresh = false, signal = SignalStatus.DENIED, gear = null)
+        assertEquals("신호의 이름 그대로", "차량 정보 권한 필요" to PillTone.NEGATIVE, denied.tag to denied.tone)
+        // A stale sample: the tag says so, and the gear it last reported is not shown as if it were now.
+        val stale = vehicleHeroCopy(demo = false, fresh = false, signal = SignalStatus.READY, gear = GearState.PARK)
+        assertEquals("확인 필요" to PillTone.NEGATIVE, stale.tag to stale.tone)
+        assertEquals("확인 필요", stale.gear)
+        assertEquals("운행 중 기록 문구는 없음", footer, stale.footer)
+        val demo = vehicleHeroCopy(demo = true, fresh = true, signal = SignalStatus.DEMO, gear = GearState.MOVING)
+        assertEquals("시연 신호" to PillTone.DEMO, demo.tag to demo.tone)
+        assertEquals("D · R · N", demo.gear)
+        assertEquals("시연 신호 · 실제 차량 상태가 아니에요", demo.footer)
+        listOf(footer, demo.footer).forEach { assertOneLine(it, INFO_LINE_UNITS) }
+    }
+
+    @Test fun thePhoneLinkTagSaysWhereTheLinkStands() {
+        assertEquals("꺼짐" to PillTone.QUIET, phoneLinkTag(enabled = false, running = true, error = null, online = true, paired = 2))
+        assertEquals("서버 오류" to PillTone.NEGATIVE, phoneLinkTag(enabled = true, running = false, error = "포트를 열지 못했어요", online = false, paired = 1))
+        assertEquals("준비 중" to PillTone.QUIET, phoneLinkTag(enabled = true, running = false, error = null, online = false, paired = 0))
+        assertEquals("실시간 동기화 중" to PillTone.POSITIVE, phoneLinkTag(enabled = true, running = true, error = null, online = true, paired = 1))
+        assertEquals("대기" to PillTone.READY, phoneLinkTag(enabled = true, running = true, error = null, online = false, paired = 2))
+        assertEquals("연결 전" to PillTone.READY, phoneLinkTag(enabled = true, running = true, error = null, online = false, paired = 0))
+    }
 }
