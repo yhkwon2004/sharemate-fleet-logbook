@@ -9,6 +9,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,8 +25,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -43,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -103,18 +107,28 @@ internal object IntroducedSweeps {
 }
 
 /**
- * [PrimaryAction] that shows progress while [loading]: same 64dp height, a 20dp ring and [loadingLabel] in place of the
- * label. The button is disabled while loading so one tap cannot start the work twice; TalkBack hears the state change.
+ * [PrimaryAction] that shows progress while [loading]: the same 56-dp stadium, a 20-dp ring and [loadingLabel] in place of
+ * the label (and of its optional [icon]). [quiet] gives it [QuietAction]'s outlined look instead of the accent, for a second
+ * save beside a card's primary one. The button is disabled while loading so one tap cannot start the work twice; TalkBack
+ * hears the state change.
  */
 @Composable internal fun LoadingAction(label: String, loading: Boolean, modifier: Modifier = Modifier, loadingLabel: String = "저장 중…",
-    enabled: Boolean = true, onClick: () -> Unit) {
-    Button(onClick = onClick, enabled = enabled && !loading, shape = RoundedCornerShape(20.dp),
-        modifier = modifier.heightIn(min = 64.dp).semantics { if (loading) { stateDescription = "진행 중"; liveRegion = LiveRegionMode.Polite } },
-        contentPadding = PaddingValues(horizontal = 28.dp, vertical = 14.dp)) {
+    enabled: Boolean = true, icon: Painter? = null, quiet: Boolean = false, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val press = if (isCar()) Modifier.pressable(interaction, .98f) else Modifier
+    val active = enabled && !loading
+    Button(onClick = onClick, enabled = active, shape = RoundedCornerShape(50), interactionSource = interaction,
+        colors = if (quiet) quietActionColors(interaction, MaterialTheme.colorScheme.onSurface) else primaryActionColors(interaction),
+        border = if (quiet) quietActionBorder(active) else null, elevation = if (quiet) null else ButtonDefaults.buttonElevation(),
+        modifier = modifier.then(press).heightIn(min = 56.dp).semantics { if (loading) { stateDescription = "진행 중"; liveRegion = LiveRegionMode.Polite } },
+        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (loading) {
                 ActivityMark(size = 20.dp)
                 Spacer(Modifier.width(12.dp))
+            } else if (icon != null) {
+                Icon(icon, contentDescription = null, Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
             }
             Text(if (loading) loadingLabel else label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
         }
@@ -126,10 +140,10 @@ internal object IntroducedSweeps {
  * button shows [loadingLabel] until it finishes. For work that is over in a few milliseconds the ring never has time to show.
  */
 @Composable internal fun LoadingAction(label: String, loadingLabel: String, act: Act, modifier: Modifier = Modifier, enabled: Boolean = true,
-    block: suspend () -> Unit) {
+    icon: Painter? = null, quiet: Boolean = false, block: suspend () -> Unit) {
     var loading by remember { mutableStateOf(false) }
     val latest by rememberUpdatedState(block)
-    LoadingAction(label, loading, modifier, loadingLabel, enabled) {
+    LoadingAction(label, loading, modifier, loadingLabel, enabled, icon, quiet) {
         if (!loading) {
             loading = true
             act { try { latest() } finally { loading = false } }

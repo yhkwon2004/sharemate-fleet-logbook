@@ -38,6 +38,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.AlertDialogDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -99,18 +100,22 @@ import java.util.UUID
 // ───────────────────────── 아바타 ─────────────────────────
 
 /**
- * A person's avatar: their [driverMonogram] in bold [Scene.text] on the rail colour, inside the glass edge or, with [ring],
- * the 1.5-dp selection ring. The letters take titleMedium from 48 dp up and labelLarge below, and step down only where they
- * would not fit the disc (two Hangul syllables at a 1.3× font are wider than 40 dp). Decorative: the card or row around it
- * names the person. A null [driver] shows the dash.
+ * A person's avatar (2.12): their [driverMonogram] in bold [Scene.text] on the car's disc (14.80 / 13.26), with no edge, or
+ * with [ring] the 1.5-dp selection ring. The letters take titleMedium from 48 dp up and labelLarge below, and step down only
+ * where they would not fit the disc (two Hangul syllables at a 1.3× font are wider than 40 dp). Nobody (a null [driver], or
+ * a person without a name) is the person glyph at 45 % of the disc in the icon ink, where 2.11 showed a dash: initials always
+ * mean someone. Decorative: the card or row around it names the person.
  */
 @Composable internal fun DriverAvatar(driver: Driver?, size: Dp, modifier: Modifier = Modifier, ring: Boolean = false) {
     val style = if (size >= 48.dp) MaterialTheme.typography.titleMedium else MaterialTheme.typography.labelLarge
     val ink = Scene.text
-    Box(modifier.size(size).clip(CircleShape).background(Scene.rail)
-        .border(if (ring) BorderStroke(1.5.dp, Scene.selectionRing) else Scene.edge, CircleShape)
+    val skin = Car.skin
+    val monogram = driver?.name?.takeIf { it.isNotBlank() }?.let(::driverMonogram)
+    Box(modifier.size(size).clip(CircleShape).background(skin.disc)
+        .then(if (ring) Modifier.border(BorderStroke(1.5.dp, Scene.selectionRing), CircleShape) else Modifier)
         .padding(horizontal = size * .14f).clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
-        BasicText(driverMonogram(driver?.name.orEmpty()), style = style.copy(fontWeight = FontWeight.Bold, lineHeight = TextUnit.Unspecified, textAlign = TextAlign.Center),
+        if (monogram == null) Icon(Icons.Outlined.Person, contentDescription = null, Modifier.size(size * .45f), tint = skin.icon)
+        else BasicText(monogram, style = style.copy(fontWeight = FontWeight.Bold, lineHeight = TextUnit.Unspecified, textAlign = TextAlign.Center),
             color = { ink }, softWrap = false, maxLines = 1, autoSize = TextAutoSize.StepBased(minFontSize = 8.sp, maxFontSize = style.fontSize, stepSize = .5.sp))
     }
 }

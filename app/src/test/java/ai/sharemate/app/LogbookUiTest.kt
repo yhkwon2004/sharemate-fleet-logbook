@@ -26,7 +26,7 @@ class LogbookUiTest {
 
     @Test fun statusPillPutsFailuresFirstThenWhatTheCarIsDoing() {
         val ready = TripLogState(loaded = true, signal = SignalStatus.READY)
-        assertEquals("자동 기록 대기" to PillTone.QUIET, statusPillInfo(ready, fresh = true, status = "수신 중"))
+        assertEquals("자동 기록 대기" to PillTone.READY, statusPillInfo(ready, fresh = true, status = "수신 중"))
         assertEquals("저장 실패가 가장 먼저", "기록 저장 확인 필요" to PillTone.NEGATIVE, statusPillInfo(ready.copy(error = "disk"), fresh = true, status = "수신 중"))
         assertEquals("기록 저장 확인 필요" to PillTone.NEGATIVE, statusPillInfo(ready.copy(loadFailed = true), fresh = true, status = "수신 중"))
         assertEquals(SignalStatus.DENIED.label to PillTone.NEGATIVE, statusPillInfo(ready.copy(signal = SignalStatus.DENIED), fresh = true, status = "수신 중"))

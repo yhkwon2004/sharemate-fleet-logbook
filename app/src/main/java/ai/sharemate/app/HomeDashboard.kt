@@ -49,6 +49,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -124,12 +126,18 @@ internal fun Modifier.reportBounds(bounds: ItemBounds, index: Int): Modifier = o
     if (bounds[index] != rect) bounds[index] = rect
 }
 
-/** How [selectionGlide] marks the chosen item: the lit pill (selection fill and ring), or a glow underline (the sheet tabs). */
-internal enum class GlideMark { PILL, UNDERLINE }
+/**
+ * How [selectionGlide] marks the chosen item: the lit pill (selection fill and ring), a glow underline (the sheet tabs), or
+ * the car's solid accent stadium (2.12: the header tabs and the car's segments), whose covered label turns to onAccent.
+ */
+internal enum class GlideMark { PILL, UNDERLINE, SOLID }
 
 /** The underline mark: 3 dp of glow, inset 16 dp from each side of the chosen item. */
 private val UNDERLINE_THICKNESS = 3.dp
 private val UNDERLINE_INSET = 16.dp
+
+/** The solid mark: a 46-dp stadium centred in the 56-dp item, the pill of the mock's selected tab. */
+private val SOLID_HEIGHT = 46.dp
 
 /**
  * Where the underline mark sits under an item with [bounds]: [thickness] high along its bottom edge, centred, inset by [inset]
@@ -141,18 +149,13 @@ internal fun underlineBar(bounds: Rect, thickness: Float, inset: Float): Rect {
 }
 
 /**
- * The mark behind the selected item of a tab row or a segmented control, drawn at the selected item's measured bounds: the
- * lit pill (the selection fill and a 1.5 dp ring, never colour alone), or with [GlideMark.UNDERLINE] a 3-dp glow underline
- * (a shape, so never colour alone either). On a change it glides from the old item to the new one in [durationMs]
- * (FastOutSlowIn); the first placement and reduced motion snap. Apply it after the row's padding (or its scroll), so the
- * drawing and the reported bounds share one coordinate space.
+ * Where the selection mark of a tab row or a segmented control stands: the measured bounds of the [selected] item, gliding
+ * there from the old item in [durationMs] (FastOutSlowIn) on a change; the first placement and reduced motion snap. Null
+ * until that item has been measured. The rect moves on every frame of a glide, so read it where it is drawn ([drawGlide]) or
+ * through a `derivedStateOf` ([glideCovers]), never straight in composition.
  */
-@Composable internal fun Modifier.selectionGlide(bounds: ItemBounds, selected: Int, durationMs: Int = MOTION_PAGE_MS, ringWidth: Dp = 1.5.dp, corner: Dp? = null,
-    mark: GlideMark = GlideMark.PILL): Modifier {
+@Composable internal fun rememberGlideRect(bounds: ItemBounds, selected: Int, durationMs: Int): State<Rect?> {
     val reduce = LocalReduceMotion.current
-    val fill = Scene.selectionFill
-    val ring = Scene.selectionRing
-    val glow = Scene.glow
     val target = bounds[selected]
     val rect = remember { Animatable(Rect.Zero, Rect.VectorConverter) }
     var placed by remember { mutableStateOf(false) }
@@ -160,18 +163,38 @@ internal fun underlineBar(bounds: Rect, thickness: Float, inset: Float): Rect {
         val next = target ?: return@LaunchedEffect
         if (!placed || reduce) { rect.snapTo(next); placed = true } else rect.animateTo(next, tween(durationMs, easing = FastOutSlowInEasing))
     }
+    val visible = rememberUpdatedState(target != null)
+    return remember { derivedStateOf { if (placed && visible.value) rect.value else null } }
+}
+
+/**
+ * Draws the selection mark at [glide] ([rememberGlideRect]) behind the row's items: the lit pill (the selection fill and a
+ * [ringWidth] ring, never colour alone), with [GlideMark.UNDERLINE] a 3-dp underline in [underlineColor] (a shape, so never
+ * colour alone either), or with [GlideMark.SOLID] the car's accent as a 46-dp stadium centred in the item, on which the
+ * covered label turns to onAccent ([glideCovers]). Only the draw reads the rect, so a glide redraws the row and recomposes
+ * nothing. Apply it after the row's padding (or its scroll), so the drawing and the reported bounds share one coordinate space.
+ */
+@Composable internal fun Modifier.drawGlide(glide: State<Rect?>, mark: GlideMark, ringWidth: Dp = 1.5.dp, corner: Dp? = null,
+    underlineColor: Color = Scene.glow): Modifier {
+    val fill = Scene.selectionFill
+    val ring = Scene.selectionRing
+    val solid = Car.skin.accent
     val density = LocalDensity.current
     val stroke = with(density) { ringWidth.toPx() }
     val radius = corner?.let { with(density) { it.toPx() } }
     val thickness = with(density) { UNDERLINE_THICKNESS.toPx() }
     val inset = with(density) { UNDERLINE_INSET.toPx() }
-    val visible = target != null
+    val solidHeight = with(density) { SOLID_HEIGHT.toPx() }
     return drawBehind {
-        if (!placed || !visible) return@drawBehind
-        val r = rect.value
+        val r = glide.value ?: return@drawBehind
         if (mark == GlideMark.UNDERLINE) {
             val bar = underlineBar(r, thickness, inset)
-            drawRoundRect(glow, bar.topLeft, bar.size, CornerRadius(thickness / 2, thickness / 2))
+            drawRoundRect(underlineColor, bar.topLeft, bar.size, CornerRadius(thickness / 2, thickness / 2))
+            return@drawBehind
+        }
+        if (mark == GlideMark.SOLID) {
+            val height = solidHeight.coerceAtMost(r.height)
+            drawRoundRect(solid, Offset(r.left, r.center.y - height / 2), Size(r.width, height), CornerRadius(height / 2, height / 2))
             return@drawBehind
         }
         val round = radius ?: (r.height / 2f)
@@ -182,17 +205,38 @@ internal fun underlineBar(bounds: Rect, thickness: Float, inset: Float): Rect {
 }
 
 /**
- * The press fill of the spec, [Scene.fill] (white by night, navy by day, both a few percent): it shows while the surface is
- * held, 90 ms in and 160 ms out, and stays as the only feedback under reduced motion. Draws over the content, so apply it
- * inside the clipping surface.
+ * The mark behind the selected item of a tab row or a segmented control ([rememberGlideRect] drawn by [drawGlide]): the lit
+ * pill by default, the underline of the sheet tabs in [underlineColor] (the car's sheet tabs take the accent ink), or the
+ * car's solid stadium. A row whose labels follow the mark ([glideCovers]) keeps the rect itself and calls the two directly.
  */
-@Composable internal fun Modifier.pressFill(interactionSource: InteractionSource): Modifier {
+@Composable internal fun Modifier.selectionGlide(bounds: ItemBounds, selected: Int, durationMs: Int = MOTION_PAGE_MS, ringWidth: Dp = 1.5.dp, corner: Dp? = null,
+    mark: GlideMark = GlideMark.PILL, underlineColor: Color = Scene.glow): Modifier =
+    drawGlide(rememberGlideRect(bounds, selected, durationMs), mark, ringWidth, corner, underlineColor)
+
+/**
+ * True while the gliding mark covers at least half of [item]'s width (pure, unit-tested). On the solid mark an item's label
+ * and icon turn to onAccent at that moment, read through `derivedStateOf`, so a glide recomposes each item at most once
+ * instead of recolouring it pixel by pixel on an offscreen layer. A label can read the old colour for at most one glide; at
+ * rest the covered item is exactly the selected one. False until both rects are known.
+ */
+internal fun glideCovers(glide: Rect?, item: Rect?): Boolean {
+    if (glide == null || item == null || item.width <= 0f) return false
+    val overlap = minOf(glide.right, item.right) - maxOf(glide.left, item.left)
+    return overlap >= item.width / 2f
+}
+
+/**
+ * The press fill of the spec, [color] over the content while the surface is held: [Scene.fill] by default (white by night,
+ * navy by day, both a few percent); on an accent fill [CarSkin.pressOnAccent], which darkens it, where the white layer would
+ * bring the white label down to 4.52 by night. It shows 90 ms in and 160 ms out and stays as the only feedback under reduced
+ * motion. Draws over the content, so apply it inside the clipping surface (or under the label, on a layer of its own).
+ */
+@Composable internal fun Modifier.pressFill(interactionSource: InteractionSource, color: Color = Scene.fill): Modifier {
     val pressed by interactionSource.collectIsPressedAsState()
-    val fill = Scene.fill
     val reduce = LocalReduceMotion.current
     val strength by animateFloatAsState(if (pressed) 1f else 0f,
         if (reduce) snap() else if (pressed) tween(90, easing = LinearOutSlowInEasing) else tween(160, easing = FastOutSlowInEasing), label = "press-fill")
-    return drawWithContent { drawContent(); if (strength > 0f) drawRect(fill.copy(alpha = fill.alpha * strength)) }
+    return drawWithContent { drawContent(); if (strength > 0f) drawRect(color.copy(alpha = color.alpha * strength)) }
 }
 
 /** True on the car, where tappable surfaces give no ripple (press feedback is the scale and the fill); the phone keeps Material's. */
@@ -518,8 +562,9 @@ private var homeEntranceDone = false
 /**
  * The drop shadow under a tappable car card: the phone's day shadow ([Scene.shadow], 6 dp, as under its cards). The token is
  * transparent by night, so nothing is drawn there. Put it before the press scale so the card settles inside its shadow.
+ * Shared with the 2.12 [CarCard].
  */
-@Composable private fun Modifier.dayCardShadow(shape: Shape): Modifier {
+@Composable internal fun Modifier.dayCardShadow(shape: Shape): Modifier {
     val tone = Scene.shadow
     if (tone.alpha <= 0f) return this
     // The platform scales shadow colours by its own ambient and spot alphas, so the token's tone goes in at full strength.

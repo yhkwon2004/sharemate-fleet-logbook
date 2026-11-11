@@ -48,6 +48,8 @@ Night accents are never day text (#4CE3F0 1.39, #FFB45C 1.58, #E4BFA6 1.53 vs bg
 
 # B. Layout system
 
+> **2.12:** [DESIGN_2_12_SPEC.md](DESIGN_2_12_SPEC.md) supersedes the car header and the 지금 column below, and the car 월간·Excel, 차량 and 설정 bullets.
+
 Class = `widthDp ÷ max(1, fontScale)` (1680 at 1.3× behaves as EXPANDED, so the five-tab pill never overflows); gutters and maxima in raw dp. Height: tall ≥ 900, medium 600–899, short < 600 (phone landscape 411). 8-dp grid; section gap 32 car / 24 phone; header pill and content share one rail.
 
 | class | width | gutter | content max | alignment | columns · gap |

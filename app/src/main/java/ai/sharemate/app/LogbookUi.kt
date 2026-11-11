@@ -31,6 +31,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -56,6 +58,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -109,6 +112,25 @@ internal val zone: ZoneId get() = ZoneId.systemDefault()
 internal fun hm(at: Long) = SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(at))
 internal fun localDate(at: Long) = Instant.ofEpochMilli(at).atZone(zone).toLocalDate()
 internal fun dayLabel(date: LocalDate) = "${date.monthValue}월 ${date.dayOfMonth}일 (${weekday(date)})"
+
+/** What the header clock shows and says ([headerClock]). */
+@Immutable internal data class ClockText(val date: String, val time: String, val spoken: String)
+
+/**
+ * The header clock at [at] in [zone] (pure, unit-tested): the date as [dayLabel] writes it ("11월 9일 (월)"), the time on the
+ * 24-hour clock with zero-padded hours ("09:05"), and what TalkBack says, in full words rather than digits read one by one
+ * ("11월 9일 월요일 9시 5분"; on the hour the minutes are left out, "0시"). The shell ticks every second, so remember it on
+ * the minute (`now / 60_000`).
+ */
+internal fun headerClock(at: Long, zone: ZoneId): ClockText {
+    val time = Instant.ofEpochMilli(at).atZone(zone)
+    val date = time.toLocalDate()
+    val day = date.dayOfWeek.getDisplayName(java.time.format.TextStyle.FULL, Locale.KOREAN)
+    val minutes = if (time.minute > 0) " ${time.minute}분" else ""
+    return ClockText(dayLabel(date), String.format(Locale.ROOT, "%02d:%02d", time.hour, time.minute),
+        "${date.monthValue}월 ${date.dayOfMonth}일 $day ${time.hour}시$minutes")
+}
+
 internal fun kmText(value: Double) = String.format(Locale.KOREA, "%,.1f km", value)
 internal fun ratioText(ratio: Double?) = ratio?.let { "${(it * 100).roundToInt()}%" } ?: "–"
 internal fun durationText(ms: Long): String {
@@ -558,8 +580,11 @@ internal fun driverChipMode(chipMax: Dp, fontScale: Float): DriverChipMode {
     }
 }
 
-/** The tone of the header pill's dot: a failure or a stale signal, waiting, recording, or demo data. */
-internal enum class PillTone { NEGATIVE, QUIET, POSITIVE, DEMO }
+/**
+ * The tone of a status dot ([pillDotColor]): a failure or a stale signal, waiting (connecting), ready to record (2.12: the
+ * glow dot of 자동 기록 대기, as in the mock), recording, or demo data.
+ */
+internal enum class PillTone { NEGATIVE, QUIET, READY, POSITIVE, DEMO }
 
 /**
  * The header pill's line and tone: a save failure first, then a signal that cannot record, then staleness, then what the
@@ -573,7 +598,7 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
         state.signal == SignalStatus.STARTING -> state.signal.label to PillTone.QUIET
         !fresh && !recording -> status to PillTone.NEGATIVE
         recording -> "기록 중 · ${kmText(state.data.open!!.distanceKm)}" to PillTone.POSITIVE
-        state.signal == SignalStatus.READY -> "자동 기록 대기" to PillTone.QUIET
+        state.signal == SignalStatus.READY -> "자동 기록 대기" to PillTone.READY
         state.signal == SignalStatus.DEMO -> "시연 데이터" to PillTone.DEMO
         else -> state.signal.label to PillTone.NEGATIVE
     }
@@ -584,12 +609,7 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
     val overview = drivingOverviewInfo(state, System.currentTimeMillis(), true, zone)
     val (label, tone) = statusPillInfo(state, overview.fresh, overview.status)
     // A status colour never animates (spec C): a changed state swaps the dot at once, with no tint transition and no pulse.
-    val dot = when (tone) {
-        PillTone.NEGATIVE -> Scene.negative
-        PillTone.QUIET -> Scene.textMuted
-        PillTone.POSITIVE -> Scene.positive
-        PillTone.DEMO -> LocalPleosColors.current.gleoSpeaker
-    }
+    val dot = pillDotColor(tone)
     Surface(shape = RoundedCornerShape(20.dp), color = Scene.glass, border = Scene.edge) {
         // Polite live region: TalkBack announces recording start/stop without the driver touching the screen.
         Row(Modifier.heightIn(min = 56.dp).padding(horizontal = 18.dp).semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
@@ -601,10 +621,19 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
 }
 
 /**
- * Segment control in the same glass as the header tabs: the chosen segment carries the selection fill and ring, and the pill
- * slides to a new choice in 180 ms (a snap under reduced motion). Segments are 56 dp; cap the width with the modifier.
+ * Segment control. On the car (2.12, [isCar]) a stadium on the card colour whose solid accent pill glides to a new choice in
+ * 180 ms (a snap under reduced motion); the label and its optional [icons] turn white as the pill covers them ([glideCovers]).
+ * [separated] lays the choices out as their own 46-dp pills 8 dp apart, radio buttons in one group (자동 · 낮 · 밤), the
+ * chosen one filled with the accent; that swap is instant, because the scene's fade-through that follows is the motion. The
+ * phone draws the glass control of 2.10 (the chosen segment on the selection fill and ring), unchanged: it reaches this
+ * through the phone's scene card. Segments are 56 dp; cap the width with the modifier.
  */
-@Composable internal fun Segmented(labels: List<String>, selected: Int, modifier: Modifier = Modifier, onSelect: (Int) -> Unit) {
+@Composable internal fun Segmented(labels: List<String>, selected: Int, modifier: Modifier = Modifier, icons: List<Painter>? = null,
+    separated: Boolean = false, onSelect: (Int) -> Unit) {
+    if (isCar()) {
+        if (separated) CarSegmentedSeparated(labels, selected, modifier, icons, onSelect) else CarSegmented(labels, selected, modifier, icons, onSelect)
+        return
+    }
     val bounds = rememberItemBounds()
     val noRipple = LocalLayout.current.startAnchored
     val reduce = LocalReduceMotion.current
@@ -618,6 +647,68 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
                     .semantics { this.selected = active; role = Role.Tab }
                     .clickable(interactionSource = interaction, indication = if (noRipple) null else LocalIndication.current) { onSelect(index) }, contentAlignment = Alignment.Center) {
                     Text(label, style = MaterialTheme.typography.labelLarge, color = tint, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 8.dp))
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The car's joined [Segmented]: a stadium on the card with a hairline, the solid accent pill (a 46-dp stadium in each 56-dp
+ * segment) gliding in 180 ms. Each segment reads the glide through `derivedStateOf`, so it recomposes once, when the pill
+ * covers half of it and its label and icon turn to onAccent; at rest that is exactly the chosen one.
+ */
+@Composable private fun CarSegmented(labels: List<String>, selected: Int, modifier: Modifier, icons: List<Painter>?, onSelect: (Int) -> Unit) {
+    val skin = Car.skin
+    val bounds = rememberItemBounds()
+    val glide = rememberGlideRect(bounds, selected, durationMs = 180)
+    Surface(modifier.fillMaxWidth(), shape = RoundedCornerShape(50), color = skin.card, border = BorderStroke(1.dp, skin.cardBorder)) {
+        Row(Modifier.padding(5.dp).drawGlide(glide, GlideMark.SOLID), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            labels.forEachIndexed { index, label ->
+                val active = index == selected
+                val interaction = remember { MutableInteractionSource() }
+                val covered by remember { derivedStateOf { glideCovers(glide.value, bounds[index]) } }
+                Row(Modifier.weight(1f).reportBounds(bounds, index).pressable(interaction, .98f).heightIn(min = 56.dp).clip(RoundedCornerShape(50))
+                    .semantics { this.selected = active; role = Role.Tab }
+                    .clickable(interactionSource = interaction, indication = null) { onSelect(index) }.padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                    icons?.getOrNull(index)?.let { icon ->
+                        Icon(icon, contentDescription = null, Modifier.size(20.dp), tint = if (covered) skin.onAccent else skin.icon)
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(label, style = MaterialTheme.typography.labelLarge, color = if (covered) skin.onAccent else Scene.text, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The car's [Segmented] with [separated] choices (화면 밝기: 자동 · 낮 · 밤): each its own 46-dp pill in a 56-dp target, 8 dp
+ * apart, radio buttons in one selectable group. The chosen one is filled with the accent (onAccent icon and label, darkened
+ * by pressOnAccent while held); the others are outlined with the chip border, the icon in ink and the label in text.
+ */
+@Composable private fun CarSegmentedSeparated(labels: List<String>, selected: Int, modifier: Modifier, icons: List<Painter>?, onSelect: (Int) -> Unit) {
+    val skin = Car.skin
+    Row(modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        labels.forEachIndexed { index, label ->
+            val active = index == selected
+            val interaction = remember { MutableInteractionSource() }
+            val shape = RoundedCornerShape(50)
+            val ink = if (active) skin.onAccent else Scene.text
+            Box(Modifier.weight(1f).pressable(interaction, .98f)
+                .selectable(selected = active, interactionSource = interaction, indication = null, role = Role.RadioButton) { onSelect(index) }
+                .padding(vertical = 5.dp).heightIn(min = 46.dp).clip(shape), contentAlignment = Alignment.Center) {
+                // The fill and its press layer sit under the label, so the press darkens the accent and never the white label on it.
+                Box(Modifier.matchParentSize().then(if (active) Modifier.background(skin.accent) else Modifier.border(1.dp, skin.chipBorder, shape))
+                    .pressFill(interaction, if (active) skin.pressOnAccent else Scene.fill))
+                Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    icons?.getOrNull(index)?.let { icon ->
+                        Icon(icon, contentDescription = null, Modifier.size(20.dp), tint = if (active) skin.onAccent else skin.icon)
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(label, style = MaterialTheme.typography.labelLarge, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -650,10 +741,21 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
 @Composable private fun Modifier.carPress(interaction: MutableInteractionSource): Modifier =
     if (LocalLayout.current.startAnchored) pressable(interaction, .98f) else this
 
-@Composable internal fun PrimaryAction(label: String, modifier: Modifier = Modifier, enabled: Boolean = true, onClick: () -> Unit) {
+/**
+ * A card's one primary action (2.12): a 56-dp stadium in the solid accent, the label (and an optional 20-dp [icon]) in
+ * white, one line. While held it settles to .98 and the accent darkens by pressOnAccent ([primaryActionColors]); disabled it
+ * sits on the chip fill with a textMuted label, so it never reads stronger than an enabled one.
+ */
+@Composable internal fun PrimaryAction(label: String, modifier: Modifier = Modifier, enabled: Boolean = true, icon: Painter? = null, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
-    Button(onClick = onClick, enabled = enabled, modifier = modifier.carPress(interaction).heightIn(min = 64.dp), shape = RoundedCornerShape(20.dp),
-        contentPadding = PaddingValues(horizontal = 28.dp, vertical = 14.dp), interactionSource = interaction) { Text(label, style = MaterialTheme.typography.labelLarge) }
+    Button(onClick = onClick, enabled = enabled, modifier = modifier.carPress(interaction).heightIn(min = 56.dp), shape = RoundedCornerShape(50),
+        colors = primaryActionColors(interaction), contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp), interactionSource = interaction) {
+        if (icon != null) {
+            Icon(icon, contentDescription = null, Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+        }
+        Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
 }
 
 /**
@@ -669,18 +771,17 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
 }
 
 /**
- * A secondary action on the row fill. Disabled, it drops its container and keeps the label at 38 %, so it never reads stronger
- * than an enabled one (Material's disabled container is a darker slab than this light fill). [description] replaces a
- * symbolic label for screen readers.
+ * A secondary action (2.12): a 56-dp outlined stadium, the chip border around a label in [color], no fill but the press fill
+ * while held ([quietActionColors]), so the card's one solid button stays the accent. Disabled, outline and label drop to
+ * 38 %, so it never reads stronger than an enabled one. [description] replaces a symbolic label for screen readers.
  */
 @Composable internal fun QuietAction(label: String, modifier: Modifier = Modifier, enabled: Boolean = true, color: Color = MaterialTheme.colorScheme.onSurface,
     description: String? = null, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
-    FilledTonalButton(onClick = onClick, enabled = enabled, shape = RoundedCornerShape(20.dp), interactionSource = interaction,
-        modifier = modifier.carPress(interaction).heightIn(min = 60.dp).then(if (description != null) Modifier.semantics { contentDescription = description } else Modifier),
-        colors = ButtonDefaults.filledTonalButtonColors(containerColor = LocalPleosColors.current.surfaceHigh, contentColor = color,
-            disabledContainerColor = Color.Transparent, disabledContentColor = color.copy(alpha = .38f)),
-        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp)) {
+    OutlinedButton(onClick = onClick, enabled = enabled, shape = RoundedCornerShape(50), interactionSource = interaction,
+        modifier = modifier.carPress(interaction).heightIn(min = 56.dp).then(if (description != null) Modifier.semantics { contentDescription = description } else Modifier),
+        colors = quietActionColors(interaction, color), border = quietActionBorder(enabled),
+        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp)) {
         Text(label, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center,
             modifier = if (description != null) Modifier.clearAndSetSemantics {} else Modifier)
     }
@@ -1718,9 +1819,10 @@ internal fun taxCardBlocker(cost: Long?, ratio: Double?, year: Int, today: Local
 
 /**
  * The fuel settlement of [trips] at the saved km rate, per employee. Without a rate it asks for one, with 설정에서 입력 where
- * [goSettings] is given; 설정 › 정산·세무 shows it beside the form that sets the rate and passes none.
+ * [goSettings] is given; 설정 › 정산·세무 shows it beside the form that sets the rate and passes none. [period] (2.12) is for
+ * the card's copy: the span the totals cover where the page around it does not say so (설정 passes "이번 달").
  */
-@Composable private fun SettlementCard(trips: List<Trip>, data: TripLogData, modifier: Modifier, goSettings: (() -> Unit)? = null) {
+@Composable private fun SettlementCard(trips: List<Trip>, data: TripLogData, modifier: Modifier, goSettings: (() -> Unit)? = null, period: String? = null) {
     val rate = data.profile.reimbursePerKmWon
     Panel(modifier.fillMaxHeight()) {
         Eyebrow("유류비 정산 · 업무용 거리 × km당 단가", Scene.brand)
@@ -1814,7 +1916,7 @@ internal fun settingsCardColumns(layout: LayoutTokens, page: Dp, fontScale: Floa
             }
         }
         Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Segmented(listOf("법인·차량", "직원", "정산·세무", "기록"), section, Modifier.widthIn(max = 960.dp), onSection)
+            Segmented(listOf("법인·차량", "직원", "정산·세무", "기록"), section, Modifier.widthIn(max = 960.dp)) { onSection(it) }
             Crossfade(section, Modifier.weight(1f).fillMaxWidth(), animationSpec = pageFade(), label = "settings-section") { page ->
                 sections.SaveableStateProvider(page) {
                     // Two up, the cards share the page; one up, a form column at the start of the page, 720 at most. The section
@@ -1920,13 +2022,23 @@ internal fun settingsCardColumns(layout: LayoutTokens, page: Dp, fontScale: Floa
     }
 }
 
-@Composable internal fun SwitchRow(title: String, description: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).toggleable(value = checked, role = Role.Switch, onValueChange = onChange)
-        .heightIn(min = 72.dp).padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall)
-            Muted(description)
+/**
+ * A setting that is on or off (2.12): the whole row is the switch, at least 72 dp. An optional [icon] on its disc, the
+ * [title] (one line) over one [line] ([CarLine]; [spoken] is the long form TalkBack reads instead), and the switch in the
+ * car's tokens ([carSwitchColors]). TalkBack hears the title, the line or [spoken], then on or off. [onChange] comes last,
+ * so a call with a trailing lambda still compiles.
+ */
+@Composable internal fun SwitchRow(title: String, line: String, checked: Boolean, icon: Painter? = null, spoken: String? = null, onChange: (Boolean) -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    Row(Modifier.fillMaxWidth().pressable(interaction, .98f).clip(RoundedCornerShape(18.dp))
+        .toggleable(value = checked, interactionSource = interaction, indication = null, role = Role.Switch, onValueChange = onChange)
+        .pressFill(interaction).heightIn(min = 72.dp).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        if (icon != null) CarIconDisc(icon)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            CarLine(line, spoken = spoken)
         }
-        Switch(checked = checked, onCheckedChange = null)
+        Switch(checked = checked, onCheckedChange = null, colors = carSwitchColors())
     }
 }
