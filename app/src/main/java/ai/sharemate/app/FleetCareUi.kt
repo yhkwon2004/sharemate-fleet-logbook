@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -207,10 +208,23 @@ internal fun careLevelState(level: CareLevel) = when (level) { CareLevel.OVERDUE
 }
 
 /**
- * Where the manager types the deadlines. Dates are yyyy-MM-dd with the error under the field while typing; the odometer
- * button fills the last-service field from the live sample so nobody copies a seven-digit number by hand. The card fills
- * what the settings page gives it ([modifier]: the 720-dp form column, or half the page beside the profile card) and lays
- * its fields in [columns] columns: one beside another card, two in the wide form column ([careFieldColumns]).
+ * The line under 지금 계기판 값 넣기 (2.12, pure, unit-tested): the odometer the button would put in, live ([fresh]) or the last
+ * value the car reported, or why there is none yet. One fact; what an oil-change record does to the last-service value is
+ * said to TalkBack ([SettingsCopy.SPOKEN_CARE_SERVICE]).
+ */
+internal fun careOdometerLine(odometer: Double?, fresh: Boolean): String = when {
+    odometer == null -> SettingsCopy.CARE_ODOMETER_WAITING
+    fresh -> "지금 계기판 ${kmLabel(odometer)}"
+    else -> "마지막 수신 계기판 ${kmLabel(odometer)}"
+}
+
+/**
+ * Where the manager types the deadlines (2.12: a [CarCard] titled 차량 관리 기한, one line on when the alerts come, the long
+ * form for TalkBack). Dates are yyyy-MM-dd with the error under the field while typing; the odometer button fills the
+ * last-service field from the live sample so nobody copies a seven-digit number by hand, and the line under it names that
+ * value ([careOdometerLine]). The card fills what the settings page gives it ([modifier]: the 720-dp form column, or half the
+ * page beside the profile card) and lays its fields in [columns] columns: one beside another card, two in the wide form
+ * column ([careFieldColumns]).
  */
 @Composable internal fun CareSettingsCard(state: TripLogState, act: Act, repository: TripLogRepository, modifier: Modifier = Modifier,
     columns: Int = careFieldColumns(LocalLayout.current, LocalDensity.current.fontScale), now: Long = System.currentTimeMillis()) {
@@ -228,10 +242,8 @@ internal fun careLevelState(level: CareLevel) = when (level) { CareLevel.OVERDUE
     val updated = VehicleCare(inspection.trim().ifBlank { null }, insurance.trim().ifBlank { null }, lease.trim().ifBlank { null },
         interval.toIntOrNull(), lastKm.toDoubleOrNull(), lastServiceAt = if (lastChanged) (if (lastKm.isBlank()) null else now) else saved.lastServiceAt)
     val changed = updated.copy(lastServiceAt = saved.lastServiceAt) != saved
-    Panel(modifier, padding = LocalLayout.current.panelPadding) {
-        Eyebrow("차량 관리 기한")
-        Text("검사·보험·리스·정비 알림", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
-        Muted("등록된 날짜 기준으로만 알려요 · 자동 조회는 하지 않아요. 30일 전부터 홈과 차량 탭에 알림이 떠요.")
+    CarCard(modifier, title = { CarSectionTitle(SettingsCopy.CARE_TITLE, icon = painterResource(R.drawable.ic_calendar)) }) {
+        CarLine(SettingsCopy.CARE_LINE, spoken = SettingsCopy.SPOKEN_CARE)
         FieldGrid(listOf(
             { m -> Field("정기검사 만료일", inspection, { inspection = typeIsoDate(it) }, m, number = true, hint = careDateHint(inspection, today) ?: "예: 2026-11-24", error = careDateError(inspection)) },
             { m -> Field("보험 만기일", insurance, { insurance = typeIsoDate(it) }, m, number = true, hint = careDateHint(insurance, today) ?: "예: 2027-01-31", error = careDateError(insurance)) },
@@ -245,11 +257,8 @@ internal fun careLevelState(level: CareLevel) = when (level) { CareLevel.OVERDUE
         ), columns)
         QuietAction("지금 계기판 값 넣기", if (columns == 1) Modifier.fillMaxWidth() else Modifier, enabled = odometer != null,
             description = odometer?.let { "지금 계기판 값 ${kmLabel(it)} 넣기" }) { odometer?.let { lastKm = String.format(Locale.US, "%.0f", it) } }
-        Muted(when {
-            odometer == null -> "계기판 값은 차량 신호를 받으면 넣을 수 있어요. 엔진오일 정비 기록을 추가하면 마지막 정비 값이 저절로 바뀌어요."
-            fresh -> "지금 계기판 ${kmLabel(odometer)} · 엔진오일 정비 기록을 추가하면 마지막 정비 값이 저절로 바뀌어요."
-            else -> "마지막 수신 계기판 ${kmLabel(odometer)} · 엔진오일 정비 기록을 추가하면 마지막 정비 값이 저절로 바뀌어요."
-        })
+        val reading = careOdometerLine(odometer, fresh)
+        CarLine(reading, spoken = "$reading · ${SettingsCopy.SPOKEN_CARE_SERVICE}")
         PrimaryAction(if (changed) "기한 저장" else "저장된 기한", Modifier.fillMaxWidth(), enabled = changed && errors.all { it == null }) {
             act {
                 repository.updateCare(updated)

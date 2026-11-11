@@ -86,6 +86,13 @@ class FleetCareUiTest {
         assertEquals(null to false, careOdometer(state.copy(live = null, data = TripLogData()), now))
     }
 
+    @Test fun theOdometerLineNamesTheValueTheButtonWouldPutIn() {
+        assertEquals("계기판 값은 차량 신호를 받으면 넣을 수 있어요", careOdometerLine(null, false))
+        assertEquals("지금 계기판 51,300 km", careOdometerLine(51_300.0, true))
+        assertEquals("마지막 수신 계기판 51,300 km", careOdometerLine(51_300.0, false))
+        assertEquals("반올림해 km 단위", "지금 계기판 51,301 km", careOdometerLine(51_300.6, true))
+    }
+
     @Test fun doneButtonsSayWhatTheyWrite() {
         CareKind.values().forEach { kind ->
             assertTrue(careDoneLabel(kind).endsWith("완료"))

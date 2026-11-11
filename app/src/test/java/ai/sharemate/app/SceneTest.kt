@@ -451,4 +451,31 @@ class SceneTest {
             assertTrue(it, it.endsWith("요"))
         }
     }
+
+    @Test fun theCarSceneCardSaysTheStateInAFewWords() {
+        assertEquals("지금 낮 화면", sceneStateLine(SceneMode.AUTO, ScenePhase.DAY))
+        assertEquals("지금 밤 화면", sceneStateLine(SceneMode.AUTO, ScenePhase.NIGHT))
+        // Dusk before noon turns to day, after it to night: the same morning flag the hint takes.
+        assertEquals("지금 해 뜰 무렵", sceneStateLine(SceneMode.AUTO, ScenePhase.DUSK, morning = true))
+        assertEquals("지금 해 질 무렵", sceneStateLine(SceneMode.AUTO, ScenePhase.DUSK))
+        // The light sensor's veto says why the screen is dark, at any hour; car parks as well as tunnels, so no '터널'.
+        assertEquals("어두운 곳이라 밤 화면", sceneStateLine(SceneMode.AUTO, ScenePhase.DAY, vetoed = true))
+        assertEquals("어두운 곳이라 밤 화면", sceneStateLine(SceneMode.AUTO, ScenePhase.DUSK, morning = true, vetoed = true))
+        // A fixed choice ignores the sensor and the hour.
+        assertEquals("항상 낮 화면", sceneStateLine(SceneMode.DAY, ScenePhase.NIGHT, vetoed = true))
+        assertEquals("항상 밤 화면", sceneStateLine(SceneMode.NIGHT, ScenePhase.DAY))
+        assertEquals("항상 밤 화면", sceneStateLine(SceneMode.NIGHT, ScenePhase.DUSK, morning = true, vetoed = true))
+        // A state, not a sentence: at most ten syllables and never -요, in every case; TalkBack reads the full hint instead.
+        SceneMode.entries.forEach { mode ->
+            ScenePhase.entries.forEach { phase ->
+                listOf(false, true).forEach { morning ->
+                    listOf(false, true).forEach { vetoed ->
+                        val line = sceneStateLine(mode, phase, morning, vetoed)
+                        assertTrue("$mode $phase $morning $vetoed: $line", line.count { it in '가'..'힣' } <= 10)
+                        assertTrue("$mode $phase $morning $vetoed: $line", !line.endsWith("요"))
+                    }
+                }
+            }
+        }
+    }
 }

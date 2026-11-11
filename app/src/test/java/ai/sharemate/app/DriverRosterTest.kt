@@ -111,6 +111,13 @@ class DriverRosterTest {
         assertEquals("Kim Jiwoo, Sales, 마지막 운행 어제 18:47", driverRowDescription(DriverRowInfo(kimJiwoo, true, 1, at(8, 18, 47), "마지막 운행 어제 18:47")))
     }
 
+    @Test fun aListRowSaysTheDepartmentAndTheRecordOnOneLine() {
+        assertEquals("Sales · 운행 12건 · 마지막 운행 11월 8일", driverListLine(kimJiwoo, 12, at(8, 18, 47), now, zone))
+        assertEquals("빈 부서는 건너뜀", "운행 12건 · 마지막 운행 11월 8일", driverListLine(kimJiwoo.copy(department = " "), 12, at(8, 18, 47), now, zone))
+        assertEquals("영업1팀 · 운행 기록 없음", driverListLine(kim, 0, null, now, zone))
+        assertEquals("지난해", "재무팀 · 운행 3건 · 마지막 운행 2025년 12월 30일", driverListLine(lee, 3, at(30, 9, month = 12, year = 2025), now, zone))
+    }
+
     @Test fun pickerColumnsFollowTheDialogWidthAndFont() {
         assertEquals(2, pickerColumns(664.dp, 1f))
         assertEquals(1, pickerColumns(664.dp, 1.3f))

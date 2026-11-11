@@ -215,6 +215,10 @@ class LogbookUiTest {
         assertEquals("1.3배 글꼴의 1046 페이지도 두 장", 2, settingsCardColumns(carLayout(1680.dp / 1.3f), 1046.dp, 1.3f))
         assertEquals("900 ÷ 1.3 = 692는 한 장", 1, settingsCardColumns(carLayout(1680.dp / 1.3f), 900.dp, 1.3f))
         assertEquals("MEDIUM은 한 장", 1, settingsCardColumns(carLayout(1000.dp), 936.dp, 1f))
+        // 2.12: the page must also be 984 dp wide, or a line beside a switch would get less than about 306 dp.
+        assertEquals("1400 dp 창, 지금 열 옆 832 페이지는 한 장", 1, settingsCardColumns(carLayout(1400.dp), 832.dp, 1f))
+        assertEquals("열이 없는 EXPANDED의 1104 페이지는 두 장", 2, settingsCardColumns(carLayout(1200.dp), 1104.dp, 1f))
+        assertEquals("1296 dp 창의 780 페이지는 한 장", 1, settingsCardColumns(carLayout(1296.dp), 780.dp, 1f))
     }
 
     @Test fun theHeaderChipDropsItsAvatarBeforeItsCaptionWouldWrap() {

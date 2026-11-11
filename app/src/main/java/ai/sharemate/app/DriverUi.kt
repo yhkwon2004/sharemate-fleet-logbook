@@ -38,6 +38,8 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.AlertDialogDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -61,7 +63,10 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -357,16 +362,22 @@ private const val NOW_FOLD_MS = 200
 
 // ───────────────────────── 설정 › 직원 ─────────────────────────
 
-/** 설정 › 직원 puts the editor beside the list from this card width (two halves of 516 dp on the 1112-dp page at FULL), under it below. */
+/**
+ * 설정 › 직원 puts the editor beside the list from this card width, under it below. At FULL the 1112-dp page gives two halves of
+ * 508 dp either side of the hairline (2.12: 24-dp card padding, twice the card gap between them), so a line beside the
+ * daily-check switch keeps 380 dp.
+ */
 private val DRIVER_MANAGER_SIDE_BY_SIDE = 960.dp
 
 /**
- * 설정 › 직원 (2.11): the list of 직원 and its editor, side by side when the card is 960 dp or wider, the editor under the list
- * otherwise. A row (avatar 48 · name over department, trips and last drive · the 지금 운전 chip on the person driving) opens
- * that person in the editor and brings it into view. Under the rows: 새 직원 (off at 50, saying why) and the daily driver
- * check, moved here from 기록. The editor adds a person (a same-name warning never blocks), fixes one, makes them the driver,
- * or deletes one without trips; every change answers on the follow-up bar with its way back. [data] is the shell's, its trips
- * those of the data set on screen; whether a person can be deleted is read from the repository's unfiltered data, the data
+ * 설정 › 직원 (2.11; 2.12 one [CarCard] across the page): the list of 직원 and its editor, side by side with a hairline between
+ * them when the card is 960 dp or wider, the editor under the list after a divider otherwise. The list's title counts the
+ * 직원 beside the cap of 50; a row (avatar 48 · name over [driverListLine] on one line · the 지금 운전 tag on the person
+ * driving) opens that person in the editor and brings it into view. Under the rows: 새 직원 (off at 50, saying why) and the
+ * daily driver check, moved here from 기록. The editor sits on the card itself, never on a fill, since its accent button
+ * would read weaker there; it adds a person (a same-name warning never blocks), fixes one, makes them the driver, or deletes
+ * one without trips; every change answers on the follow-up bar with its way back. [data] is the shell's, its trips those of
+ * the data set on screen; whether a person can be deleted is read from the repository's unfiltered data, the data
  * [TripLogRepository.removeDriver] checks, so 직원 삭제 is never offered where it would be refused. [twoColumns] lets 부서 and
  * 성명 share a row when the editor spans the card.
  */
@@ -428,26 +439,26 @@ private val DRIVER_MANAGER_SIDE_BY_SIDE = 960.dp
         val wide = maxWidth >= DRIVER_MANAGER_SIDE_BY_SIDE
         val list: @Composable (Modifier) -> Unit = { place ->
             Column(place, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Eyebrow("직원 · ④ 부서와 성명")
-                if (rows.isEmpty()) {
-                    Text("아직 등록된 직원이 없어요", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
-                    Muted("차량을 이용하는 직원의 부서와 성명을 등록하세요. 운행마다 운행기록부 ④ 사용자 칸에 들어가요.")
-                } else {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("등록된 직원 ${rows.size}명", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f).semantics { heading() })
-                        Muted("최대 50명")
-                    }
+                CarSectionTitle(SettingsCopy.driversTitle(rows.size), icon = rememberVectorPainter(Icons.Outlined.Person)) {
+                    Text(SettingsCopy.DRIVERS_CAP, style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, maxLines = 1)
+                }
+                if (rows.isEmpty()) CarLine(SettingsCopy.DRIVERS_EMPTY)
+                else {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         rows.forEach { row ->
                             key(row.driver.id) {
-                                DriverListRow(row, editing = row.driver.id == editing?.id, history = driverHistoryLine(row.trips, row.lastAt, now, zone)) { edit(row.driver) }
+                                DriverListRow(row, editing = row.driver.id == editing?.id, line = driverListLine(row.driver, row.trips, row.lastAt, now, zone)) {
+                                    edit(row.driver)
+                                }
                             }
                         }
                     }
                     QuietAction("새 직원", enabled = !full, onClick = startNew)
-                    if (full) Muted("직원은 50명까지 등록할 수 있어요")
+                    if (full) CarLine(SettingsCopy.DRIVERS_FULL)
                 }
-                SwitchRow("출발 전 운전자 확인", "직원이 2명 이상이면 하루 한 번 지금 운전하는 직원이 맞는지 물어요 · 기본 켜짐", data.profile.confirmDriverDaily) { value ->
+                CarDivider()
+                SwitchRow(SettingsCopy.CONFIRM_TITLE, SettingsCopy.CONFIRM_LINE, data.profile.confirmDriverDaily,
+                    icon = rememberVectorPainter(Icons.Outlined.CheckCircle), spoken = SettingsCopy.SPOKEN_CONFIRM) { value ->
                     act { repository.updateProfile(data.profile.copy(confirmDriverDaily = value)) }
                 }
             }
@@ -462,77 +473,88 @@ private val DRIVER_MANAGER_SIDE_BY_SIDE = 960.dp
             val nameField: @Composable (Modifier) -> Unit = { field ->
                 Field("성명", name, { if (it.length <= 30) name = it }, field, done = true, hint = if (person == null) "예: 김서연" else null)
             }
-            Surface(place.fillMaxWidth().bringIntoViewRequester(editor), shape = RoundedCornerShape(24.dp), color = Scene.fill, contentColor = Scene.text) {
-                Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    if (person == null) Text("새 직원", style = MaterialTheme.typography.titleLarge, color = Scene.text, modifier = Modifier.semantics { heading() })
+            // The editor sits on the card itself (2.12): the accent button never stands on a fill.
+            Column(place.fillMaxWidth().bringIntoViewRequester(editor), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                if (person == null) CarSectionTitle("새 직원", icon = rememberVectorPainter(Icons.Outlined.Add))
+                else {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        DriverAvatar(person, 56.dp, ring = current)
+                        Column(Modifier.weight(1f).semantics(mergeDescendants = true) { heading() }, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(driverName(person), style = MaterialTheme.typography.titleMedium, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            CarLine(driverListLine(person, row?.trips ?: 0, row?.lastAt, now, zone))
+                        }
+                        if (current) NowChip()
+                    }
+                    if (!current) QuietAction(SettingsCopy.MAKE_DRIVER, Modifier.fillMaxWidth(), description = SettingsCopy.makeDriverSpoken(driverName(person))) {
+                        makeCurrent(person)
+                    }
+                }
+                // 부서 and 성명 pair up only when the editor spans the card and the form has two columns; the half-card editor stacks them.
+                if (twoColumns && !wide) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { departmentField(Modifier.weight(1f)); nameField(Modifier.weight(1f)) }
+                else { departmentField(Modifier); nameField(Modifier) }
+                if (driverDuplicate(data.drivers, department, name, person?.id)) Text("같은 부서에 같은 이름이 있어요", style = MaterialTheme.typography.bodyMedium,
+                    color = Scene.warn, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                if (person != null) CarLine(SettingsCopy.EDIT_NOTE)
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (person == null) PrimaryAction("직원 추가", Modifier.weight(1f), enabled = name.isNotBlank() && !full, onClick = add)
                     else {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            DriverAvatar(person, 56.dp, ring = current)
-                            Column(Modifier.weight(1f).semantics(mergeDescendants = true) { heading() }, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(driverName(person), style = MaterialTheme.typography.titleLarge, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                if (person.department.isNotBlank()) Text(person.department, style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(driverHistoryLine(row?.trips ?: 0, row?.lastAt, now, zone), style = MaterialTheme.typography.bodyMedium, color = Scene.textMuted)
-                            }
-                        }
-                        if (current) Text("지금 운전하는 직원이에요", style = MaterialTheme.typography.bodyLarge, color = Scene.glow)
-                        else QuietAction("지금 운전하는 직원으로", Modifier.fillMaxWidth()) { makeCurrent(person) }
+                        val changed = department.trim() != person.department || name.trim() != person.name
+                        PrimaryAction("수정 저장", Modifier.weight(1f), enabled = changed && name.isNotBlank()) { save(person) }
+                        QuietAction("취소", Modifier.weight(1f)) { editingId = null }
                     }
-                    // 부서 and 성명 pair up only when the editor spans the card and the form has two columns; the half-card editor stacks them.
-                    if (twoColumns && !wide) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { departmentField(Modifier.weight(1f)); nameField(Modifier.weight(1f)) }
-                    else { departmentField(Modifier); nameField(Modifier) }
-                    if (driverDuplicate(data.drivers, department, name, person?.id)) Text("같은 부서에 같은 이름이 있어요", style = MaterialTheme.typography.bodyMedium,
-                        color = Scene.warn, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-                    if (person != null) Muted("고친 부서와 성명은 이 직원의 지난 운행 ④ 사용자 칸에도 그대로 들어가요.")
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        if (person == null) PrimaryAction("직원 추가", Modifier.weight(1f), enabled = name.isNotBlank() && !full, onClick = add)
-                        else {
-                            val changed = department.trim() != person.department || name.trim() != person.name
-                            PrimaryAction("수정 저장", Modifier.weight(1f), enabled = changed && name.isNotBlank()) { save(person) }
-                            QuietAction("취소", Modifier.weight(1f)) { editingId = null }
-                        }
-                    }
-                    if (person != null) {
-                        if (driverRemovable(stored.data, person.id)) DialogButton("직원 삭제", color = Scene.negative) { delete(person) }
-                        else Muted("운행 기록이 있어 삭제할 수 없어요 · 부서와 성명은 고칠 수 있어요")
-                    }
+                }
+                if (person != null) {
+                    if (driverRemovable(stored.data, person.id)) CarPillButton(SettingsCopy.DELETE_DRIVER, onClick = { delete(person) }, color = Scene.negative)
+                    else CarLine(SettingsCopy.KEEP_DRIVER, spoken = SettingsCopy.SPOKEN_KEEP_DRIVER)
                 }
             }
         }
-        Panel {
-            if (wide) Row(horizontalArrangement = Arrangement.spacedBy(LocalLayout.current.cardGap)) { list(Modifier.weight(1f)); form(Modifier.weight(1f)) }
-            else { list(Modifier); form(Modifier) }
+        CarCard {
+            if (wide) {
+                // The hairline halfway between the two equal halves, as tall as the taller of them (decorative).
+                val rule = Car.skin.cardBorder
+                Row(Modifier.fillMaxWidth().drawBehind {
+                    val x = size.width / 2
+                    drawLine(rule, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1.dp.toPx())
+                }, horizontalArrangement = Arrangement.spacedBy(LocalLayout.current.cardGap * 2)) { list(Modifier.weight(1f)); form(Modifier.weight(1f)) }
+            } else {
+                list(Modifier)
+                CarDivider()
+                form(Modifier)
+            }
         }
     }
 }
 
 /**
- * One person in 설정 › 직원: a 72-dp row that settles to .98 with the press fill and opens the person in the editor. The one
- * being edited sits on the selection fill inside its ring ("수정 중" for TalkBack); the person driving now carries the chip.
+ * One person in 설정 › 직원: a 72-dp row that settles to .98 with the press fill and opens the person in the editor. The name
+ * over one line ([driverListLine]) in textSecondary, which keeps AA on the selection fill (6.77 / 7.07; textMuted would fall
+ * to 4.48 by night). The one being edited sits on the selection fill inside its ring ("수정 중" for TalkBack); the person
+ * driving now carries the 지금 운전 tag, which TalkBack hears as the row's state, so each person stays one stop.
  */
-@Composable private fun DriverListRow(row: DriverRowInfo, editing: Boolean, history: String, onEdit: () -> Unit) {
+@Composable private fun DriverListRow(row: DriverRowInfo, editing: Boolean, line: String, onEdit: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val shape = RoundedCornerShape(18.dp)
+    val state = listOfNotNull(SettingsCopy.NOW_DRIVING.takeIf { row.selected }, "수정 중".takeIf { editing }).joinToString(", ")
     Row(Modifier.fillMaxWidth().heightIn(min = 72.dp).pressable(interaction, .98f).clip(shape)
         .background(if (editing) Scene.selectionFill else Color.Transparent)
         .then(if (editing) Modifier.border(1.5.dp, Scene.selectionRing, shape) else Modifier)
         .clickable(interactionSource = interaction, indication = null, onClickLabel = "수정", role = Role.Button, onClick = onEdit)
-        .semantics { if (editing) stateDescription = "수정 중" }
+        .semantics { if (state.isNotEmpty()) stateDescription = state }
         .pressFill(interaction).padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         DriverAvatar(row.driver, 48.dp)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(driverName(row.driver), style = MaterialTheme.typography.titleMedium, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(listOf(row.driver.department.trim(), history).filter { it.isNotBlank() }.joinToString(" · "), style = MaterialTheme.typography.bodyMedium,
-                color = Scene.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            CarLine(line, color = Scene.textSecondary)
         }
-        if (row.selected) NowChip()
+        // Drawn only: the row's state already says it, and a tag of its own would split the row into two stops.
+        if (row.selected) NowChip(Modifier.clearAndSetSemantics {})
     }
 }
 
-/** The 지금 운전 chip: the glow label on the row fill inside the selection ring, so it still reads on the row being edited. */
-@Composable private fun NowChip() {
-    val shape = RoundedCornerShape(50)
-    Text("지금 운전", style = MaterialTheme.typography.labelMedium, color = Scene.glow, maxLines = 1,
-        modifier = Modifier.clip(shape).background(Scene.fill).border(1.dp, Scene.selectionRing, shape).padding(horizontal = 12.dp, vertical = 6.dp))
-}
+/**
+ * The 지금 운전 tag (2.12): the ready dot in glow on the tag fill, the mark 자동 기록 대기 also carries. On its own fill, it reads
+ * the same on the selection fill of the row being edited.
+ */
+@Composable private fun NowChip(modifier: Modifier = Modifier) = CarTag(SettingsCopy.NOW_DRIVING, modifier, tone = PillTone.READY)
