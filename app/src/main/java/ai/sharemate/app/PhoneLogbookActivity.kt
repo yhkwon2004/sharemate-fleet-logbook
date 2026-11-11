@@ -280,9 +280,11 @@ private fun readLogbook(context: android.content.Context, uri: Uri): TripLogData
         val me = account
         when {
             !state.loaded -> PhoneHomeSkeleton(Modifier.fillMaxSize().safeDrawingPadding())
-            // Signed out: the sign-in screen. Debug builds also offer a labelled demo account so the flow can be shown without a Google project.
+            // Signed out: the sign-in screen. Debug builds, and builds without a Google client ID, also offer a labelled demo
+            // account so the app can be shown without a Google project ([demoAccountOffered]).
             me == null -> PhoneSignInScreen(Modifier.fillMaxSize(), googleAvailable = googleSignInConfigured, busy = signInBusy, error = signInError,
-                onGoogle = { signIn { signInWithGoogle(context) } }, onDemo = if (BuildConfig.DEBUG) ({ signIn { demoAccount() } }) else null)
+                onGoogle = { signIn { signInWithGoogle(context) } },
+                onDemo = if (demoAccountOffered(BuildConfig.DEBUG, googleSignInConfigured)) ({ signIn { demoAccount() } }) else null)
             // First sign-in: profile, the first company vehicle, and which employee on the car this account is.
             !me.onboarded -> CompositionLocalProvider(LocalFollowUp provides followUp) { Box(Modifier.fillMaxSize()) {
                 PhoneOnboarding(Modifier.fillMaxSize(), account = me, fleet = fleet, data = state.data, connected = link.connected, busy = hostBusy,

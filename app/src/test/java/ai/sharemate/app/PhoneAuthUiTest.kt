@@ -17,6 +17,13 @@ class PhoneAuthUiTest {
     private val lee = Driver("d2", "관리팀", "이도윤")
     private val kim2 = Driver("d3", "개발팀", "김서연")
 
+    @Test fun theDemoAccountIsOfferedInDebugAndWhereverGoogleSignInIsNotSetUp() {
+        assertTrue("디버그 빌드", demoAccountOffered(debug = true, googleConfigured = true))
+        assertTrue(demoAccountOffered(debug = true, googleConfigured = false))
+        assertTrue("클라이언트 ID 없는 릴리스: 로그인 화면이 막다른 길이 되지 않음", demoAccountOffered(debug = false, googleConfigured = false))
+        assertFalse("Google 로그인이 되는 릴리스에는 시연 계정이 없음", demoAccountOffered(debug = false, googleConfigured = true))
+    }
+
     @Test fun profileNeedsANameAndKeepsBothFieldsWithinThirtyCharacters() {
         assertTrue(profileErrors("김서연", "").valid)
         assertTrue("부서는 선택", profileErrors("김서연", "영업팀").valid)

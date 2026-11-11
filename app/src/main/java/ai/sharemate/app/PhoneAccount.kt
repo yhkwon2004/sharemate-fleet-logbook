@@ -119,6 +119,13 @@ class SignInException(message: String, val cancelled: Boolean = false) : Excepti
 internal val googleSignInConfigured: Boolean get() = BuildConfig.GOOGLE_WEB_CLIENT_ID.isNotBlank()
 
 /**
+ * Whether the sign-in screen offers the labelled demo account: always in a debug build, and in any build without a Google
+ * OAuth client ID ([googleConfigured] false), where the Google button is off and the screen would otherwise be a dead end
+ * (a release APK built without the company's client ID). A build that can sign in with Google shows no demo account.
+ */
+internal fun demoAccountOffered(debug: Boolean, googleConfigured: Boolean): Boolean = debug || !googleConfigured
+
+/**
  * Signs in with Google through Credential Manager ("Sign in with Google" button flow). [activityContext] must be an Activity.
  * The ID token is not sent anywhere: SHAREMATE has no server, so the account identifies the user on this phone only.
  */

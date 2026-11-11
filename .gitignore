@@ -19,3 +19,4 @@ relay/.runtime/
 *.smlog
 *.log
 **/__pycache__/
+!apk/*.apk

@@ -6,6 +6,16 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Machine-local settings that are never committed (local.properties is git-ignored): the Google OAuth client ID and where the
+// release signing key lives.
+val localProps = Properties().apply { rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) } }
+
+// Release signing: local.properties names a properties file outside the repository
+// (sharemate.release.keystoreProperties=C:/.../keystore.properties) holding storeFile, storePassword, keyAlias and keyPassword.
+// Without it `assembleRelease` still builds, unsigned, so a fresh checkout never needs the key.
+val releaseSigning: Properties? = localProps.getProperty("sharemate.release.keystoreProperties")?.takeIf { it.isNotBlank() }
+    ?.let { rootProject.file(it) }?.takeIf { it.exists() }?.let { file -> Properties().apply { file.inputStream().use { load(it) } } }
+
 android {
     namespace = "ai.sharemate.app"
     compileSdk = 35
@@ -19,9 +29,26 @@ android {
         versionName = "2.12.0"
         // Google sign-in (phone): the OAuth Web client ID of the company's Google Cloud project, from local.properties
         // (sharemate.googleWebClientId=...apps.googleusercontent.com) or -Psharemate.googleWebClientId. Empty = sign-in disabled.
-        val localProps = Properties().apply { rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) } }
         val googleClientId = (project.findProperty("sharemate.googleWebClientId") as String?) ?: localProps.getProperty("sharemate.googleWebClientId", "")
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleClientId\"")
+    }
+
+    signingConfigs {
+        releaseSigning?.let { signing ->
+            create("release") {
+                storeFile = rootProject.file(signing.getProperty("storeFile"))
+                storePassword = signing.getProperty("storePassword")
+                keyAlias = signing.getProperty("keyAlias")
+                keyPassword = signing.getProperty("keyPassword")
+            }
+        }
+    }
+    buildTypes {
+        release {
+            // Not minified: the Pleos Vehicle SDK and the JSON codecs are used as shipped, with no keep rules to maintain.
+            isMinifyEnabled = false
+            signingConfigs.findByName("release")?.let { signingConfig = it }
+        }
     }
 
     buildFeatures { compose = true; buildConfig = true }
