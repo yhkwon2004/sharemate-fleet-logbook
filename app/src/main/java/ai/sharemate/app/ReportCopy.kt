@@ -133,6 +133,16 @@ internal object VehicleCopy {
     const val PHONE_NOTE = "차량 기록이 원본이에요"
     val PHONE_NOTE_MORE = listOf("휴대폰에서 바꾼 목적·경비·특이사항은 ‘휴대폰’ 출처로 남아요", "휴대폰은 인증키로 차량을 확인한 뒤 번호를 보내요")
     // 2.13: with the link off the card shows the switch itself (SettingsCopy.PHONE_SYNC_*), where 2.12 sent the driver to 설정.
+    // 2.15 (DESIGN_2_15 §6.2): the QR leads the pairing; the three typed steps fold behind PHONE_MANUAL.
+    /** Beside the QR, in titleSmall (it may take two lines in the narrow column beside the 232-dp tile). */
+    const val PHONE_QR = "휴대폰 앱에서 이 QR을 찍으세요"
+    /** What TalkBack hears for the QR tile itself. */
+    const val SPOKEN_PHONE_QR = "휴대폰 연결 QR"
+    /** The fold over the three steps a phone types by hand. */
+    const val PHONE_MANUAL = "직접 입력하기"
+    /** The pill while no code is live, and while one is. */
+    const val PHONE_NEW_CODE = "새 연결 번호"
+    const val PHONE_RENEW_CODE = "번호 다시 만들기"
 
     // 차량 예약 and 사고·특이사항
     const val RESERVATIONS_TITLE = "차량 예약"

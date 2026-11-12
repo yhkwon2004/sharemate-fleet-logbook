@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <files-path name="inspection" path="evidence/" />
+    <!-- 2.15: the picture the phone's camera takes of the car's pairing QR (QrScan.kt), deleted once read. -->
+    <cache-path name="qr-scan" path="qr-scan/" />
 </paths>
