@@ -1738,7 +1738,7 @@ private const val EXPENSE_FOLD_MS = 200
  * 시간 and why the odometer cannot be edited, then the trip's other issues ([issues] less the two the tiles and the person
  * row answer), a gap with its 구간 추가; 출발 · 도착; 운행 목적 as [PurposeOptions] with its source as a tag; the person (④
  * 사용자) with 바꾸기 or 지정; 운행 비용, its sum trailing the title and its rows in the one money style, the navigation's
- * toll as a one-tap chip ([tollSuggestion]), and the form folded behind 추가 (five type chips and a [CarMoneyField]); ⑩ 비고;
+ * toll as a one-tap chip ([tollSuggestion]), and the form folded behind 추가 (five type chips, a [CarMoneyField], [QuickAmounts]); ⑩ 비고;
  * 수정 이력 behind ⓘ; and 이 기록 삭제, which asks first ([CarDialog], destroy). Every edit answers on the follow-up bar with
  * its undo, and calls [pin] first, so the pane keeps this trip while a fix drops it from the list. [close] closes the sheet
  * and clears the tap; a delete calls it too. A new trip composes fresh (its figures swap at once, the form folds, the
@@ -1866,7 +1866,7 @@ private const val EXPENSE_FOLD_MS = 200
                     FlowRow(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         ExpenseType.entries.forEachIndexed { index, type -> CarChoiceChip(type.label, index == expenseType) { expenseType = index } }
                     }
-                    val input = moneyInput(amount, 1, 10_000_000, LogCopy.AMOUNT_HINT)
+                    val input = moneyInput(amount, 1, EXPENSE_LIMIT_WON, LogCopy.AMOUNT_HINT)
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         CarMoneyField(LogCopy.AMOUNT, amount, { amount = it }, input, Modifier.weight(1f), done = true)
                         PrimaryAction(LogCopy.ADD, enabled = input.ok) {
@@ -1874,6 +1874,8 @@ private const val EXPENSE_FOLD_MS = 200
                             input.won?.let { won -> addExpense(ExpenseType.entries[expenseType], won) { amount = "" } }
                         }
                     }
+                    // 2.15 (§5.1): the type's recent amounts and +1,000 · +5,000 · +10,000, so an amount rarely needs the keyboard.
+                    QuickAmounts(data.trips, trip.demo, ExpenseType.entries[expenseType], amount, { amount = it })
                 }
             }
             CarDivider()
@@ -2297,7 +2299,9 @@ internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = Se
                         else -> {
                             // The two cards share the page from EXPANDED up; stacked, each keeps to a 760-dp measure.
                             val measure = if (wide) Modifier else Modifier.widthIn(max = 760.dp)
-                            SideBySide(wide, layout.cardGap, equalHeight = true, first = { modifier -> AuditCard(trips, modifier.then(measure)) }) { modifier ->
+                            SideBySide(wide, layout.cardGap, equalHeight = true, first = { modifier ->
+                                AuditCard(data.trips, trips, shown.month, shown.yearly, goReview, modifier.then(measure))
+                            }) { modifier ->
                                 tax(modifier.then(measure))
                             }
                         }
@@ -2328,14 +2332,18 @@ internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = Se
 }
 
 /**
- * 검토's first card: how ready the period's evidence is ([auditHeadline]), where the details are, and, behind ⓘ, what the check
- * covers and what it does not.
+ * 검토's first card: how ready the period's evidence is ([auditHeadline]), then (2.15, DESIGN_2_15 §5.2) what is left, a row
+ * per kind of issue in 점검 필요's order ([auditBreakdown], [AuditRows]), or 모든 운행이 확인됐어요; a period without trips
+ * has no rows. The issues are 점검 필요's own ([periodAudit] of the whole log [all] for the period's [trips]), so a row's count
+ * is what the list it opens shows: under 월간 a row opens 운행기록 › 점검 필요 on [month] ([goReview]); under 연간 ([yearly])
+ * the rows are not buttons. Behind ⓘ: what the check covers, the Excel sheet that lists each item, and what it does not cover.
  */
-@Composable private fun AuditCard(trips: List<Trip>, modifier: Modifier) {
+@Composable private fun AuditCard(all: List<Trip>, trips: List<Trip>, month: YearMonth, yearly: Boolean, goReview: (YearMonth) -> Unit, modifier: Modifier) {
     CarCard(modifier, title = { CarSectionTitle(ReportCopy.AUDIT_TITLE, icon = painterResource(R.drawable.ic_journal)) }) {
-        val issues = remember(trips) { auditTrips(trips) }
+        val issues = remember(all, trips) { periodAudit(all, trips) }
+        val kinds = remember(issues, trips) { auditBreakdown(issues, trips.associateBy { it.id }) }
         Text(auditHeadline(trips.size, issues.size), style = MaterialTheme.typography.titleLarge, color = Scene.text)
-        CarLine(ReportCopy.AUDIT_LINE)
+        if (trips.isNotEmpty()) AuditRows(kinds, onOpen = if (yearly) null else { { goReview(month) } })
         CarInfoRow(ReportCopy.AUDIT_NOTE, more = ReportCopy.AUDIT_NOTE_MORE)
     }
 }
