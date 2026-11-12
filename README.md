@@ -12,10 +12,12 @@ SHAREMATE는 법인 차량을 쓰는 회사의 운전자와 관리자를 위한 
 |---|---|
 | 앱 이름 | SHAREMATE |
 | 한 줄 소개 | 차량이 스스로 쓰는 법인차 운행일지 |
-| APK | [apk/SHAREMATE-v2.12.0-release.apk](apk/SHAREMATE-v2.12.0-release.apk) · release 빌드 · 서명됨 · 약 33.7 MB |
+| APK | [apk/SHAREMATE-v2.12.0-release.apk](apk/SHAREMATE-v2.12.0-release.apk) · Pleos Connect 에뮬레이터에 그대로 설치하는 파일 · release 빌드 · 서명됨 · 약 33.7 MB |
 | 버전 | 2.12.0 (versionCode 22) · 패키지 `ai.sharemate.app` |
 | 에뮬레이터 | Pleos Connect 에뮬레이터 `release_connect_v2.1.0` (Android 14 · API 34 · Automotive · x86_64, 기기 프로필 `Pleos_Connect_v2_0`) |
 | 화면 규격 | 2560 × 1440 px · 160 dpi. 앱 창은 화면 오른쪽 영역 1680 × 1209 dp |
+
+APK는 이 파일 하나입니다. 에뮬레이터용(x86_64)과 기기용(arm64) 라이브러리를 함께 담고 있어, Pleos Connect 에뮬레이터와 휴대폰에 같은 파일을 설치합니다.
 
 ### 실행 방법
 
