@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -43,7 +44,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.AccountBox
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.*
@@ -1217,137 +1222,185 @@ private fun purposeCaption(purpose: TripPurpose) = if (purpose.business) "업무
 internal fun logFilterLabels(trips: Int, issues: Int, matched: Int, wide: Boolean): List<String> =
     listOf("전체 $trips", "점검 필요 $issues", if (wide) "자동 반영 $matched" else "자동 $matched")
 
-/** The log's one empty state: a title, an optional second line, and whether 필터 해제 is offered beside 이전 달 보기. */
+/** Which list an empty card stands for, and so its mark: no trips (ic_journal), nothing to check (CheckCircle), no matches (ic_receipt). */
+internal enum class LogEmptyKind { TRIPS, ISSUES, MATCHED }
+
+/**
+ * The log's one empty state (2.13): a short [title] (the stepper and the chip already name the month and the employee), the
+ * long title TalkBack keeps ([spoken]), an optional second line, whether 필터 해제 is offered beside 이전 달 보기, and the
+ * [kind] that picks the card's mark.
+ */
 @Immutable
-internal data class LogEmptyCopy(val title: String, val detail: String? = null, val clearable: Boolean = false)
+internal data class LogEmptyCopy(val title: String, val spoken: String, val detail: String? = null, val clearable: Boolean = false,
+    val kind: LogEmptyKind = LogEmptyKind.TRIPS)
 
 /**
  * What the log says when the list under [filter] (0 전체, 1 점검 필요, 2 자동 반영) has nothing to pick in [month]: no trips,
  * no trip left to check, or no card payment that went in by itself. [monthTrips] counts the month's trips after the employee
- * filter, whose label is [employee] when one is set. 필터 해제 ([LogEmptyCopy.clearable]) whenever a filter other than 전체 or
- * an employee is set; 이전 달 보기 always.
+ * filter, whose label is [employee] when one is set. The title is the short one of [LogCopy]; TalkBack hears the long one,
+ * with the month and the employee ("11월 영업 · 권 님의 운행 기록이 없어요"). 필터 해제 ([LogEmptyCopy.clearable]) whenever a
+ * filter other than 전체 or an employee is set; 이전 달 보기 always.
  */
 internal fun logEmptyCopy(filter: Int, month: YearMonth, monthTrips: Int, employee: String?, today: LocalDate): LogEmptyCopy {
     val name = monthLabel(month, today)
     val who = employee?.let { " $it 님의" }.orEmpty()
     val clearable = filter != 0 || employee != null
     return when {
-        filter == 1 && monthTrips > 0 -> LogEmptyCopy("$name$who 점검할 운행이 없어요", "계기판 누적거리가 끊김 없이 이어져요", clearable)
-        filter == 2 -> LogEmptyCopy("$name 카드 결제가 자동으로 들어간 운행이 없어요", clearable = clearable)
-        else -> LogEmptyCopy("$name$who 운행 기록이 없어요", clearable = clearable)
+        filter == 1 && monthTrips > 0 -> LogEmptyCopy(LogCopy.EMPTY_ISSUES, "$name$who 점검할 운행이 없어요", LogCopy.EMPTY_ISSUES_LINE, clearable, LogEmptyKind.ISSUES)
+        filter == 2 -> LogEmptyCopy(LogCopy.EMPTY_MATCHED, "$name 카드 결제가 자동으로 들어간 운행이 없어요", clearable = clearable, kind = LogEmptyKind.MATCHED)
+        else -> LogEmptyCopy(LogCopy.EMPTY_TRIPS, "$name$who 운행 기록이 없어요", clearable = clearable)
     }
 }
 
 /**
  * The 운행기록 list's width when the page holds the list beside the detail, else null: the list then fills the page and the
  * detail opens as a side sheet (pure, unit-tested). Two panes need EXPANDED or wider and 900 dp of effective page (its width
- * ÷ the font scale); the list takes 48 % of what the [gap] leaves, 522 of the 1112-dp page at FULL (the detail 566). A 1.3×
+ * ÷ the font scale); the list takes 48 % of what the [gap] leaves, 526 of the 1112-dp page at FULL (the detail 570). A 1.3×
  * font (805 effective) and the 832-dp page of a 1400-dp window keep the side sheet.
  */
 internal fun logListWidth(layout: LayoutTokens, page: Dp, gap: Dp, fontScale: Float): Dp? =
     if (layout.expanded && page / fontScale.coerceAtLeast(1f) >= 900.dp) (page - gap) * .48f else null
 
 /**
- * 운행기록: the month stepper, the 3-way filter and the totals on one 64-dp row, the employee chip under it, then the list
- * beside the detail where the page holds both ([logListWidth]). Otherwise the list fills the page and the detail opens as a
- * side sheet, and the header takes the narrow rows; a short window folds the filters into one dropdown chip and trims the
- * rows to 64 dp. When the chosen list is empty the list column holds one glass card that says so (max 560) and the detail
- * panel stays away: there is nothing to pick. [openReport] opens 월간·Excel on a month (2.13: the empty 점검 필요 card of a
- * month that is ready to close leads there).
+ * 운행기록 (2.13, docs/design/DESIGN_2_13_SPEC.md §7). Where the page holds the list beside the detail ([logListWidth]) the
+ * header is one row, the month stepper · the 3-way filter (up to 560) · the employee chip, over one 32-dp row of tags (the
+ * month's totals, 시연 데이터, and on 점검 필요 its 필수 · 참고 counts); the detail then always shows a trip, the one tapped or
+ * else the list's first row ([logSelection]), so the page opens on its newest trip, first issue or first match instead of an
+ * empty half. Otherwise the list fills the page under the narrow rows (stepper ··· chip, then the filter; COMPACT puts the
+ * chip under the stepper) and the detail opens as a side sheet, never by itself. A short window folds the filters and the
+ * employee into one chip on the stepper's row, the tags at its end.
+ *
+ * The tap ([selectedId]) is cleared by a month, employee or filter change and by a delete, so the detail goes back to
+ * following the list; an edit in the pane pins its trip, so a fix that drops it from 점검 필요 never swaps the detail under
+ * the driver's finger. An empty list is one card in the list column; its 점검 필요 card leads to 월간·Excel ([openReport])
+ * while the month is ready to close.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable private fun LogPane(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, openDriver: (String?) -> Unit,
-    initialTripId: String?, initialFilter: Int = 0, initialMonth: String? = null, @Suppress("UNUSED_PARAMETER") openReport: (YearMonth) -> Unit = {}) {
+    initialTripId: String?, initialFilter: Int = 0, initialMonth: String? = null, openReport: (YearMonth) -> Unit = {}) {
     val layout = LocalLayout.current
     val fontScale = LocalDensity.current.fontScale
-    var month by rememberSaveable { mutableStateOf(initialMonth?.takeIf { runCatching { YearMonth.parse(it) }.isSuccess } ?: YearMonth.from(localDate(now)).toString()) }
+    val today = localDate(now)
+    var month by rememberSaveable { mutableStateOf(initialMonth?.takeIf { runCatching { YearMonth.parse(it) }.isSuccess } ?: YearMonth.from(today).toString()) }
     var filter by rememberSaveable(initialFilter) { mutableIntStateOf(initialFilter) }
+    // The row the driver tapped, or the trip a button opened the page on; null while the detail follows the list.
     var selectedId by rememberSaveable(initialTripId) { mutableStateOf(initialTripId) }
     var employeeFilter by rememberSaveable { mutableStateOf<String?>(null) }
     val period = YearMonth.parse(month)
     val all = state.data.trips
+    val byId = remember(all) { all.associateBy { it.id } }
+    val audit = remember(all) { auditTrips(all) }
     val trips = tripsIn(all, period.atDay(1), period.atEndOfMonth(), zone).filter { employeeFilter == null || it.driverId == employeeFilter }
     val totals = logbookTotals(trips)
     val ids = trips.map { it.id }.toSet()
-    val issues = auditTrips(all).filter { it.tripId in ids }
-    val selected = all.firstOrNull { it.id == selectedId }
+    // 점검 필요 in the order a month is finished: 마감 전 필수 first, then the rest, newest first.
+    val issues = issueOrder(audit.filter { it.tripId in ids }, byId)
+    val required = issues.count { issueRequired(it.type) }
+    val flagged = issues.mapTo(HashSet()) { it.tripId }
     // 자동 반영 follows the stepper's month like the other two lists (its list reads the month from the clock it is handed).
-    val thisMonth = YearMonth.from(localDate(now))
+    val thisMonth = YearMonth.from(today)
     val periodClock = if (period == thisMonth) now else period.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
     val matchedRows = matchedTripsThisMonth(state.data, zone, period.atDay(1))
-    val totalsLine = "총 ${kmText(totals.totalKm)} · 업무 ${ratioText(totals.ratio)} · ${totals.trips}건"
+    val demo = state.data.profile.demoMode
     val employeeName = state.data.drivers.firstOrNull { it.id == employeeFilter }?.label
-    val employeeLabel = employeeName ?: "전체 직원"
+    val employeeLabel = employeeName ?: LogCopy.ALL_EMPLOYEES
     val previousMonth = { month = period.minusMonths(1).toString(); selectedId = null }
-    val stepper: @Composable RowScope.() -> Unit = {
-        PeriodStepper(reportStepperCopy(ReportPeriod(period, false), localDate(now)), period < thisMonth, previousMonth) { month = period.plusMonths(1).toString(); selectedId = null }
+    val showFilter: (Int) -> Unit = { index -> filter = index; selectedId = null }
+    val stepper: @Composable () -> Unit = {
+        PeriodStepper(reportStepperCopy(ReportPeriod(period, false), today), period < thisMonth, previousMonth) { month = period.plusMonths(1).toString(); selectedId = null }
     }
     val employeeItems: @Composable ColumnScope.(() -> Unit) -> Unit = { close ->
-        ChipMenuItem("전체 직원") { employeeFilter = null; selectedId = null; close() }
-        state.data.drivers.forEach { driver -> ChipMenuItem(driver.label) { employeeFilter = driver.id; selectedId = null; close() } }
+        ChipMenuItem(LogCopy.ALL_EMPLOYEES, current = employeeFilter == null) { employeeFilter = null; selectedId = null; close() }
+        state.data.drivers.forEach { driver -> ChipMenuItem(driver.label, current = employeeFilter == driver.id) { employeeFilter = driver.id; selectedId = null; close() } }
+    }
+    val employeeChip: @Composable (Modifier) -> Unit = { modifier ->
+        DropdownChip(employeeLabel, LogCopy.SPOKEN_EMPLOYEE_FILTER, modifier.widthIn(max = 280.dp), icon = rememberVectorPainter(Icons.Outlined.Person),
+            active = employeeFilter != null, content = employeeItems)
+    }
+    // The facts of the list on screen, each a tag: the totals (none in an empty month), demo data once, the 점검 필요 counts.
+    val countLine = if (filter == 1) issueCountLine(required, issues.size - required) else ""
+    val hasTags = trips.isNotEmpty() || demo || countLine.isNotEmpty()
+    val tags: @Composable (Modifier, Arrangement.Horizontal) -> Unit = { modifier, arrangement ->
+        FlowRow(modifier, horizontalArrangement = arrangement, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (trips.isNotEmpty()) CarTag(logTotalsLine(totals))
+            if (demo) CarTag(LogCopy.DEMO, tone = PillTone.DEMO)
+            if (countLine.isNotEmpty()) CarTag(countLine)
+        }
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         // The header follows the list: one row over a split page, the narrow rows over a full-width list.
         val listWidth = logListWidth(layout, maxWidth, layout.cardGap, fontScale)
-        val wide = listWidth != null
-        val filters = logFilterLabels(trips.size, issues.size, matchedRows.size, wide)
+        val twoPane = listWidth != null
+        val filters = logFilterLabels(trips.size, issues.size, matchedRows.size, twoPane)
+        val shownId = logSelection(selectedId, byId.keys, logTopId(filter, trips, issues, matchedRows), twoPane)
+        val shown = shownId?.let(byId::get)
         Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            when {
-                // A short window: the three filters and the employee fold into one 56-dp dropdown chip on the stepper's row.
-                layout.short -> Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    stepper()
-                    DropdownChip("${filters[filter]} · $employeeLabel") { close ->
-                        filters.forEachIndexed { index, label -> ChipMenuItem(label) { filter = index; close() } }
-                        HorizontalDivider(color = Scene.divider)
-                        employeeItems(close)
-                    }
-                    Spacer(Modifier.weight(1f))
-                    Muted(totalsLine, maxLines = 1)
-                }
-                wide -> {
-                    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                when {
+                    // A short window: the three filters and the employee fold into one 56-dp chip on the stepper's row, the tags at its end.
+                    layout.short -> Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         stepper()
-                        // The filter takes what is left of the row, up to 720; the totals sit at the page's right.
-                        Box(Modifier.weight(1f)) { Segmented(filters, filter, Modifier.widthIn(max = 720.dp)) { filter = it } }
-                        Muted(totalsLine, maxLines = 1)
+                        DropdownChip("${filters[filter]} · $employeeLabel", LogCopy.SPOKEN_LIST_FILTER, Modifier.widthIn(max = 320.dp),
+                            active = filter != 0 || employeeFilter != null) { close ->
+                            filters.forEachIndexed { index, label -> ChipMenuItem(label, current = index == filter) { showFilter(index); close() } }
+                            HorizontalDivider(color = Car.skin.cardBorder)
+                            employeeItems(close)
+                        }
+                        if (hasTags) tags(Modifier.weight(1f), Arrangement.spacedBy(8.dp, Alignment.End)) else Spacer(Modifier.weight(1f))
                     }
-                    DropdownChip("직원: $employeeLabel", content = employeeItems)
-                }
-                else -> {
-                    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        stepper()
-                        if (!layout.compact) { Spacer(Modifier.weight(1f)); Muted(totalsLine, maxLines = 1) }
+                    twoPane -> {
+                        Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            stepper()
+                            // The filter takes what is left of the row, up to 560; the employee chip ends the row.
+                            Box(Modifier.weight(1f)) { Segmented(filters, filter, Modifier.widthIn(max = 560.dp), onSelect = showFilter) }
+                            employeeChip(Modifier)
+                        }
+                        if (hasTags) tags(Modifier.fillMaxWidth(), Arrangement.spacedBy(8.dp))
                     }
-                    if (layout.compact) Muted(totalsLine)
-                    Segmented(filters, filter) { filter = it }
-                    DropdownChip("직원: $employeeLabel", content = employeeItems)
+                    else -> {
+                        Row(Modifier.fillMaxWidth().heightIn(min = 64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            stepper()
+                            Spacer(Modifier.weight(1f))
+                            if (!layout.compact) employeeChip(Modifier)
+                        }
+                        if (layout.compact) employeeChip(Modifier)
+                        Segmented(filters, filter, onSelect = showFilter)
+                        if (hasTags) tags(Modifier.fillMaxWidth(), Arrangement.spacedBy(8.dp))
+                    }
                 }
             }
             // An empty list is one card in the list column, never a blank column beside an empty detail panel.
             val empty = when (filter) { 0 -> trips.isEmpty(); 1 -> issues.isEmpty(); else -> matchedRows.isEmpty() }
+            // The empty 점검 필요 card of a month with nothing left to finish leads to its close.
+            val closable = filter == 1 && monthStatus(state.data, period, zone).ready
             val list: @Composable (Modifier) -> Unit = { modifier ->
-                if (empty) Box(modifier.verticalScroll(rememberScrollState())) {
-                    LogEmptyCard(logEmptyCopy(filter, period, trips.size, employeeName, localDate(now)), onPrevious = previousMonth,
-                        onClear = { filter = 0; employeeFilter = null; selectedId = null })
+                val group = modifier.semantics { isTraversalGroup = true }
+                if (empty) Box(group.verticalScroll(rememberScrollState())) {
+                    LogEmptyCard(logEmptyCopy(filter, period, trips.size, employeeName, today), onPrevious = previousMonth,
+                        onClear = { filter = 0; employeeFilter = null; selectedId = null },
+                        closeLabel = if (closable) "${monthLabel(period, today)} 마감하러 가기" else null, onClose = { openReport(period) })
                 } else when (filter) {
-                    0 -> TripList(trips, state.data, issues, selectedId, modifier, compact = layout.short) { selectedId = it }
-                    1 -> IssueList(issues, state.data, modifier, act, repository, openDriver) { selectedId = it }
-                    else -> MatchedTripList(state.data, periodClock, act, repository, modifier) { selectedId = it }
+                    // Opened on a trip (the assistant's citation), the list scrolls that day into view until another row is tapped.
+                    0 -> TripList(trips, state.data, flagged, shownId, group, compact = layout.short, scrollTo = initialTripId?.takeIf { it == selectedId }) { selectedId = it }
+                    1 -> IssueList(issues, state.data, shownId, group, act, repository, openDriver) { selectedId = it }
+                    else -> MatchedTripList(state.data, periodClock, act, repository, shownId, group) { selectedId = it }
                 }
             }
             if (listWidth != null) Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(layout.cardGap)) {
                 // FULL: list 526 + gap 16 + detail 570 share the 1112-dp page.
                 list(Modifier.width(listWidth).fillMaxHeight())
-                // The detail and its placeholder only when there are rows to pick (or a trip is already open).
-                if (!empty || selected != null) Surface(Modifier.weight(1f).fillMaxHeight(), shape = RoundedCornerShape(32.dp), color = Scene.glass, border = Scene.edge) {
-                    if (selected == null) Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
-                        Muted("운행을 선택하면 계기판 기록과 목적·비용·수정 이력을 볼 수 있어요.", Modifier.widthIn(max = 420.dp))
-                    } else TripDetail(selected, state.data, act, repository, openDriver) { selectedId = null }
+                val skin = Car.skin
+                if (shown != null) Surface(Modifier.weight(1f).fillMaxHeight().semantics { isTraversalGroup = true }, shape = RoundedCornerShape(20.dp),
+                    color = skin.card, contentColor = Scene.text, border = BorderStroke(1.dp, skin.cardBorder)) {
+                    TripDetail(shown, state.data, audit.filter { it.tripId == shown.id }, act, repository, openDriver, inPane = true,
+                        pin = { selectedId = shown.id }) { selectedId = null }
                 }
             } else Box(Modifier.weight(1f).fillMaxWidth()) {
                 // While the detail sheet is up, the list under its scrim is out of TalkBack's reach: the sheet is the one pane to read.
-                list(Modifier.fillMaxSize().then(if (selected != null) Modifier.clearAndSetSemantics {} else Modifier))
-                SideSheet(selected, onDismiss = { selectedId = null }, widthFraction = if (layout.compact) .94f else .62f, title = "운행 상세") { trip ->
-                    TripDetail(trip, state.data, act, repository, openDriver) { selectedId = null }
+                list(Modifier.fillMaxSize().then(if (shown != null) Modifier.clearAndSetSemantics {} else Modifier))
+                SideSheet(shown, onDismiss = { selectedId = null }, widthFraction = if (layout.compact) .94f else .62f, title = LogCopy.DETAIL) { trip ->
+                    TripDetail(trip, state.data, audit.filter { it.tripId == trip.id }, act, repository, openDriver, inPane = false,
+                        pin = { selectedId = trip.id }) { selectedId = null }
                 }
             }
         }
@@ -1392,39 +1445,76 @@ internal fun logListWidth(layout: LayoutTokens, page: Dp, gap: Dp, fontScale: Fl
 }
 
 /**
- * The log's one empty state: a glass card at the top of the list column (max 560) with what the month is missing and the way
- * on, 이전 달 보기, plus 필터 해제 while a filter or an employee narrows the list ([LogEmptyCopy.clearable]).
+ * The log's one empty state (2.13): a car card at the top of the list column (max 560) with the list's mark on the disc, the
+ * short title (TalkBack hears the long one, with the month and the employee) and its line, then the ways on: 이전 달 보기,
+ * 필터 해제 while a filter or an employee narrows the list ([LogEmptyCopy.clearable]), and, on an empty 점검 필요 of a month
+ * that is ready to close, [closeLabel] ("10월 마감하러 가기"), the card's one primary action, which opens 월간·Excel on it.
  */
-@Composable private fun LogEmptyCard(copy: LogEmptyCopy, onPrevious: () -> Unit, onClear: () -> Unit, modifier: Modifier = Modifier) {
-    Panel(modifier.widthIn(max = 560.dp)) {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(copy.title, style = MaterialTheme.typography.titleMedium, color = Scene.text)
-            copy.detail?.let { Muted(it) }
+@OptIn(ExperimentalLayoutApi::class)
+@Composable private fun LogEmptyCard(copy: LogEmptyCopy, onPrevious: () -> Unit, onClear: () -> Unit, modifier: Modifier = Modifier,
+    closeLabel: String? = null, onClose: () -> Unit = {}) {
+    val icon = when (copy.kind) {
+        LogEmptyKind.TRIPS -> painterResource(R.drawable.ic_journal)
+        LogEmptyKind.ISSUES -> rememberVectorPainter(Icons.Outlined.CheckCircle)
+        LogEmptyKind.MATCHED -> painterResource(R.drawable.ic_receipt)
+    }
+    CarCard(modifier.widthIn(max = 560.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CarIconDisc(icon)
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(copy.title, style = MaterialTheme.typography.titleSmall, color = Scene.text,
+                    modifier = Modifier.semantics { heading(); contentDescription = copy.spoken })
+                copy.detail?.let { CarLine(it) }
+            }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            QuietAction("이전 달 보기", onClick = onPrevious)
-            if (copy.clearable) QuietAction("필터 해제", onClick = onClear)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
+            itemVerticalAlignment = Alignment.CenterVertically) {
+            CarPillButton(LogCopy.PREVIOUS_MONTH, onPrevious)
+            if (copy.clearable) CarPillButton(LogCopy.CLEAR_FILTER, onClear)
+            if (closeLabel != null) PrimaryAction(closeLabel, onClick = onClose)
         }
     }
 }
 
-/** One row of a [DropdownChip]'s menu: Material's menu item at the car's 56-dp touch target (its own minimum is 48). */
-@Composable private fun ChipMenuItem(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) =
-    DropdownMenuItem(text = { Text(label) }, onClick = onClick, modifier = modifier.heightIn(min = 56.dp))
+/**
+ * One row of a [DropdownChip]'s menu (2.13): Material's menu item at the car's 56-dp touch target (its own minimum is 48), the
+ * label in text and, on the [current] one, a check in the accent ink (4.93 / 7.66 on the menu's card); TalkBack hears it as
+ * selected.
+ */
+@Composable private fun ChipMenuItem(label: String, current: Boolean, onClick: () -> Unit) =
+    DropdownMenuItem(text = { Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis) }, onClick = onClick,
+        modifier = Modifier.heightIn(min = 56.dp).semantics { selected = current },
+        trailingIcon = if (current) { { Icon(Icons.Filled.Check, contentDescription = null, Modifier.size(20.dp), tint = Car.skin.accentInk) } } else null,
+        colors = MenuDefaults.itemColors(textColor = Scene.text))
 
-/** A 56-dp glass chip that opens a menu: the log's employee filter, and in a short window the whole filter set. [content] gets a close call. */
-@Composable private fun DropdownChip(label: String, modifier: Modifier = Modifier, content: @Composable ColumnScope.(close: () -> Unit) -> Unit) {
+/**
+ * A 56-dp chip that opens a menu (2.13): the log's employee filter, and in a short window the whole filter set. A stadium on
+ * the card with the chip border: an optional 20-dp [icon] (the employee chip's person), the [label], a 20-dp arrow; it settles
+ * to .98 under the press fill, never a ripple. While it narrows the list ([active]) it takes [carSelection], so a forgotten
+ * filter shows. TalkBack hears one drop-down list, "[name], [label]" ("직원 필터, 전체 직원"). The menu is the car's card
+ * (corner 20, the hairline); [content] gets a close call.
+ */
+@Composable private fun DropdownChip(label: String, name: String, modifier: Modifier = Modifier, icon: Painter? = null, active: Boolean = false,
+    content: @Composable ColumnScope.(close: () -> Unit) -> Unit) {
     var open by remember { mutableStateOf(false) }
     val interaction = remember { MutableInteractionSource() }
+    val skin = Car.skin
+    val shape = RoundedCornerShape(50)
     Box(modifier) {
-        Surface(onClick = { open = true }, shape = RoundedCornerShape(50), color = Scene.glass, border = Scene.edge, interactionSource = interaction,
-            modifier = Modifier.heightIn(min = 56.dp).pressable(interaction, .98f).semantics { role = Role.DropdownList }) {
-            Row(Modifier.heightIn(min = 56.dp).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(label, style = MaterialTheme.typography.labelLarge, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                Text("▾", style = MaterialTheme.typography.labelLarge, color = Scene.textSecondary, modifier = Modifier.clearAndSetSemantics {})
-            }
+        Row(Modifier.pressable(interaction, .98f).clip(shape).background(skin.card)
+            .then(if (active) Modifier.carSelection(true, shape) else Modifier.border(1.dp, skin.chipBorder, shape))
+            .clickable(interactionSource = interaction, indication = null, role = Role.DropdownList) { open = true }
+            .semantics { contentDescription = "$name, $label" }
+            .pressFill(interaction).heightIn(min = 56.dp).padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (icon != null) Icon(icon, contentDescription = null, Modifier.size(20.dp), tint = skin.icon)
+            Text(label, style = MaterialTheme.typography.labelLarge, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false).clearAndSetSemantics {})
+            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null, Modifier.size(20.dp), tint = Scene.textSecondary)
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) { content { open = false } }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, shape = RoundedCornerShape(20.dp), containerColor = skin.card,
+            border = BorderStroke(1.dp, skin.cardBorder)) { content { open = false } }
     }
 }
 
@@ -1432,15 +1522,17 @@ internal fun logListWidth(layout: LayoutTokens, page: Dp, gap: Dp, fontScale: Fl
 private class LastShown<T> { var value: T? = null }
 
 /**
- * The car's side sheet for a window too narrow for two columns: a scrim over the list and a glass sheet at the end edge that
- * lifts 24 dp and fades in (200 ms) and drops out (160 ms); a fade snap under reduced motion. Tapping the scrim or Back
- * closes it. TalkBack meets the sheet as one pane named [title]; the scrim is for touch only (the sheet carries its own 닫기),
- * and the caller takes what lies under the scrim out of TalkBack's reach while [item] is set.
+ * The car's side sheet for a window too narrow for two columns: a scrim over the list and a sheet at the end edge that lifts
+ * 24 dp and fades in (200 ms) and drops out (160 ms); a fade snap under reduced motion. Tapping the scrim or Back closes it.
+ * 2.13: the sheet is the car's card (the hairline, corner 28) and the scrim is black at [SHEET_SCRIM_ALPHA], the assistant
+ * sheet's, where the page colour at .55 laid a white veil over the list by day. TalkBack meets the sheet as one pane named
+ * [title]; the scrim is for touch only (the sheet carries its own 닫기), and the caller takes what lies under the scrim out
+ * of TalkBack's reach while [item] is set.
  */
 @Composable private fun <T : Any> BoxScope.SideSheet(item: T?, onDismiss: () -> Unit, modifier: Modifier = Modifier, widthFraction: Float = .62f,
     title: String = "상세", content: @Composable (T) -> Unit) {
     val reduce = LocalReduceMotion.current
-    val scrim = Scene.bg
+    val skin = Car.skin
     val lift = with(LocalDensity.current) { 24.dp.roundToPx() }
     val last = remember { LastShown<T>() }
     if (item != null) last.value = item
@@ -1449,194 +1541,328 @@ private class LastShown<T> { var value: T? = null }
     AnimatedVisibility(item != null, Modifier.matchParentSize(), enter = if (reduce) fadeIn(snap()) else fadeIn(tween(200, easing = FastOutSlowInEasing)),
         exit = if (reduce) fadeOut(snap()) else fadeOut(tween(160, easing = FastOutLinearInEasing))) {
         // Cleared before the click so its action goes too: a screen-wide unlabeled target would only get in TalkBack's way.
-        Box(Modifier.fillMaxSize().clearAndSetSemantics {}.background(scrim.copy(alpha = .55f))
+        Box(Modifier.fillMaxSize().clearAndSetSemantics {}.background(Color.Black.copy(alpha = SHEET_SCRIM_ALPHA))
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss))
     }
     AnimatedVisibility(item != null, modifier.align(Alignment.CenterEnd).fillMaxHeight().fillMaxWidth(widthFraction),
         enter = if (reduce) fadeIn(snap()) else fadeIn(tween(200, easing = FastOutSlowInEasing)) + slideInVertically(tween(200, easing = FastOutSlowInEasing)) { lift },
         exit = if (reduce) fadeOut(snap()) else fadeOut(tween(160, easing = FastOutLinearInEasing)) + slideOutVertically(tween(160, easing = FastOutLinearInEasing)) { lift }) {
-        Surface(Modifier.fillMaxSize().semantics { paneTitle = title; isTraversalGroup = true }, shape = RoundedCornerShape(32.dp), color = Scene.glass,
-            border = Scene.edge) { if (shown != null) content(shown) }
+        Surface(Modifier.fillMaxSize().semantics { paneTitle = title; isTraversalGroup = true }, shape = RoundedCornerShape(28.dp), color = skin.card,
+            contentColor = Scene.text, border = BorderStroke(1.dp, skin.cardBorder)) { if (shown != null) content(shown) }
     }
 }
 
-@Composable private fun TripList(trips: List<Trip>, data: TripLogData, issues: List<TripIssue>, selectedId: String?, modifier: Modifier, compact: Boolean = false,
-    onSelect: (String) -> Unit) {
-    if (trips.isEmpty()) {
-        Box(modifier, contentAlignment = Alignment.Center) { Muted("이 달의 운행 기록이 없어요.") }
-        return
-    }
-    val flagged = issues.map { it.tripId }.toSet()
+/**
+ * 전체 (2.13): one car card per day, newest first, its date a heading with the day's count and distance at its end, and its
+ * trips as [TripRow]s 4 dp apart; the cards stand the page's card gap apart. [flagged] holds the trips 점검 필요 lists,
+ * [selectedId] the one the detail shows. Opened on a trip ([scrollTo]), the list first brings that day into view.
+ */
+@Composable private fun TripList(trips: List<Trip>, data: TripLogData, flagged: Set<String>, selectedId: String?, modifier: Modifier, compact: Boolean = false,
+    scrollTo: String? = null, onSelect: (String) -> Unit) {
     val days = trips.reversed().groupBy { localDate(it.startAt) }
     val list = rememberLazyListState()
-    LazyColumn(modifier.fadingTopEdge(list), state = list, verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp)) {
-        days.forEach { (date, list) ->
+    LaunchedEffect(Unit) {
+        val day = scrollTo?.let { id -> days.values.indexOfFirst { dayTrips -> dayTrips.any { it.id == id } } } ?: -1
+        if (day > 0) list.scrollToItem(day)
+    }
+    LazyColumn(modifier.fadingTopEdge(list), state = list, verticalArrangement = Arrangement.spacedBy(LocalLayout.current.cardGap)) {
+        days.forEach { (date, dayTrips) ->
             item(key = "d$date") {
-                Row(Modifier.fillMaxWidth().padding(top = if (compact) 8.dp else 12.dp, bottom = 4.dp, start = 8.dp, end = 8.dp)) {
-                    Text(dayLabel(date), style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                    Muted("${list.size}건 · ${kmText(list.sumOf { it.distanceKm })}")
+                CarCard(padding = 16.dp, gap = 4.dp, title = {
+                    CarSectionTitle(dayLabel(date)) {
+                        Text("${dayTrips.size}건 · ${kmText(dayTrips.sumOf { it.distanceKm })}", style = MaterialTheme.typography.labelMedium,
+                            color = Scene.textSecondary, maxLines = 1)
+                    }
+                }) {
+                    dayTrips.forEach { trip -> key(trip.id) { TripRow(trip, data, trip.id in flagged, trip.id == selectedId, compact) { onSelect(trip.id) } } }
                 }
             }
-            items(list, key = { it.id }) { trip -> TripRow(trip, data, trip.id in flagged, trip.id == selectedId, compact) { onSelect(trip.id) } }
         }
     }
 }
 
 /**
- * One trip of the list (88 dp, or 64 when [compact]). Every row sits on glass; the selected one lays the selection fill over
- * that glass and adds the 1.5-dp ring (never colour alone, and never a bare tint over the sky). Settles to .98 while held.
+ * One trip of a list (2.13, docs/design/DESIGN_2_13_SPEC.md §7.3): a 72-dp row (64 when [compact]) in a 14-dp shape, the
+ * open one in [carSelection]. A 12-dp negative dot when [flagged] (its slot is kept, so the times align) before the start
+ * time in tabular figures; the title is the route, or the distance and time without an address ([tripRowTitle]), over one
+ * line ([tripRowLine]: 마감 후 수정, the person or 사용자 미지정, a cost); the purpose tag ends the row. One TalkBack stop
+ * ([tripRowSpoken]) that says it is selected and why it is flagged; it settles to .98 under the press fill, never a ripple.
  */
 @Composable internal fun TripRow(trip: Trip, data: TripLogData, flagged: Boolean, selected: Boolean, compact: Boolean = false, onClick: () -> Unit) {
-    val colors = MaterialTheme.colorScheme
     val driver = data.drivers.firstOrNull { it.id == trip.driverId }
-    val shape = RoundedCornerShape(if (compact) 18.dp else 24.dp)
+    val edited = editedAfterClose(trip)
+    val shape = RoundedCornerShape(14.dp)
     val interaction = remember { MutableInteractionSource() }
-    val noRipple = LocalLayout.current.startAnchored
-    Row(Modifier.fillMaxWidth().pressable(interaction, .98f).clip(shape).background(Scene.glass)
-        .then(if (selected) Modifier.background(Scene.selectionFill).border(1.5.dp, Scene.selectionRing, shape) else Modifier)
-        .semantics { this.selected = selected; if (flagged) stateDescription = "점검 필요" }
-        .clickable(interactionSource = interaction, indication = if (noRipple) null else LocalIndication.current, role = Role.Button, onClickLabel = "운행 상세 보기", onClick = onClick)
-        .heightIn(min = if (compact) 64.dp else 88.dp).padding(horizontal = 20.dp, vertical = if (compact) 8.dp else 14.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-        Column(Modifier.width(68.dp)) {
-            Text(hm(trip.startAt), style = MaterialTheme.typography.titleMedium)
-            if (!compact) Text(hm(trip.endAt ?: trip.updatedAt), style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+    val spoken = tripRowSpoken(trip, driver, edited)
+    val lines = carLineMaxLines(LocalDensity.current.fontScale)
+    Row(Modifier.fillMaxWidth().pressable(interaction, .98f).clip(shape).carSelection(selected, shape)
+        .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClickLabel = LogCopy.ROW_ACTION, onClick = onClick)
+        .semantics { contentDescription = spoken; this.selected = selected; if (flagged) stateDescription = LogCopy.ROW_FLAGGED }
+        .pressFill(interaction).heightIn(min = if (compact) 64.dp else 72.dp).padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        // The row speaks as one ([spoken]); its parts are drawn only.
+        Row(Modifier.clearAndSetSemantics {}, verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(12.dp).then(if (flagged) Modifier.clip(CircleShape).background(Scene.negative) else Modifier))
+            Spacer(Modifier.width(8.dp))
+            Text(hm(trip.startAt), style = MaterialTheme.typography.titleSmall.copy(fontFeatureSettings = "tnum"), color = Scene.text, maxLines = 1)
         }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(routeText(trip), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(listOfNotNull(kmText(trip.distanceKm), durationText(trip.durationMillis), driver?.label, if (trip.demo) "시연" else null,
-                if (trip.expenses.isNotEmpty()) formatWon(trip.expenseWon) else null).joinToString(" · "),
-                style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f).clearAndSetSemantics {}, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(tripRowTitle(trip), style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(tripRowLine(trip, driver?.let { it.name.ifBlank { it.label } }, edited), style = MaterialTheme.typography.bodySmall, color = Scene.textMuted,
+                maxLines = lines, overflow = TextOverflow.Ellipsis)
         }
-        if (flagged) Box(Modifier.size(10.dp).clip(CircleShape).background(Scene.negative))
-        PurposeChip(trip.purpose)
-        if (editedAfterClose(trip)) MonthCloseChip("마감 후 수정")
+        Spacer(Modifier.width(12.dp))
+        Box(Modifier.clearAndSetSemantics {}) { PurposeChip(trip.purpose) }
     }
 }
 
-@Composable private fun IssueList(issues: List<TripIssue>, data: TripLogData, modifier: Modifier, act: Act, repository: TripLogRepository,
-    openDriver: (String?) -> Unit, onOpen: (String) -> Unit) {
-    if (issues.isEmpty()) {
-        Box(modifier, contentAlignment = Alignment.Center) { Muted("점검할 항목이 없어요. 계기판 누적거리가 끊김 없이 이어집니다.") }
-        return
+/**
+ * Adds the stretch the odometer says was driven unrecorded before an issue's trip (기록되지 않은 주행) as a trip of its own,
+ * and answers "누락 구간 12.0 km를 추가했어요" with an undo that deletes the new trip (2.13: it used to write the trip without
+ * a word). The issue card's button and the detail's 구간 추가 share it.
+ */
+@Composable private fun rememberGapFiller(act: Act, repository: TripLogRepository): (TripIssue) -> Unit {
+    val followUp = LocalFollowUp.current
+    return { issue ->
+        val previous = issue.previousTripId
+        if (previous != null) act {
+            val before = repository.state.value.data.trips.mapTo(HashSet()) { it.id }
+            repository.fillGap(previous, issue.tripId)
+            val added = repository.state.value.data.trips.firstOrNull { it.id !in before && it.origin == TripOrigin.GAP_FILL }
+            val line = gapAddedLine(added?.distanceKm ?: issue.gapKm ?: 0.0)
+            followUp(if (added == null) FollowUp(line) else FollowUp(line, LogCopy.UNDO) { repository.deleteTrip(added.id) })
+        }
     }
+}
+
+/**
+ * 점검 필요 (2.13): one car card per issue, in [issueOrder]. The card opens its trip (자세히 went); while the detail shows that
+ * trip ([selectedId]) it takes the accentInk ring alone, so its buttons keep the card under them. Its title is the issue with
+ * its distance, then a tag, 마감 전 필수 or 참고 ([issueRequired]); under it the trip's day and start, and one line
+ * ([issueLine]) whose long form TalkBack hears. The buttons fix what can be fixed here: the three purposes, 사용자 지정,
+ * 기록 삭제 for a 0 km trip, and 누락 구간을 운행으로 추가, each answered on the follow-up bar with its undo.
+ */
+@Composable private fun IssueList(issues: List<TripIssue>, data: TripLogData, selectedId: String?, modifier: Modifier, act: Act, repository: TripLogRepository,
+    openDriver: (String?) -> Unit, onOpen: (String) -> Unit) {
     val trips = data.trips.associateBy { it.id }
     val classify = rememberClassifier(data, act, repository)
+    val fillGap = rememberGapFiller(act, repository)
     val followUp = LocalFollowUp.current
     val list = rememberLazyListState()
-    LazyColumn(modifier.fadingTopEdge(list), state = list, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    val ring = Car.skin.accentInk
+    LazyColumn(modifier.fadingTopEdge(list), state = list, verticalArrangement = Arrangement.spacedBy(LocalLayout.current.cardGap)) {
         items(issues, key = { "${it.type}-${it.tripId}" }) { issue ->
             val trip = trips[issue.tripId] ?: return@items
-            Panel(padding = 22.dp) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Box(Modifier.size(10.dp).clip(CircleShape).background(Scene.negative))
-                    Text(issue.type.label + (issue.gapKm?.let { " · ${kmText(it)}" } ?: ""), style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.weight(1f).semantics { heading() })
-                    Muted("${dayLabel(localDate(trip.startAt))} ${hm(trip.startAt)}")
-                }
-                Muted(issue.type.detail)
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    when (issue.type) {
-                        IssueType.UNCLASSIFIED -> purposeChoices.forEach { purpose ->
-                            QuietAction(purpose.label, Modifier.weight(1f)) { classify(trip, purpose, EditSource.DRIVER) }
-                        }
-                        IssueType.NO_DRIVER -> QuietAction("사용자 지정", Modifier.weight(1f)) { openDriver(trip.id) }
-                        IssueType.ZERO_DISTANCE -> QuietAction("기록 삭제", Modifier.weight(1f), color = Scene.negative) {
-                            act { repository.deleteTrip(trip.id); followUp(FollowUp("0 km 기록을 삭제했어요", "실행 취소") { repository.restoreTrip(trip) }) }
-                        }
-                        IssueType.ODOMETER_GAP -> QuietAction("누락 구간을 운행으로 추가", Modifier.weight(1f)) {
-                            act { repository.fillGap(issue.previousTripId!!, trip.id) }
-                        }
-                        else -> {}
+            val open = trip.id == selectedId
+            CarCard(Modifier.then(if (open) Modifier.border(2.dp, ring, RoundedCornerShape(20.dp)) else Modifier).semantics { selected = open },
+                padding = 20.dp, onClick = { onOpen(trip.id) }, onClickLabel = LogCopy.ROW_ACTION) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(12.dp).clip(CircleShape).background(Scene.negative))
+                        Spacer(Modifier.width(12.dp))
+                        Text(issueTitle(issue), style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f).semantics { heading() })
+                        Spacer(Modifier.width(12.dp))
+                        CarTag(if (issueRequired(issue.type)) LogCopy.REQUIRED else LogCopy.REFERENCE)
                     }
-                    QuietAction("자세히") { onOpen(trip.id) }
+                    Text("${dayLabel(localDate(trip.startAt))} ${hm(trip.startAt)}", style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary)
+                    CarLine(issueLine(issue.type, trip), spoken = issue.type.detail)
+                }
+                when (issue.type) {
+                    IssueType.UNCLASSIFIED -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        purposeChoices.forEach { purpose -> QuietAction(purpose.label, Modifier.weight(1f)) { classify(trip, purpose, EditSource.DRIVER) } }
+                    }
+                    IssueType.NO_DRIVER -> QuietAction(LogCopy.ASSIGN_DRIVER) { openDriver(trip.id) }
+                    IssueType.ZERO_DISTANCE -> QuietAction(LogCopy.DELETE_RECORD, color = Scene.negative) {
+                        act { repository.deleteTrip(trip.id); followUp(FollowUp("0 km 기록을 삭제했어요", LogCopy.UNDO) { repository.restoreTrip(trip) }) }
+                    }
+                    IssueType.ODOMETER_GAP -> if (issue.previousTripId != null) QuietAction(LogCopy.FILL_GAP) { fillGap(issue) }
+                    else -> {}
                 }
             }
         }
     }
 }
 
-@Composable private fun TripDetail(trip: Trip, data: TripLogData, act: Act, repository: TripLogRepository, openDriver: (String?) -> Unit, close: () -> Unit) {
+/** The fold of 운행 비용's form (추가 / 닫기): 200 ms like an ⓘ row, a snap under reduced motion. The only new motion of 운행기록. */
+private const val EXPENSE_FOLD_MS = 200
+
+/**
+ * 운행 상세 (2.13, docs/design/DESIGN_2_13_SPEC.md §7.4), on the card of the pane ([inPane]) or of the side sheet, in blocks a
+ * divider apart: the title (day, start and end, a heading that the pane announces politely, since it changes with the row
+ * the driver opens; 시연 데이터 and 마감 후 수정 as tags; 닫기 in the sheet only); the distance with ⑤ 주행 전 · ⑥ 주행 후 · 주행
+ * 시간 and why the odometer cannot be edited, then the trip's other issues ([issues] less the two the tiles and the person
+ * row answer), a gap with its 구간 추가; 출발 · 도착; 운행 목적 as [PurposeOptions] with its source as a tag; the person (④
+ * 사용자) with 바꾸기 or 지정; 운행 비용, its sum trailing the title and its rows in the one money style, the navigation's
+ * toll as a one-tap chip ([tollSuggestion]), and the form folded behind 추가 (five type chips and a [CarMoneyField]); ⑩ 비고;
+ * 수정 이력 behind ⓘ; and 이 기록 삭제, which asks first ([CarDialog], destroy). Every edit answers on the follow-up bar with
+ * its undo, and calls [pin] first, so the pane keeps this trip while a fix drops it from the list. [close] closes the sheet
+ * and clears the tap; a delete calls it too. A new trip composes fresh (its figures swap at once, the form folds, the
+ * scroll returns to the top); only the title stays, so its live region is heard.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable private fun TripDetail(trip: Trip, data: TripLogData, issues: List<TripIssue>, act: Act, repository: TripLogRepository, openDriver: (String?) -> Unit,
+    inPane: Boolean, pin: () -> Unit, close: () -> Unit) {
     val negative = Scene.negative
-    var note by rememberSaveable(trip.id, trip.note) { mutableStateOf(trip.note) }
-    var expenseType by rememberSaveable(trip.id) { mutableIntStateOf(1) }
-    var amount by rememberSaveable(trip.id) { mutableStateOf("") }
-    var deleting by remember(trip.id) { mutableStateOf(false) }
-    val driver = data.drivers.firstOrNull { it.id == trip.driverId }
     val classify = rememberClassifier(data, act, repository)
+    val fillGap = rememberGapFiller(act, repository)
     val followUp = LocalFollowUp.current
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(28.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f).semantics(mergeDescendants = true) { heading() }) {
-                Eyebrow(dayLabel(localDate(trip.startAt)) + if (trip.demo) " · 시연 데이터" else "", Scene.brand)
-                Text("${hm(trip.startAt)} – ${if (trip.open) "기록 중" else hm(trip.endAt!!)}", style = MaterialTheme.typography.headlineSmall)
-            }
-            TextButton(onClick = close, modifier = Modifier.heightIn(min = 56.dp)) { Text("닫기") }
+    val reduce = LocalReduceMotion.current
+    val scroll = remember(trip.id) { ScrollState(0) }
+    var deleting by remember(trip.id) { mutableStateOf(false) }
+    val edited = editedAfterClose(trip)
+    // A cost the driver adds (a typed amount or the toll chip), answered with an undo that removes that very cost.
+    val addExpense: (ExpenseType, Long, () -> Unit) -> Unit = { type, won, done ->
+        pin()
+        act {
+            repository.addExpense(trip.id, type, won, EditSource.DRIVER)
+            done()
+            val added = repository.state.value.data.trips.firstOrNull { it.id == trip.id }?.expenses?.lastOrNull()
+            followUp(if (added == null) FollowUp(expenseAddedLine(type, won)) else FollowUp(expenseAddedLine(type, won), LogCopy.UNDO) {
+                val index = repository.state.value.data.trips.firstOrNull { it.id == trip.id }?.expenses?.indexOfLast { it == added } ?: -1
+                if (index >= 0) repository.removeExpense(trip.id, index)
+            })
         }
-        Surface(shape = RoundedCornerShape(24.dp), color = Scene.fill) {
-            Column(Modifier.fillMaxWidth().padding(22.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(kmText(trip.distanceKm), style = MaterialTheme.typography.displaySmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                    Stat("⑤ 주행 전 계기판", kmText(trip.startOdometerKm), Modifier.weight(1f))
-                    Stat("⑥ 주행 후 계기판", kmText(trip.endOdometerKm), Modifier.weight(1f))
-                }
-                Text(if (trip.origin == TripOrigin.GAP_FILL) "앞뒤 운행의 계기판 값으로 보완한 구간이에요." else "차량 계기판에서 읽은 값이라 수정할 수 없어요.",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Stat("출발", trip.startAddress ?: "주소 미기록")
-            Stat("도착", listOfNotNull(trip.destination, trip.endAddress).distinct().joinToString(" · ").ifBlank { if (trip.open) "기록 중" else "주소 미기록" })
-        }
-        // The date above is the sheet's one section label (brand); the labels inside it name its fields.
-        Eyebrow("운행 목적", Scene.textSecondary)
-        PurposeOptions(trip.purpose) { purpose -> if (purpose != trip.purpose) classify(trip, purpose, EditSource.DRIVER) }
-        trip.purposeSource?.let { Muted("목적: ${trip.purpose.label} · ${it.label}") }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Stat("④ 사용자", driver?.label ?: "미지정", Modifier.weight(1f))
-            QuietAction("변경") { openDriver(trip.id) }
-        }
-        Eyebrow("운행 비용", Scene.textSecondary)
-        trip.expenses.forEachIndexed { index, expense ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("${expense.type.label}  ${formatWon(expense.amountWon)}", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                Muted(expense.merchant?.let { "$it · ${expense.source.label}" } ?: expense.source.label)
-                TextButton(onClick = { act {
-                    repository.removeExpense(trip.id, index)
-                    followUp(FollowUp("${expense.type.label} ${formatWon(expense.amountWon)}을 삭제했어요", "실행 취소") {
-                        val charge = expense.cardChargeId
-                        if (charge != null) repository.confirmCardCharge(charge, trip.id) else repository.addExpense(trip.id, expense.type, expense.amountWon, expense.source)
-                    })
-                } }, modifier = Modifier.heightIn(min = 56.dp).semantics { contentDescription = "${expense.type.label} ${formatWon(expense.amountWon)} 삭제" }) { Text("삭제") }
-            }
-        }
-        Segmented(ExpenseType.entries.map { it.label }, expenseType) { expenseType = it }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Field("금액", amount, { if (it.length <= 8 && it.all(Char::isDigit)) amount = it }, Modifier.weight(1f), number = true, suffix = "원", done = true,
-                hint = amount.toLongOrNull()?.let(::formatWon) ?: "1원~1,000만 원")
-            PrimaryAction("추가", enabled = amount.toLongOrNull()?.let { it in 1..10_000_000 } == true) {
-                val value = amount.toLong()
-                act { repository.addExpense(trip.id, ExpenseType.entries[expenseType], value, EditSource.DRIVER); amount = "" }
-            }
-        }
-        Eyebrow("⑩ 비고", Scene.textSecondary)
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Field("방문처·업무 내용", note, { if (it.length <= 300) note = it }, Modifier.weight(1f), done = true, hint = "${note.length} / 300")
-            PrimaryAction("저장", enabled = note != trip.note) { act { repository.setNote(trip.id, note.trim()) } }
-        }
-        if (trip.history.isNotEmpty()) {
-            Eyebrow("수정 이력", Scene.textSecondary)
-            trip.history.takeLast(8).reversed().forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        }
-        if (!trip.open) TextButton(onClick = { deleting = true }, modifier = Modifier.heightIn(min = 56.dp)) { Text("이 기록 삭제", color = negative) }
     }
-    if (deleting) AlertDialog(onDismissRequest = { deleting = false }, title = { Text("운행 기록을 삭제할까요?") },
-        text = { Text("삭제하면 계기판 거리가 끊겨 ‘기록되지 않은 주행’으로 표시될 수 있어요. 시동만 켠 기록이나 시연 기록만 삭제하는 것을 권장해요.") },
-        confirmButton = { DialogButton("삭제", color = negative) { deleting = false; close(); act {
-            repository.deleteTrip(trip.id)
-            followUp(FollowUp("${kmText(trip.distanceKm)} 운행 기록을 삭제했어요", "실행 취소") { repository.restoreTrip(trip) })
-        } } },
-        dismissButton = { DialogButton("취소") { deleting = false } })
+    Column(Modifier.fillMaxSize().fadingTopEdge(scroll).verticalScroll(scroll).padding(carCardPadding()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        val hasTags = trip.demo || edited || !inPane
+        CarSectionTitle(tripDetailTitle(trip), icon = painterResource(R.drawable.ic_vehicle), live = inPane, trailing = if (!hasTags) null else { {
+            if (trip.demo) CarTag(LogCopy.DEMO, tone = PillTone.DEMO)
+            if (edited) CarTag(LogCopy.EDITED)
+            if (!inPane) CarPillButton(LogCopy.CLOSE, close)
+        } })
+        key(trip.id) {
+            var note by rememberSaveable(trip.note) { mutableStateOf(trip.note) }
+            var expenseType by rememberSaveable { mutableIntStateOf(1) }
+            var amount by rememberSaveable { mutableStateOf("") }
+            var adding by rememberSaveable { mutableStateOf(false) }
+            val driver = data.drivers.firstOrNull { it.id == trip.driverId }
+            CarDivider()
+            // The distance as 오늘 운행 shows it, then the form's two odometer columns and the time.
+            Row(Modifier.semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(String.format(Locale.KOREA, "%,.1f", trip.distanceKm), style = MaterialTheme.typography.displaySmall.copy(fontFeatureSettings = "tnum"),
+                    color = Scene.text, maxLines = 1)
+                Text("km", style = MaterialTheme.typography.titleMedium, color = Scene.textMuted, modifier = Modifier.padding(bottom = 6.dp))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                val gauge = painterResource(R.drawable.ic_gauge)
+                val before = kmText(trip.startOdometerKm)
+                val after = kmText(trip.endOdometerKm)
+                val time = durationText(trip.durationMillis)
+                CarMiniStat(gauge, LogCopy.BEFORE, before, Modifier.weight(1f).clearAndSetSemantics { contentDescription = "${LogCopy.SPOKEN_BEFORE} $before" })
+                CarMiniStat(gauge, LogCopy.AFTER, after, Modifier.weight(1f).clearAndSetSemantics { contentDescription = "${LogCopy.SPOKEN_AFTER} $after" })
+                CarMiniStat(painterResource(R.drawable.ic_clock), LogCopy.DURATION, time, Modifier.weight(1f).clearAndSetSemantics { contentDescription = "${LogCopy.DURATION} $time" })
+            }
+            CarInfoRow(odometerNote(trip.origin))
+            // A flagged row never said why: the trip's other issues, each with what it found (목적 and 사용자 are answered below).
+            issues.filterNot { issueRequired(it.type) }.forEach { issue ->
+                CarRow(issueTitle(issue), line = issueLine(issue.type, trip), spoken = "${issueTitle(issue)}, ${issue.type.detail}",
+                    lead = { Box(Modifier.size(12.dp).clip(CircleShape).background(Scene.negative)) },
+                    trailing = if (issue.type != IssueType.ODOMETER_GAP || issue.previousTripId == null) null else { {
+                        CarPillButton(LogCopy.FILL_GAP_SHORT, { pin(); fillGap(issue) }, description = LogCopy.FILL_GAP)
+                    } })
+            }
+            CarDivider()
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                DetailPlaceRow(LogCopy.FROM, trip.startAddress?.takeIf { it.isNotBlank() } ?: LogCopy.NO_ADDRESS)
+                DetailPlaceRow(LogCopy.TO, listOfNotNull(trip.destination, trip.endAddress).filter { it.isNotBlank() }.distinct().joinToString(" · ")
+                    .ifBlank { if (trip.open) LogCopy.RECORDING else LogCopy.NO_ADDRESS })
+            }
+            CarDivider()
+            val source = trip.purposeSource
+            CarSectionTitle(LogCopy.PURPOSE, icon = painterResource(R.drawable.ic_report), trailing = if (source == null) null else { { CarTag(source.label) } })
+            PurposeOptions(trip.purpose) { purpose -> if (purpose != trip.purpose) { pin(); classify(trip, purpose, EditSource.DRIVER) } }
+            CarDivider()
+            val person = driver?.let { it.name.ifBlank { it.label } }
+            CarRow(person ?: LogCopy.NO_DRIVER, line = driver?.let { listOf(LogCopy.DRIVER, it.department).filter(String::isNotBlank).joinToString(" · ") } ?: LogCopy.DRIVER_EMPTY,
+                lead = { DriverAvatar(driver, 40.dp) }, trailing = {
+                    CarPillButton(if (driver != null) LogCopy.CHANGE else LogCopy.ASSIGN, { pin(); openDriver(trip.id) },
+                        description = if (driver != null) LogCopy.SPOKEN_CHANGE else LogCopy.SPOKEN_ASSIGN)
+                })
+            CarDivider()
+            CarSectionTitle(LogCopy.COSTS, icon = painterResource(R.drawable.ic_won)) {
+                if (trip.expenses.isNotEmpty()) CarAmount(trip.expenseWon)
+                CarPillButton(if (adding) LogCopy.CLOSE else LogCopy.ADD, { adding = !adding },
+                    Modifier.semantics { stateDescription = if (adding) LogCopy.UNFOLDED else LogCopy.FOLDED },
+                    description = if (adding) LogCopy.SPOKEN_CLOSE_COST else LogCopy.SPOKEN_ADD_COST)
+            }
+            if (trip.expenses.isEmpty()) CarLine(LogCopy.COSTS_EMPTY)
+            trip.expenses.forEachIndexed { index, expense ->
+                CarMoneyRow(expense.type.label, expense.amountWon, line = expenseLine(expense), action = {
+                    CarPillButton(LogCopy.DELETE, {
+                        pin()
+                        act {
+                            repository.removeExpense(trip.id, index)
+                            followUp(FollowUp("${expense.type.label} ${formatWon(expense.amountWon)}을 삭제했어요", LogCopy.UNDO) {
+                                val charge = expense.cardChargeId
+                                if (charge != null) repository.confirmCardCharge(charge, trip.id) else repository.addExpense(trip.id, expense.type, expense.amountWon, expense.source)
+                            })
+                        }
+                    }, color = negative, description = "${expense.type.label} ${formatWon(expense.amountWon)} 삭제")
+                })
+            }
+            // The fare the navigation expected for a road with gates, one tap from the trip's costs.
+            tollSuggestion(trip)?.let { fare ->
+                CarExampleChip(tollChipText(fare), { addExpense(ExpenseType.TOLL, fare) {} }, actionLabel = LogCopy.SPOKEN_TOLL_ACTION)
+            }
+            AnimatedVisibility(adding, label = "expense-form",
+                enter = if (reduce) fadeIn(snap()) else fadeIn(tween(EXPENSE_FOLD_MS, easing = FastOutSlowInEasing)) + expandVertically(tween(EXPENSE_FOLD_MS, easing = FastOutSlowInEasing)),
+                exit = if (reduce) fadeOut(snap()) else fadeOut(tween(EXPENSE_FOLD_MS, easing = FastOutSlowInEasing)) + shrinkVertically(tween(EXPENSE_FOLD_MS, easing = FastOutSlowInEasing))) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    FlowRow(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ExpenseType.entries.forEachIndexed { index, type -> CarChoiceChip(type.label, index == expenseType) { expenseType = index } }
+                    }
+                    val input = moneyInput(amount, 1, 10_000_000, LogCopy.AMOUNT_HINT)
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        CarMoneyField(LogCopy.AMOUNT, amount, { amount = it }, input, Modifier.weight(1f), done = true)
+                        PrimaryAction(LogCopy.ADD, enabled = input.ok) {
+                            // The field clears once the cost is in, never before: a refused amount stays to be fixed.
+                            input.won?.let { won -> addExpense(ExpenseType.entries[expenseType], won) { amount = "" } }
+                        }
+                    }
+                }
+            }
+            CarDivider()
+            CarSectionTitle(LogCopy.NOTE, icon = rememberVectorPainter(Icons.Outlined.Edit))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Field(LogCopy.NOTE_FIELD, note, { if (it.length <= 300) note = it }, Modifier.weight(1f), done = true, hint = "${note.length} / 300")
+                PrimaryAction(LogCopy.SAVE, enabled = note != trip.note) {
+                    val before = trip.note
+                    val text = note.trim()
+                    pin()
+                    act {
+                        repository.setNote(trip.id, text)
+                        followUp(FollowUp(LogCopy.NOTE_SAVED, LogCopy.UNDO) { repository.setNote(trip.id, before) })
+                    }
+                }
+            }
+            if (trip.history.isNotEmpty() || !trip.open) CarDivider()
+            if (trip.history.isNotEmpty()) CarInfoRow(historyLine(trip.history.size), more = trip.history.takeLast(8).reversed())
+            if (!trip.open) CarPillButton(LogCopy.DELETE_TRIP, { deleting = true }, color = negative)
+        }
+    }
+    if (deleting) CarDialog(LogCopy.DELETE_TITLE, { deleting = false }, icon = painterResource(R.drawable.ic_warning), lines = LogCopy.DELETE_LINES) {
+        QuietAction(LogCopy.CANCEL) { deleting = false }
+        QuietAction(LogCopy.DELETE, color = negative, description = LogCopy.SPOKEN_DELETE) {
+            deleting = false
+            close()
+            act {
+                repository.deleteTrip(trip.id)
+                followUp(FollowUp("${kmText(trip.distanceKm)} 운행 기록을 삭제했어요", LogCopy.UNDO) { repository.restoreTrip(trip) })
+            }
+        }
+    }
+}
+
+/** 출발 or 도착 in 운행 상세: the label (labelMedium textSecondary, 40 dp) beside the place (titleSmall, two lines: it is data), one stop. */
+@Composable private fun DetailPlaceRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, maxLines = 1, modifier = Modifier.width(40.dp).alignByBaseline())
+        Spacer(Modifier.width(12.dp))
+        Text(value, style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).alignByBaseline())
+    }
 }
 
 @Composable internal fun Field(label: String, value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier, number: Boolean = false, suffix: String? = null,

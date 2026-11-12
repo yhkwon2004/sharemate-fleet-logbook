@@ -75,19 +75,28 @@ class LogbookUiTest {
     }
 
     @Test fun anEmptyLogSaysWhatTheMonthIsMissingAndOffersClearingOnlyWhenSomethingNarrowsIt() {
+        // 2.13: the title is short (the stepper and the chip already name the month and the employee); TalkBack keeps the long one.
         val today = LocalDate.of(2026, 11, 9)
         val november = YearMonth.of(2026, 11)
         val plain = logEmptyCopy(0, november, 0, null, today)
-        assertEquals("11월 운행 기록이 없어요", plain.title); assertNull(plain.detail)
+        assertEquals("운행 기록이 없어요", plain.title); assertEquals("11월 운행 기록이 없어요", plain.spoken); assertNull(plain.detail)
+        assertEquals(LogEmptyKind.TRIPS, plain.kind)
         assertFalse("전체·전체 직원이면 필터 해제가 없음", plain.clearable)
         val employee = logEmptyCopy(0, november, 0, "영업 · 권", today)
-        assertEquals("11월 영업 · 권 님의 운행 기록이 없어요", employee.title); assertTrue(employee.clearable)
+        assertEquals("운행 기록이 없어요", employee.title); assertEquals("11월 영업 · 권 님의 운행 기록이 없어요", employee.spoken)
+        assertTrue(employee.clearable)
         val checked = logEmptyCopy(1, november, 4, null, today)
-        assertEquals("11월 점검할 운행이 없어요", checked.title); assertEquals("계기판 누적거리가 끊김 없이 이어져요", checked.detail)
+        assertEquals("점검할 운행이 없어요", checked.title); assertEquals("11월 점검할 운행이 없어요", checked.spoken)
+        assertEquals("계기판 누적거리가 끊김 없이 이어져요", checked.detail)
+        assertEquals(LogEmptyKind.ISSUES, checked.kind)
         assertTrue(checked.clearable)
-        assertEquals("운행이 없으면 점검 필요도 운행이 없다고 말함", "11월 운행 기록이 없어요", logEmptyCopy(1, november, 0, null, today).title)
-        assertEquals("11월 카드 결제가 자동으로 들어간 운행이 없어요", logEmptyCopy(2, november, 3, null, today).title)
-        assertEquals("지난해 달은 연도를 붙임", "2025년 12월 운행 기록이 없어요", logEmptyCopy(0, YearMonth.of(2025, 12), 0, null, today).title)
+        val nothing = logEmptyCopy(1, november, 0, null, today)
+        assertEquals("운행이 없으면 점검 필요도 운행이 없다고 말함", "운행 기록이 없어요", nothing.title)
+        assertEquals("11월 운행 기록이 없어요", nothing.spoken)
+        val matched = logEmptyCopy(2, november, 3, null, today)
+        assertEquals("자동 반영된 운행이 없어요", matched.title); assertEquals("11월 카드 결제가 자동으로 들어간 운행이 없어요", matched.spoken)
+        assertEquals(LogEmptyKind.MATCHED, matched.kind)
+        assertEquals("지난해 달은 연도를 붙임", "2025년 12월 운행 기록이 없어요", logEmptyCopy(0, YearMonth.of(2025, 12), 0, null, today).spoken)
     }
 
     private val reportToday = LocalDate.of(2026, 11, 9)
