@@ -83,6 +83,29 @@ internal fun monthCloseTarget(data: TripLogData, today: LocalDate, zone: ZoneId)
 internal fun reportLandingMonth(data: TripLogData, today: LocalDate, zone: ZoneId): YearMonth =
     monthCloseTarget(data, today, zone)?.month ?: YearMonth.from(today)
 
+/**
+ * The month a car page opens on when no button names one (2.15, DESIGN_2_15 §2.1; pure, unit-tested): this month while it
+ * has a finished trip, or while [trips] has none at all; otherwise the latest earlier month that has one. 운행기록 follows it
+ * until the driver steps the month, so the page never opens on an empty month while the log has trips to show. A trip dated
+ * after today (a clock set back) never pulls the page forward.
+ */
+internal fun landingMonth(trips: List<Trip>, today: LocalDate, zone: ZoneId): YearMonth {
+    val month = YearMonth.from(today)
+    val months = trips.filter { !it.open }.map { YearMonth.from(Instant.ofEpochMilli(it.startAt).atZone(zone)) }.filter { it <= month }
+    return months.maxOrNull() ?: month
+}
+
+/**
+ * The month the car's 월간·Excel opens on when no button hands it one (2.15): [reportLandingMonth], except when that is this
+ * month and this month has no trip yet: then [landingMonth], the latest month that has trips, closed or not, so the page
+ * shows a month it can save instead of an empty one. The car's 정보 내보내기 names the same month. The phone keeps reading
+ * [reportLandingMonth].
+ */
+internal fun carReportLandingMonth(data: TripLogData, today: LocalDate, zone: ZoneId): YearMonth {
+    val landing = reportLandingMonth(data, today, zone)
+    return if (landing == YearMonth.from(today)) landingMonth(data.trips, today, zone) else landing
+}
+
 internal fun monthLabel(month: YearMonth, today: LocalDate): String =
     if (month.year == today.year) "${month.monthValue}월" else "${month.year}년 ${month.monthValue}월"
 

@@ -52,6 +52,35 @@ class MonthCloseUiTest {
         }
     }
 
+    @Test fun aCarPageLandsOnTheLatestMonthThatHasTrips() {
+        val october = listOf(trip("a", 10, 3), trip("b", 10, 28))
+        // This month while it has a trip, and while the log is empty.
+        assertEquals(YearMonth.of(2026, 11), landingMonth(october + trip("c", 11, 2), LocalDate.of(2026, 11, 13), zone))
+        assertEquals(YearMonth.of(2026, 11), landingMonth(emptyList(), LocalDate.of(2026, 11, 13), zone))
+        // Otherwise the latest earlier month with a trip, however far back, across a year's end too.
+        assertEquals(YearMonth.of(2026, 10), landingMonth(october, LocalDate.of(2026, 11, 13), zone))
+        assertEquals(YearMonth.of(2026, 10), landingMonth(october + trip("old", 8, 1), LocalDate.of(2026, 12, 1), zone))
+        val december = LocalDateTime.of(2025, 12, 10, 9, 0).atZone(zone).toInstant().toEpochMilli()
+        val lastYear = Trip(id("dec"), december, december + 3_600_000, 100.0, 110.0, driverId = driver.id, purpose = TripPurpose.BUSINESS)
+        assertEquals(YearMonth.of(2025, 12), landingMonth(listOf(lastYear), LocalDate.of(2026, 2, 1), zone))
+        // A trip still recording is not a trip of the list, and one dated after today never pulls the page forward.
+        val recording = Trip(id("open"), at(11, 13, 9), null, 110.0, 110.0, driverId = driver.id)
+        assertEquals(YearMonth.of(2026, 10), landingMonth(october + recording, LocalDate.of(2026, 11, 13), zone))
+        assertEquals(YearMonth.of(2026, 10), landingMonth(october + trip("future", 12, 1), LocalDate.of(2026, 11, 13), zone))
+    }
+
+    @Test fun theCarsReportLandsOnAMonthItCanShow() {
+        val data = TripLogData(drivers = listOf(driver), trips = listOf(trip("a", 10, 3), trip("b", 10, 5, TripPurpose.UNCLASSIFIED)))
+        val closed = closeMonth(data.copy(trips = data.trips.map { it.copy(purpose = TripPurpose.BUSINESS) }), YearMonth.of(2026, 10), at(11, 1, 9), zone)
+        // A month still to close keeps the close target; a closed last month is shown while this month has no trip yet.
+        assertEquals(YearMonth.of(2026, 10), carReportLandingMonth(data, LocalDate.of(2026, 11, 3), zone))
+        assertEquals(YearMonth.of(2026, 11), reportLandingMonth(closed, LocalDate.of(2026, 11, 13), zone))
+        assertEquals(YearMonth.of(2026, 10), carReportLandingMonth(closed, LocalDate.of(2026, 11, 13), zone))
+        // This month as soon as it has a trip, and for an empty log.
+        assertEquals(YearMonth.of(2026, 11), carReportLandingMonth(closed.copy(trips = closed.trips + trip("c", 11, 2)), LocalDate.of(2026, 11, 13), zone))
+        assertEquals(YearMonth.of(2026, 11), carReportLandingMonth(TripLogData(), LocalDate.of(2026, 11, 13), zone))
+    }
+
     @Test fun theHeadlineNeverPromisesTripsToAPastMonth() {
         val today = LocalDate.of(2026, 11, 9)
         assertEquals("11월 운행이 아직 없어요", monthCloseHeadline(MonthStatus(YearMonth.of(2026, 11), 0, 0, 0, null), today))
