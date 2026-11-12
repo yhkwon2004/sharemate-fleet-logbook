@@ -47,8 +47,9 @@ Things that need registration may start working once it is registered.
   SHORT window, as 2.12 did.
 - **Greeting**, 12 dp under it: `homeGreeting`, displaySmall Bold. Beside the 지금 column at 1x (`oneLine`) it keeps to
   ONE line and steps its size down to 30 sp where a name would wrap it ("오늘도 안전한 운행 되세요, Kim Jiwoo 님" may need
-  two lines at 44 sp in the 720-dp measure); an ellipsis only below 30 sp. With the brand line, a second line would make the
-  block 187 dp and break the budget. Elsewhere it takes two lines as in 2.13. It cross-fades as `DigitChange` does.
+  two lines at 44 sp in the 720-dp measure); below 30 sp it is clipped, not ellipsised (under `TextOverflow.Ellipsis` the
+  auto-size read every size as overflowing and fell to 30 sp on the Pleos emulator, so the line is laid out as the amounts
+  are). With the brand line, a second line would make the block 187 dp and break the budget. Elsewhere it takes two lines as in 2.13. It cross-fades as `DigitChange` does.
 - **Status line** 8 dp under it: as 2.13 (`homeStatusLine`).
 
 ### 3.2 The destination cards (`DestinationRow`, `DestinationCard`)

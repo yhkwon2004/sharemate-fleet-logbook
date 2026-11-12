@@ -516,8 +516,8 @@ private val GREETING_MIN_SIZE = 30.sp
 
 /**
  * The greeting kept to one line (2.14, beside the 지금 column): [DigitChange]'s cross-fade with a 4-dp lift (a snap under
- * reduced motion), the text Bold in [style] and stepping down to [GREETING_MIN_SIZE] where it would wrap, an ellipsis only
- * past that. The page's one heading.
+ * reduced motion), the text Bold in [style] and stepping down to [GREETING_MIN_SIZE] where it would wrap; past that it is
+ * clipped. The page's one heading.
  */
 @Composable private fun GreetingLine(text: String, style: TextStyle) {
     val reduce = LocalReduceMotion.current
