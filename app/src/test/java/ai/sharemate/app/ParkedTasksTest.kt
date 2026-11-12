@@ -45,8 +45,6 @@ class ParkedTasksTest {
         assertEquals(5, parkedTaskBadge(tasks))
         assertEquals("정차 후 · 특이사항 대응 1건 · 카드 확인 1건 · 충전 비용 1건 · 목적 확인 2건", drivingTaskLine(tasks))
         assertEquals("정차 후 할 일 없음", drivingTaskLine(emptyList()))
-        assertEquals("정차 후 정리 2/4 · 충전 비용 → 목적 확인", stepperLabel(tasks.drop(2).take(2), 2, 4))
-        assertEquals("2/4 · 충전 비용", stepperLabel(tasks.drop(2).take(2), 2, 4, narrow = true))
     }
 
     @Test fun chargeQuestionWaitsForTheCardFeedUnlessTheDriverSaysOtherwise() {
@@ -65,6 +63,13 @@ class ParkedTasksTest {
         assertTrue(parkedTasks(feed, SyncInfo(), now, zone).none { it.kind == TaskKind.CHARGE })
         assertEquals("충전 종료 14:25 · 카드 승인 기다리는 중 · 20분 안에 안 오면 금액을 물어볼게요", chargeWaitingLine(stop, ChargePrompt.AUTO, zone))
         assertEquals("주유 종료 14:25 · 카드 승인 기다리는 중 · 승인이 오면 자동으로 들어가요", chargeWaitingLine(stop.copy(fuel = true), ChargePrompt.WAIT, zone))
+        // 홈's waiting card says the wait in its headline; its line keeps when the stop ended and what comes next.
+        assertEquals("충전 종료 14:25 · 20분 안에 안 오면 금액을 물어볼게요", chargeWaitingShort(stop, ChargePrompt.AUTO, zone))
+        assertEquals("주유 종료 14:25 · 승인이 오면 자동으로 들어가요", chargeWaitingShort(stop.copy(fuel = true), ChargePrompt.WAIT, zone))
+        listOf(ChargePrompt.AUTO, ChargePrompt.WAIT).forEach { prompt ->
+            assertOneLine(chargeWaitingShort(stop, prompt, zone), HOME_CARD_LINE_UNITS)
+            assertTrue("읽어 주는 줄이 더 김", chargeWaitingLine(stop, prompt, zone).length > chargeWaitingShort(stop, prompt, zone).length)
+        }
     }
 
     @Test fun monthCloseAndCareSnoozeAreTheQuietTail() {
@@ -168,11 +173,5 @@ class ParkedTasksTest {
         assertNull("선택된 직원이 없으면 물을 대상이 없음", driverConfirmDue(data.copy(currentDriverId = null), now, zone, emptySet()))
         assertEquals("처음 운전하는 직원도 한 번은 확인", kim, driverConfirmDue(data.copy(trips = emptyList()), now, zone, emptySet()))
         assertEquals("2026-11-02", dateKey(now, zone))
-    }
-
-    @Test fun autopilotSublineNeverSaysNothingWhileAPaymentWaits() {
-        assertEquals("사람이 확인할 일 없음", autopilotSubline(AutopilotSummary(3, 3, 1, 1, 18_400, 0, 0, 0)))
-        assertEquals("카드 결제 2건 대기 중", autopilotSubline(AutopilotSummary(3, 3, 1, 1, 18_400, 0, 2, 0)))
-        assertEquals("남은 확인 1건 · 카드 결제 2건 대기 중", autopilotSubline(AutopilotSummary(3, 2, 1, 1, 18_400, 0, 2, 1)))
     }
 }

@@ -1,6 +1,7 @@
 package ai.sharemate.app
 
 import android.content.ActivityNotFoundException
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -69,7 +70,9 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
@@ -90,6 +93,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -117,24 +121,6 @@ internal val zone: ZoneId get() = ZoneId.systemDefault()
 internal fun hm(at: Long) = SimpleDateFormat("HH:mm", Locale.KOREA).format(Date(at))
 internal fun localDate(at: Long) = Instant.ofEpochMilli(at).atZone(zone).toLocalDate()
 internal fun dayLabel(date: LocalDate) = "${date.monthValue}월 ${date.dayOfMonth}일 (${weekday(date)})"
-
-/** What the header clock shows and says ([headerClock]). */
-@Immutable internal data class ClockText(val date: String, val time: String, val spoken: String)
-
-/**
- * The header clock at [at] in [zone] (pure, unit-tested): the date as [dayLabel] writes it ("11월 9일 (월)"), the time on the
- * 24-hour clock with zero-padded hours ("09:05"), and what TalkBack says, in full words rather than digits read one by one
- * ("11월 9일 월요일 9시 5분"; on the hour the minutes are left out, "0시"). The shell ticks every second, so remember it on
- * the minute (`now / 60_000`).
- */
-internal fun headerClock(at: Long, zone: ZoneId): ClockText {
-    val time = Instant.ofEpochMilli(at).atZone(zone)
-    val date = time.toLocalDate()
-    val day = date.dayOfWeek.getDisplayName(java.time.format.TextStyle.FULL, Locale.KOREAN)
-    val minutes = if (time.minute > 0) " ${time.minute}분" else ""
-    return ClockText(dayLabel(date), String.format(Locale.ROOT, "%02d:%02d", time.hour, time.minute),
-        "${date.monthValue}월 ${date.dayOfMonth}일 $day ${time.hour}시$minutes")
-}
 
 internal fun kmText(value: Double) = String.format(Locale.KOREA, "%,.1f km", value)
 internal fun ratioText(ratio: Double?) = ratio?.let { "${(it * 100).roundToInt()}%" } ?: "–"
@@ -266,9 +252,11 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     }
     val snackbar = remember { SnackbarHostState() }
     val followUp: (FollowUp) -> Unit = { item -> scope.showFollowUp(snackbar, act, item) }
-    val clock by produceState(System.currentTimeMillis()) { while (true) { value = System.currentTimeMillis(); delay(1_000) } }
-    // A new sample can be newer than the previous UI clock tick.
-    val now = remember(clock, state.live) { System.currentTimeMillis() }
+    // The shell's tick: countdowns, freshness and the recording distance read it. No clock is drawn (2.13): the car's own
+    // status bar already shows the time.
+    val tick by produceState(System.currentTimeMillis()) { while (true) { value = System.currentTimeMillis(); delay(1_000) } }
+    // A new sample can be newer than the previous tick.
+    val now = remember(tick, state.live) { System.currentTimeMillis() }
     LaunchedEffect(Unit) { repository.ensureLoaded() }
     val blocked = driving.automotive && (!driving.available || driving.restricted)
     val latestBlocked by rememberUpdatedState(blocked)
@@ -306,6 +294,9 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     val heroSky = remember { derivedStateOf { paneSky?.let { sky -> HeroSky(sky.band.translate(slotOrigin), sky.scroll) } } }
     // True while 월간·Excel pins its save bar: the follow-up bar then rides above it instead of covering it.
     var saveBarUp by remember { mutableStateOf(false) }
+    // The height of 홈's bottom band (demo strip, destinations, incident dock) while the page rests on it, else 0: the
+    // follow-up bar rides above the band so it never covers the incident buttons or the card.
+    var homeBand by remember { mutableStateOf(0.dp) }
     var pendingExportName by rememberSaveable { mutableStateOf<String?>(null) }
     val exportFile = remember { File(context.cacheDir, "pending-logbook-export") }
     val saver = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -362,6 +353,12 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
             // The layout classes of the window (gutter, content maximum, gaps) come from one measurement at the shell root.
             ProvideLayout(compactApp = false, Modifier.fillMaxSize().sceneBackdrop().safeDrawingPadding()) { layout ->
                 val openLog: (Int, YearMonth?) -> Unit = { filter, month -> goLog(filter, month, null) }
+                // 홈's cards lead to the picker, the permission prompt, 설정's sections, 운행기록 (a filter, or one trip) and 월간·Excel.
+                val homeNav = HomeNav(openDriver = openDriver, requestPermissions = requestPermissions, goSettings = goSettings, openLog = openLog,
+                    openTrip = { tripId ->
+                        val trip = state.data.trips.firstOrNull { it.id == tripId }
+                        goLog(0, trip?.let { YearMonth.from(Instant.ofEpochMilli(it.startAt).atZone(zone)) }, tripId)
+                    }, openReport = goReport, navigate = { tab = it })
                 // One background layer for every page: the city at full strength on home, dimmed behind the other pages,
                 // moving on the same clock as the page change so the layers never jump.
                 val skyLevel = when { blocked || !state.loaded -> 0f; tab == 0 -> 1f; else -> .34f }
@@ -410,8 +407,8 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                                           DisposableEffect(page) { composedPages += page; onDispose { composedPages -= page } }
                                           pageStates.SaveableStateProvider(page) {
                                             when (page) {
-                                                0 -> DrivePane(state, now, act, repository, openDriver, requestPermissions, { goSettings(0) }, { tab = it }, openLog, goReport,
-                                                    { assistant = true }, snoozes, bannerCharges, { bannerCharges = it }, nowColumn = columns.split, onHeroSky = { paneSky = it })
+                                                0 -> DrivePane(state, now, act, repository, homeNav, snoozes, bannerCharges, { bannerCharges = it },
+                                                    nowColumn = columns.split, onHeroSky = { paneSky = it }, onBand = { homeBand = it })
                                                 1 -> key(logGen) { LogPane(state, now, act, repository, openDriver, expenseTripId, logFilter, logMonth, openReport = goReport) }
                                                 2 -> key(reportGen) { ReportPane(state, now, pendingExportName != null, export, act, repository, { goSettings(2) }, { tab = 0 },
                                                     initialMonth = reportMonth, onSaveBar = { saveBarUp = it }) { month -> openLog(1, month) } }
@@ -433,8 +430,14 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                                             modifier = Modifier.width(columns.side).fillMaxHeight().padding(top = 8.dp, bottom = 20.dp))
                                     }
                                 }
-                                // The follow-up bar centres on the page column, clear of the 지금 column, and rides above 월간·Excel's save bar.
-                                ShellFollowUpBar(snackbar, columns.page, lift = if (tab == 2 && saveBarUp) SAVE_BAR_RESERVE else 0.dp)
+                                // The follow-up bar centres on the page column, clear of the 지금 column, and rides above 월간·Excel's save bar
+                                // and above 홈's bottom band: 24 dp over the band, as over the window's edge (the band ends at the page slot's
+                                // 20-dp bottom padding). 홈's sky keeps at least 137 dp at FULL; the bar needs 88.
+                                ShellFollowUpBar(snackbar, columns.page, lift = when {
+                                    tab == 2 && saveBarUp -> SAVE_BAR_RESERVE
+                                    tab == 0 && homeBand > 0.dp -> homeBand + 20.dp
+                                    else -> 0.dp
+                                })
                             }
                         }
                     }
@@ -551,25 +554,6 @@ internal fun driverChipMode(chipMax: Dp, fontScale: Float): DriverChipMode {
 }
 
 /**
- * How the header lays itself out (2.12, pure, unit-tested). [oneRow]: the mark, the tabs and everything else share one row,
- * which the windows with the 지금 column have room for (its 사용자 card takes the chip and the recording state off the
- * header), and so does the full window without it (a short one). [clockInline]: from EXPANDED up the clock may set the date
- * beside the time ([clockFitsInline] decides in the room its row leaves); narrower, it always stacks them. [statusInHeader]:
- * the driver chip and the recording state are header pills wherever no 지금 column carries them.
- */
-@Immutable internal data class HeaderPlan(val oneRow: Boolean, val clockInline: Boolean, val statusInHeader: Boolean)
-
-internal fun headerPlan(layout: LayoutTokens, nowColumn: Boolean): HeaderPlan =
-    HeaderPlan(oneRow = nowColumn || layout.full, clockInline = layout.expanded, statusInHeader = !nowColumn)
-
-/**
- * Whether the inline clock ("11월 9일 (월)  22:20", about 232 dp at 1×) fits in [space] (pure, unit-tested): 52 dp of padding
- * and gap that stay put, and 180 dp of text that grows with the font (one below 1× counts as 1×). Where it does not fit, the
- * clock stacks the date over the time (about 128 dp), so the tab pill never scrolls earlier than it would beside a bare time.
- */
-internal fun clockFitsInline(space: Dp, fontScale: Float): Boolean = space >= 52.dp + 180.dp * fontScale.coerceAtLeast(1f)
-
-/**
  * What TalkBack says for the header's driver chip (pure, unit-tested): the caption on screen first, then the person's label
  * and what a tap does, "사용자 Sales · Kim Jiwoo, 바꾸기", so the spoken name starts with the visible words (WCAG 2.5.3); with
  * nobody chosen, "사용자 미선택, 운전자 선택".
@@ -577,38 +561,74 @@ internal fun clockFitsInline(space: Dp, fontScale: Float): Boolean = space >= 52
 internal fun driverChipLabel(driver: Driver?): String = driver?.let { "사용자 ${it.label}, 바꾸기" } ?: "사용자 미선택, 운전자 선택"
 
 /**
- * What a one-row header holds back for the driver chip before its clock may go inline: the chip's narrowest form, the 56-dp
- * avatar pill, and its 16-dp gap. The chip is measured after the clock and is the one that gives ([driverChipMode]).
+ * How the header lays itself out (2.12; 2.13 took the clock out; pure, unit-tested). [oneRow]: the mark, the tabs and the
+ * cluster share one row, which the windows with the 지금 column have room for (its 사용자 card takes the chip and the
+ * recording state off the header), and so does the full window without it (a short one). [statusInHeader]: the driver chip
+ * and the recording state are header pills wherever no 지금 column carries them.
  */
-private val HEADER_CHIP_RESERVE = 72.dp
+@Immutable internal data class HeaderPlan(val oneRow: Boolean, val statusInHeader: Boolean)
+
+internal fun headerPlan(layout: LayoutTokens, nowColumn: Boolean): HeaderPlan =
+    HeaderPlan(oneRow = nowColumn || layout.full, statusInHeader = !nowColumn)
+
+/** How the header's search bar draws itself in the room the cluster leaves it, widest first ([searchBarMode]). */
+internal enum class SearchBarMode { EXAMPLE, PHRASE, LABEL, ICON }
 
 /**
- * The header of every page (2.12), spanning the rail and laid out by [headerPlan]: the mark and the five tabs at the start,
- * and at the far end the clock with the date, on every page and in every window class (the time is always at the top
- * right). Beside the 지금 column one row holds the tools and the clock: the column's 사용자 card says who drives and what
- * the car is doing. Without the column the driver chip and the recording state join the header, the state right of the chip.
- * The full window keeps them on its one row, where the chip gives way first and the clock stacks only where not even the
- * chip's avatar pill would fit beside it; a narrower window puts them on a second row under the tabs, which scroll from
- * MEDIUM down. Every piece sits on an opaque card pill: over the 홈 sky, textSecondary on its own would read 2.76:1.
+ * The search bar's form at [width] (2.13, pure, unit-tested), the font scale counted (one below 1× counts as 1×): the phrase
+ * and the example from 496 dp, the phrase alone from 280 (where it shows whole), the icon with 운행 비서 from 160 (a header
+ * tool at its own width), and the 56-dp icon below that.
+ */
+internal fun searchBarMode(width: Dp, fontScale: Float): SearchBarMode {
+    val scale = fontScale.coerceAtLeast(1f)
+    return when {
+        width >= 496.dp * scale -> SearchBarMode.EXAMPLE
+        width >= SEARCH_BAR_MIN * scale -> SearchBarMode.PHRASE
+        width >= 160.dp * scale -> SearchBarMode.LABEL
+        else -> SearchBarMode.ICON
+    }
+}
+
+/** The least the search bar keeps as a bar (its phrase, [SearchBarMode.PHRASE]) at a 1× font. */
+private val SEARCH_BAR_MIN = 280.dp
+
+/** The space between the header cluster's pieces. */
+private val HEADER_GAP = 16.dp
+
+/**
+ * The most the driver chip may take in a header cluster [cluster] wide whose fixed pieces (시연 체험 and the status pill, with
+ * their gaps) take [fixed] (2.13, pure, unit-tested): what is left once the bar keeps its least width as a bar (280 dp × the
+ * font scale) and the chip its gap, and never under the chip's 56-dp avatar pill. So the chip steps down to its avatar
+ * ([driverChipMode]) before the bar drops to its label.
+ */
+internal fun headerChipMax(cluster: Dp, fixed: Dp, fontScale: Float): Dp =
+    (cluster - fixed - HEADER_GAP - SEARCH_BAR_MIN * fontScale.coerceAtLeast(1f)).coerceAtLeast(56.dp)
+
+/**
+ * The header of every page (2.13), spanning the rail and laid out by [headerPlan]: the mark and the five tabs at the start,
+ * then one cluster, in the same order everywhere: the search bar to the assistant, 시연 체험, the driver chip and the
+ * recording state ([HeaderCluster]). There is no clock: the car's own status bar shows the time. Beside the 지금 column one row
+ * holds the tabs and the bar, which runs to the rail's end over the column (its 사용자 card says who drives and what the car
+ * is doing). Without the column the chip and the state join the cluster, on the full window's one row, or on a second row
+ * under the tabs, which scroll from MEDIUM down. Every piece sits on an opaque card pill: over the 홈 sky, textSecondary on
+ * its own would read 2.76:1. One row is 84 dp (76 short), two rows 152 (136).
  */
 @Composable private fun TopBar(state: TripLogState, now: Long, layout: LayoutTokens, tabs: List<NavTab>, selected: Int, onSelect: (Int) -> Unit,
     onDriver: () -> Unit, onTutorial: () -> Unit, onAssistant: () -> Unit, nowColumn: Boolean) {
     val plan = headerPlan(layout, nowColumn)
     val wide = layout.expanded
-    val fontScale = LocalDensity.current.fontScale
     val skin = Car.skin
     val driver = state.data.drivers.firstOrNull { it.id == state.data.currentDriverId }
-    // The tutorial is for a car that has not recorded anything yet; once real trips exist it stays reachable from settings.
-    val showTutorial = state.data.trips.none { !it.demo }
-    // The shell ticks every second; the clock's words change only with the minute (or the time zone).
-    val clockText = remember(now / 60_000, zone) { headerClock(now, zone) }
-    val chip: @Composable (Modifier) -> Unit = { modifier ->
+    // The tutorial is for a car that has not recorded anything yet; once real trips exist it stays reachable from settings. A
+    // one-row header keeps it to 홈.
+    val showTutorial = state.data.trips.none { !it.demo } && (selected == 0 || !plan.oneRow)
+    val chip: @Composable () -> Unit = {
         val interaction = remember { MutableInteractionSource() }
         // A control, so it is outlined in the chip border (3.47 / 3.69 on the card) where the pills that only inform take the hairline.
         Surface(onClick = onDriver, shape = RoundedCornerShape(50), color = skin.card, contentColor = Scene.text, border = BorderStroke(1.dp, skin.chipBorder),
-            interactionSource = interaction, modifier = modifier.heightIn(min = 56.dp).pressable(interaction, .98f).semantics { contentDescription = driverChipLabel(driver) }) {
+            interactionSource = interaction, modifier = Modifier.heightIn(min = 56.dp).pressable(interaction, .98f).semantics { contentDescription = driverChipLabel(driver) }) {
             // The person's avatar (the one the picker and 설정 › 직원 show) sits 12 dp in, concentric with the pill's round end;
-            // the chip keeps what the header leaves it ([driverChipMode]). The pill's 56-dp minimum still reaches the row.
+            // the chip keeps what the cluster leaves it ([headerChipMax], [driverChipMode]). The pill's 56-dp minimum still reaches the row.
             BoxWithConstraints(Modifier.pressFill(interaction), propagateMinConstraints = true) {
                 val mode = driverChipMode(maxWidth, LocalDensity.current.fontScale)
                 if (mode == DriverChipMode.AVATAR) Box(Modifier.padding(12.dp), contentAlignment = Alignment.Center) { DriverAvatar(driver, 32.dp) }
@@ -627,103 +647,105 @@ private val HEADER_CHIP_RESERVE = 72.dp
             }
         }
     }
-    val tools: @Composable () -> Unit = {
-        // On home the hero's search bar is the assistant entry; one entry per screen keeps focus order and TalkBack simple. A
-        // one-row header has no slack beside the tab pill, so there (and in the narrowest class) the entry is its icon alone,
-        // and the tutorial pill keeps to home (it stays reachable from 설정 › 기록).
-        if (selected != 0) HeaderTool(painterResource(R.drawable.ic_search), label = if (plan.oneRow || layout.compact) null else "운행 비서",
-            description = "운행 비서 열기", onClick = onAssistant)
-        if (showTutorial && (selected == 0 || !plan.oneRow)) HeaderTool(icon = null, label = "시연 체험", description = null, onClick = onTutorial)
+    val cluster: @Composable (Modifier) -> Unit = { modifier ->
+        HeaderCluster(modifier, bar = { HeaderSearchBar(onAssistant) },
+            tutorial = if (showTutorial) { { HeaderTool(icon = null, label = HeaderCopy.TUTORIAL, description = null, onClick = onTutorial) } } else null,
+            chip = if (plan.statusInHeader) chip else null,
+            status = if (plan.statusInHeader) { { StatusPill(state, now) } } else null)
     }
     // In the text colour: black by day, as in the mock, and white by night.
     val mark: @Composable () -> Unit = {
         Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = "SHAREMATE", tint = Scene.text, modifier = Modifier.size(52.dp))
     }
-    // The clock in the room its row leaves it: inline where [clockFitsInline] allows once [reserve] is held back for a chip
-    // that shares the row, stacked otherwise, and always stacked below EXPANDED.
-    val clock: @Composable (Modifier, Dp) -> Unit = { modifier, reserve ->
-        if (!plan.clockInline) HeaderClock(clockText, inline = false, modifier)
-        else BoxWithConstraints(modifier, contentAlignment = Alignment.CenterEnd) {
-            HeaderClock(clockText, inline = clockFitsInline(maxWidth - reserve, fontScale))
-        }
-    }
-    // The second row of a two-row header: the tools at its start, the chip at its end with the recording state right of it.
-    val secondRow: @Composable (Dp) -> Unit = { gap ->
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(gap)) {
-            tools()
-            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { if (plan.statusInHeader) chip(Modifier) }
-            if (plan.statusInHeader) StatusPill(state, now)
-        }
-    }
     // Rows 12 dp apart inside 8 dp of padding, 8 and 4 in a short window. The tab pill is 68 dp (56-dp tabs inside 6 dp of
     // padding, 4 when short), so one row makes an 84-dp header (76 short) and two rows 152 (136).
     Column(Modifier.fillMaxWidth().padding(vertical = if (layout.short) 4.dp else 8.dp), verticalArrangement = Arrangement.spacedBy(if (layout.short) 8.dp else 12.dp)) {
-        when {
-            plan.oneRow -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    mark()
-                    GlassTabs(tabs, selected, onSelect, compact = layout.short)
-                }
-                // The cluster takes what the pill leaves of the rail, flush with its end: tools, chip, status, clock. A Row measures
-                // its unweighted children first and in order, so the clock gets what the tools and the status leave; the chip,
-                // weighted, is measured last and is the one that gives ([driverChipMode]: its avatar steps out, then its words),
-                // never the clock or the state.
-                Row(Modifier.weight(1f).padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.End)) {
-                    tools()
-                    if (plan.statusInHeader) {
-                        chip(Modifier.weight(1f, fill = false))
-                        StatusPill(state, now)
-                    }
-                    clock(Modifier, if (plan.statusInHeader) HEADER_CHIP_RESERVE else 0.dp)
-                }
+        if (plan.oneRow) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                mark()
+                GlassTabs(tabs, selected, onSelect, compact = layout.short)
             }
-            wide -> {
-                // EXPANDED without the column: the clock ends the tab row, and the tools, the chip and the state make the second.
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        mark()
-                        GlassTabs(tabs, selected, onSelect, compact = layout.short)
-                    }
-                    clock(Modifier.weight(1f).padding(start = 16.dp), 0.dp)
-                }
-                secondRow(16.dp)
+            // The cluster takes what the pill leaves of the rail, flush with its end.
+            cluster(Modifier.weight(1f).padding(start = HEADER_GAP))
+        } else {
+            // EXPANDED without the column, and MEDIUM and COMPACT, where the tab pill scrolls between the mark and the end.
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (wide) 16.dp else 12.dp)) {
+                mark()
+                if (wide) GlassTabs(tabs, selected, onSelect, compact = layout.short)
+                else Box(Modifier.weight(1f)) { GlassTabs(tabs, selected, onSelect, Modifier.horizontalScroll(rememberScrollState()), compact = layout.short) }
             }
-            else -> {
-                // MEDIUM and COMPACT: the tab pill scrolls between the mark and the stacked clock when it does not fit.
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    mark()
-                    Box(Modifier.weight(1f)) { GlassTabs(tabs, selected, onSelect, Modifier.horizontalScroll(rememberScrollState()), compact = layout.short) }
-                    clock(Modifier, 0.dp)
-                }
-                secondRow(12.dp)
+            cluster(Modifier.fillMaxWidth())
+        }
+    }
+}
+
+/**
+ * The header's cluster (2.13): the [bar], then [tutorial], [chip] and [status] flush with the row's end, 16 dp apart. A
+ * custom layout, because a Row cannot make two children give way in turn: the status pill and 시연 체험 take their own widths
+ * (the fixed part), the chip what [headerChipMax] allows (its three modes), and the bar the rest, choosing its form for it
+ * ([searchBarMode]). A bar narrower than its room (LABEL, ICON) sits at the row's start. Nothing here asks for intrinsics.
+ */
+@Composable private fun HeaderCluster(modifier: Modifier, bar: @Composable () -> Unit, tutorial: (@Composable () -> Unit)?, chip: (@Composable () -> Unit)?,
+    status: (@Composable () -> Unit)?) {
+    val fontScale = LocalDensity.current.fontScale
+    Layout(contents = listOf(bar, tutorial ?: {}, chip ?: {}, status ?: {}), modifier = modifier) { (bars, tutorials, chips, statuses), constraints ->
+        val width = constraints.maxWidth
+        val gap = HEADER_GAP.roundToPx()
+        val loose = Constraints(maxWidth = width, maxHeight = constraints.maxHeight)
+        val statusPlaced = statuses.firstOrNull()?.measure(loose)
+        val tutorialPlaced = tutorials.firstOrNull()?.measure(loose)
+        val fixed = listOfNotNull(statusPlaced, tutorialPlaced).sumOf { it.width + gap }
+        val chipMax = headerChipMax(width.toDp(), fixed.toDp(), fontScale).roundToPx().coerceAtMost(width)
+        val chipPlaced = chips.firstOrNull()?.measure(loose.copy(maxWidth = chipMax))
+        val room = (width - fixed - (chipPlaced?.let { it.width + gap } ?: 0)).coerceAtLeast(0)
+        val barPlaced = bars.first().measure(loose.copy(maxWidth = room))
+        val height = listOfNotNull(barPlaced, tutorialPlaced, chipPlaced, statusPlaced).maxOf { it.height }
+        layout(width, height) {
+            barPlaced.placeRelative(0, (height - barPlaced.height) / 2)
+            var end = width
+            listOfNotNull(statusPlaced, chipPlaced, tutorialPlaced).forEach { placed ->
+                end -= placed.width
+                placed.placeRelative(end, (height - placed.height) / 2)
+                end -= gap
             }
         }
     }
 }
 
 /**
- * The header clock (2.12): the date and the time on an opaque card pill with the hairline, at the header's far end on every
- * page. [inline] sets the date beside the time on one baseline ("11월 9일 (월)  22:20"); otherwise the date stands over the
- * time, centred, and the pill grows past 56 dp with a larger font. Not a control and not a live region: it updates in place
- * with the minute, never animated, and TalkBack reads it in words, "11월 9일 월요일 22시 20분" ([headerClock]).
+ * The entry to 운행 비서 on every page (2.13): a button, not a field, that opens the assistant sheet ([onClick]). In its
+ * room ([searchBarMode]) a 56-dp stadium on the card with the chip border (never the accent, which marks the chosen tab
+ * beside it): the search icon, the phrase in textSecondary and, from 496 dp, the example in textMuted, which ellipsises
+ * first. Narrower it is a header tool, 운행 비서 beside the icon or the icon alone. TalkBack hears the same words in every
+ * form, "운행 비서에게 물어보세요, 예: 주차비 4,500원 추가해줘", a button whose click label is 운행 비서 열기.
  */
-@Composable private fun HeaderClock(text: ClockText, inline: Boolean, modifier: Modifier = Modifier) {
-    val skin = Car.skin
-    val shape = RoundedCornerShape(50)
-    // Tabular figures, so the time keeps its width as the minutes change and the pill never twitches.
-    Box(modifier.heightIn(min = 56.dp).clip(shape).background(skin.card).border(1.dp, skin.cardBorder, shape)
-        .clearAndSetSemantics { contentDescription = text.spoken }
-        .padding(horizontal = if (inline) 20.dp else 16.dp, vertical = if (inline) 0.dp else 3.dp), contentAlignment = Alignment.Center) {
-        if (inline) Row {
-            Text(text.date, Modifier.alignByBaseline(), style = MaterialTheme.typography.labelLarge, color = Scene.textSecondary, maxLines = 1, softWrap = false)
-            Spacer(Modifier.width(12.dp))
-            Text(text.time, Modifier.alignByBaseline(), style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum"), color = Scene.text,
-                fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
-        } else Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(text.date, style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, maxLines = 1, softWrap = false)
-            Text(text.time, style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"), color = Scene.text, fontWeight = FontWeight.Bold,
-                maxLines = 1, softWrap = false)
+@Composable private fun HeaderSearchBar(onClick: () -> Unit) {
+    BoxWithConstraints {
+        val mode = searchBarMode(maxWidth, LocalDensity.current.fontScale)
+        val icon = painterResource(R.drawable.ic_search)
+        when (mode) {
+            SearchBarMode.ICON -> HeaderTool(icon, label = null, description = HeaderCopy.SPOKEN_BAR, onClick = onClick, clickLabel = HeaderCopy.BAR_CLICK)
+            SearchBarMode.LABEL -> HeaderTool(icon, label = HeaderCopy.BAR_LABEL, description = HeaderCopy.SPOKEN_BAR, onClick = onClick, clickLabel = HeaderCopy.BAR_CLICK)
+            else -> {
+                val interaction = remember { MutableInteractionSource() }
+                val skin = Car.skin
+                val shape = RoundedCornerShape(50)
+                Row(Modifier.fillMaxWidth().pressable(interaction, .98f).heightIn(min = 56.dp).clip(shape).background(skin.card).border(1.dp, skin.chipBorder, shape)
+                    .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClickLabel = HeaderCopy.BAR_CLICK, onClick = onClick)
+                    .semantics { contentDescription = HeaderCopy.SPOKEN_BAR }
+                    .pressFill(interaction).padding(start = 20.dp, end = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(icon, contentDescription = null, Modifier.size(22.dp), tint = skin.icon)
+                    Spacer(Modifier.width(12.dp))
+                    // Beside the example the phrase keeps its own width and the example gives way; alone it may ellipsise at the bar's least width.
+                    Text(HeaderCopy.BAR_PHRASE, (if (mode == SearchBarMode.EXAMPLE) Modifier else Modifier.weight(1f, fill = false)).clearAndSetSemantics {},
+                        style = MaterialTheme.typography.bodyLarge, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (mode == SearchBarMode.EXAMPLE) {
+                        Spacer(Modifier.width(12.dp))
+                        Text(HeaderCopy.BAR_EXAMPLE, Modifier.weight(1f).clearAndSetSemantics {}, style = MaterialTheme.typography.bodyMedium,
+                            color = Scene.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
         }
     }
 }
@@ -731,14 +753,15 @@ private val HEADER_CHIP_RESERVE = 72.dp
 /**
  * A header tool (2.12): a 56-dp stadium on the card, outlined in the chip border like every control in the header, 56 × 56
  * with its [icon] alone. The icon takes the line ink, the [label] the text colour. It settles to .98 with the press fill (no
- * ripple on the car). [description] replaces what it shows for TalkBack and contains its label ("운행 비서 열기").
+ * ripple on the car). [description] replaces what it shows for TalkBack and contains its label; [clickLabel] names what a
+ * tap does (2.13: the search bar's narrow forms, 운행 비서 열기).
  */
-@Composable private fun HeaderTool(icon: Painter?, label: String?, description: String?, onClick: () -> Unit) {
+@Composable private fun HeaderTool(icon: Painter?, label: String?, description: String?, onClick: () -> Unit, clickLabel: String? = null) {
     val interaction = remember { MutableInteractionSource() }
     val skin = Car.skin
     val shape = RoundedCornerShape(50)
     Row(Modifier.pressable(interaction, .98f).heightIn(min = 56.dp).widthIn(min = 56.dp).clip(shape).background(skin.card).border(1.dp, skin.chipBorder, shape)
-        .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick)
+        .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClickLabel = clickLabel, onClick = onClick)
         .then(if (description != null) Modifier.semantics { contentDescription = description } else Modifier)
         .pressFill(interaction).padding(horizontal = if (label != null) 18.dp else 0.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
@@ -1018,111 +1041,147 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
 // ───────────────────────── 운행 ─────────────────────────
 
 /**
- * The car home (2.10): a city hero in the scene's light with the greeting, the assistant entry and three destinations
- * (차량 정보 · 운행일지 확인 · 정보 내보내기); under it whatever the car is waiting on, one card at a time in the order the
- * moment demands (safety, then money the car measured, then paperwork, then the manager's deadlines); then today and
- * this month as two widgets, and the one-tap incident row. Laid out by [homePlan] for the window's class and height. Every way
- * into 월간·Excel from here ([openReport]) names the month it opens on: the close card's and the banner's, the month
- * 정보 내보내기 names, this month for the month widget.
+ * The car home (2.13, docs/design/DESIGN_2_13_SPEC.md §3): one column that never scrolls in the full window. The greeting
+ * block with the status line ([homeStatusLine]); 24 dp under it the attention card ([AttentionSlot]), the head of what the
+ * car is waiting on ([attentionQueue]: safety, the permission, money the car measured, then paperwork and the manager's
+ * deadlines) with the rest one page away; without the 지금 column the due booking and today and this month; then the sky,
+ * which takes whatever height is left; and the bottom band, which never moves: the demo strip in demo mode, the three
+ * destinations and the incident dock. Scrolling is off while the content fits ([homeFrame] proves it does at FULL 1×); where
+ * it ever does not (a large font, a short window), the same column scrolls rather than cuts. A debug build logs (tag
+ * HomeFrame) a full window at 1× that needs to scroll.
  *
- * With [nowColumn] (2.11) the next booking and the two widgets live in the 지금 column instead, and the home tells the sky
- * ([onHeroSky]) where its hero leaves sky free, so the sun or moon can rest there; without the column it reports none.
+ * Beside the 지금 column the page tells the sky ([onHeroSky]) where it leaves sky free right of the greeting and above the
+ * first card ([heroBand], from sizes only), so the sun or moon can rest there; and while the page rests on its band it tells
+ * the shell the band's height ([onBand]), so the follow-up bar rides above the incident buttons.
  */
-@Composable private fun DrivePane(state: TripLogState, now: Long, act: Act, repository: TripLogRepository,
-    openDriver: (String?) -> Unit, requestPermissions: () -> Unit, goSettings: () -> Unit, navigate: (Int) -> Unit, openLog: (Int, YearMonth?) -> Unit,
-    openReport: (YearMonth) -> Unit, assistant: () -> Unit, snoozes: MutableState<Set<String>>, banner: List<CardCharge> = emptyList(),
-    onBanner: (List<CardCharge>) -> Unit = {}, nowColumn: Boolean = false, onHeroSky: (HeroSky?) -> Unit = {}) {
+@Composable private fun DrivePane(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, nav: HomeNav, snoozes: MutableState<Set<String>>,
+    banner: List<CardCharge>, onBanner: (List<CardCharge>) -> Unit, nowColumn: Boolean, onHeroSky: (HeroSky?) -> Unit, onBand: (Dp) -> Unit) {
     val layout = LocalLayout.current
-    val wide = layout.expanded
+    val density = LocalDensity.current
     val data = state.data
+    val demo = data.profile.demoMode
     val today = localDate(now)
+    val plan = homePlan(layout, nowColumn)
     val prompt = rememberChargePrompt(data)
-    // The stack's answers (finished-trip cards acknowledged, a purpose being changed) live here, so they outlive the stack
-    // leaving the composition and the pane can ask whether it draws a card before composing it.
-    val stackAnswers = rememberParkedStackAnswers()
-    val taskStack: @Composable (Modifier) -> Unit = { place ->
-        // The stack grows and shrinks with its card; the change reflows over 260 ms (a snap under reduced motion).
-        ParkedTaskStack(state, now, wide, blocked = false, act, repository, openDriver, goSettings, modifier = place.fillMaxWidth().animateContentSize(enterSpec(260)),
-            chargePrompt = prompt.value, onWaitForCard = { prompt.value = ChargePrompt.WAIT }, snoozedCare = snoozes.value, showAllDone = false,
-            answers = stackAnswers) { task ->
-            when (task.kind) {
-                TaskKind.MONTH_CLOSE -> monthCloseTarget(data, today, zone)?.let {
-                    MonthCloseCard(it, onIssues = { openLog(1, it.month) }, onReviews = { navigate(0) }, onExport = { openReport(it.month) }, exporting = false, act = act, repository = repository)
-                }
-                TaskKind.CARE -> CareDueTask(state, now, act, repository, snoozed = snoozes.value, onSnoozed = { snoozes.value = it })
-                else -> {}
-            }
-        }
-    }
-    // The same task list the stack reads (its odometer included), so the pane and the stack agree on what is on screen.
-    val tasks = parkedTasks(data, state.sync, now, zone, snoozes.value, prompt.value, state.live?.takeIf { it.demo == data.profile.demoMode }?.odometerKm)
-    // The month-close banner is a reminder for when the card is not on screen; while the stack shows the card itself, one is enough.
-    val closeCardShown = tasks.firstOrNull()?.kind == TaskKind.MONTH_CLOSE
-    // The stack is composed only while it draws a card (the rule it applies itself), so an empty stack never holds a gap open.
-    val stackShown = stackAnswers.key(tasks, data, state.lastFinishedId, now).showsCard
-    val live = state.live?.takeIf { it.demo == data.profile.demoMode && now - it.at in 0..45_000 }
+    // The answers to the 방금 운행 card live here, so they outlive a card leaving the composition.
+    val answers = rememberParkedStackAnswers()
+    // This month's close reminder, hidden for the month its 닫기 was pressed in (it comes back next month).
+    var reminderClosed by rememberSaveable { mutableStateOf("") }
+    val live = state.live?.takeIf { it.demo == demo }
+    val tasks = parkedTasks(data, state.sync, now, zone, snoozes.value, prompt.value, live?.odometerKm)
+    val closeTarget = monthCloseTarget(data, today, zone)
+    val queue = attentionQueue(tasks, state.signal, answers.finishedId(data, state.lastFinishedId, now), answers.reopenedId(data, state.lastFinishedId),
+        banner.size, closeTarget != null && reminderClosed != monthKey(closeTarget.month), hiddenPendingCharge(data, now, prompt.value) != null)
+    val open = data.open?.takeIf { it.demo == demo }
+    val tidy = queue.isEmpty() && state.signal == SignalStatus.READY && finishedTripToday(data, today, zone)
+    val status = homeStatusLine(state.signal, demo, open, queue, tidy)
+    val fresh = live?.takeIf { now - it.at in 0..45_000 }
     val (odometer, odometerLive) = careOdometer(state, now)
-    val soc = live?.socPercent
-    // The clock recomposes this pane every second; the card lines only change with the data, the readings and the day.
-    val lines = remember(data, soc, odometer, odometerLive, today, snoozes.value) { homeCardLines(data, soc, odometer, odometerLive, today, zone, snoozes.value) }
+    val soc = fresh?.socPercent
+    // The tick recomposes this pane every second; the card lines only change with the data, the readings and the day. The
+    // 차량 정보 line keeps a snoozed deadline (2.13): a snooze quiets the card, not the vehicle's own summary.
+    val lines = remember(data, soc, odometer, odometerLive, today) { homeCardLines(data, soc, odometer, odometerLive, today, zone) }
     val cards = listOf(
-        HomeCardSpec("차량 정보", lines.vehicle, R.drawable.ic_vehicle, openIncidents(data).size) { navigate(3) },
-        HomeCardSpec("운행일지 확인", lines.log, R.drawable.ic_journal, lines.logPending) { openLog(if (lines.logPending > 0) 1 else 0, YearMonth.from(today)) },
-        HomeCardSpec("정보 내보내기", lines.export, R.drawable.ic_export, 0) { openReport(lines.exportMonth) },
+        HomeCardSpec("차량 정보", lines.vehicle, R.drawable.ic_vehicle, openIncidents(data).size) { nav.navigate(3) },
+        HomeCardSpec("운행일지 확인", lines.log, R.drawable.ic_journal, lines.logPending) { nav.openLog(if (lines.logPending > 0) 1 else 0, YearMonth.from(today)) },
+        HomeCardSpec("정보 내보내기", lines.export, R.drawable.ic_export, 0) { nav.openReport(lines.exportMonth) },
     )
-    val demoControls: @Composable () -> Unit = {
-        if (data.profile.demoMode) DemoControls { act { repository.ingestCardEvents(listOf(demoCardApproval(repository.state.value.data, System.currentTimeMillis()))) } }
-    }
-    // The hero block staggers in once per session; a return to the tab or a sync lands in place.
+    // The greeting block rises in once per session; a return to the tab or a sync lands in place.
     val entrance = rememberHomeEntrance()
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val plan = homePlan(layout, LocalDensity.current.fontScale, maxHeight, nowColumn)
+        val viewport = maxHeight
+        val pageWidth = maxWidth
         val scroll = rememberScrollState()
-        // Beside the 지금 column the page top never moves, so the sky the hero leaves free is the sun's: the sky reads the band
-        // and, in its draw only, the scroll that brings the cards up to it. Without the column, or once the home has gone, none;
-        // a column that comes back asks the hero again rather than reuse a band measured on another page width.
-        var band by remember(plan.widgetsInColumn) { mutableStateOf<Rect?>(null) }
+        var greetingHeight by remember { mutableIntStateOf(0) }
+        var bandHeight by remember { mutableIntStateOf(0) }
+        // The sky above the first card: the attention card's top while one shows, else the band's. Sizes only, so neither the
+        // entrance lift nor the page slide moves it; null until both are measured, and without the column there is none.
+        val firstCardTop = if (queue.isNotEmpty()) greetingHeight + with(density) { HOME_CARD_GAP.toPx() } else with(density) { viewport.toPx() } - bandHeight
+        val band = if (!nowColumn || greetingHeight == 0 || bandHeight == 0) null else with(density) {
+            heroBand(pageWidth.toPx(), firstCardTop, layout.readingMax.toPx(), 0f, 0f, 0f, HERO_SKY_MARGIN.toPx())
+        }
         val reportSky by rememberUpdatedState(onHeroSky)
-        DisposableEffect(plan.widgetsInColumn, band) {
-            reportSky(band?.takeIf { plan.widgetsInColumn }?.let { HeroSky(it) { scroll.value } })
+        DisposableEffect(band) {
+            reportSky(band?.let { HeroSky(it) { scroll.value } })
             onDispose { reportSky(null) }
         }
-        Column(Modifier.fillMaxSize().fadingTopEdge(scroll).verticalScroll(scroll), verticalArrangement = Arrangement.spacedBy(layout.sectionGap)) {
-            // The hero grows with its text (a permission button, a second greeting line); the change reflows over 260 ms.
-            HomeHero(state, now, plan, assistant, requestPermissions, demoControls, cards, Modifier.animateContentSize(enterSpec(260)), entrance = entrance,
-                onBand = if (plan.widgetsInColumn) { measured -> band = measured } else null)
-            MatchedBanner(banner, onShow = { onBanner(emptyList()); openLog(2, YearMonth.from(today)) }, onDismiss = { onBanner(emptyList()) })
-            if (!plan.widgetsInColumn) NextReservationLine(data = state.data, now = now)
-            if (!closeCardShown) MonthCloseBannerHost(data, now, onOpen = openReport)
-            // The stack and what follows it share one slot and the stack carries the section gap under it, so the stack unfolds
-            // and folds away together with its gap (260 ms, a snap under reduced motion) and the rest moves up smoothly behind it,
-            // with or without the widgets (beside the 지금 column they live there).
-            Column(Modifier.fillMaxWidth()) {
-                AnimatedVisibility(stackShown, enter = fadeIn(enterSpec(220)) + expandVertically(enterSpec(260)),
-                    exit = fadeOut(enterSpec(160)) + shrinkVertically(enterSpec(260)), label = "task-stack") {
-                    taskStack(Modifier.padding(bottom = layout.sectionGap))
-                }
-                Column(verticalArrangement = Arrangement.spacedBy(layout.sectionGap)) {
-                    if (!plan.widgetsInColumn) HomeWidgets(state, now, sideBySide = plan.widgetsSideBySide, compact = plan.compactWidgets) { openReport(YearMonth.from(today)) }
-                    // A charge whose card approval is still on its way: the strip says so and offers to type it now.
-                    hiddenPendingCharge(data, now, prompt.value)?.let { waiting ->
-                        AutopilotStrip(data, now, waiting = waiting, waitingPrompt = prompt.value, onEnterNow = { prompt.value = ChargePrompt.NOW })
-                    }
-                    IncidentQuickRow(data, act, repository)
+        // The page rests on its band while nothing scrolls; the follow-up bar then rides above it.
+        val resting = scroll.maxValue == 0
+        val reportBand by rememberUpdatedState(onBand)
+        val bandDp = with(density) { bandHeight.toDp() }
+        DisposableEffect(resting, bandDp) {
+            reportBand(if (resting) bandDp else 0.dp)
+            onDispose { reportBand(0.dp) }
+        }
+        if (BuildConfig.DEBUG && layout.full && density.fontScale <= 1f) LaunchedEffect(scroll.maxValue) {
+            if (scroll.maxValue > 0) Log.w("HomeFrame", "홈 needs ${scroll.maxValue} px more than the ${viewport.value} dp page: ${queue.map { it.kind }}")
+        }
+        Column(Modifier.fillMaxSize().fadingTopEdge(scroll).verticalScroll(scroll, enabled = scroll.maxValue > 0)) {
+            // At least the page's height: under the scroll's unbounded maximum the column weighs its sky against this minimum,
+            // so the sky takes what the content leaves and the band sits on the page's bottom edge.
+            Column(Modifier.fillMaxWidth().heightIn(min = viewport)) {
+                HomeGreeting(state, now, status, Modifier.onSizeChanged { greetingHeight = it.height }
+                    .then(if (nowColumn) Modifier.heightIn(min = HOME_GREETING_MIN) else Modifier), entrance = entrance)
+                AttentionSlot(state, now, queue, nav, act, repository, answers, prompt, snoozes, banner, onBanner, { month -> reminderClosed = monthKey(month) })
+                if (!plan.widgetsInColumn) HomeTiles(state, now, plan, nav)
+                // The sky: 24 dp at least, then whatever the page has left.
+                Spacer(Modifier.height(HOME_SKY_MIN))
+                Spacer(Modifier.weight(1f))
+                Column(Modifier.fillMaxWidth().onSizeChanged { bandHeight = it.height }, verticalArrangement = Arrangement.spacedBy(HOME_BAND_GAP)) {
+                    if (demo) DemoStrip { act { repository.ingestCardEvents(listOf(demoCardApproval(repository.state.value.data, System.currentTimeMillis()))) } }
+                    DestinationRow(cards, plan.cardColumns)
+                    IncidentDock(data, act, repository)
                 }
             }
         }
     }
 }
 
-/** Presenter controls while demo mode is on: drive/park at 15x, a charge, and a card approval. */
-@Composable private fun DemoControls(demoCard: () -> Unit) {
+/**
+ * Without the 지금 column, 홈 carries the column's tiles between the card and the sky: the booking while one is in use or
+ * starts within a day ([reservationDueWithinDay]), then 오늘 운행 beside 이달 운행일지 (stacked below EXPANDED). The tiles open
+ * what they sum up: 차량, 운행기록 on this month, 월간·Excel on this month.
+ */
+@Composable private fun HomeTiles(state: TripLogState, now: Long, plan: HomePlan, nav: HomeNav) {
+    val gap = LocalLayout.current.cardGap
+    val month = YearMonth.from(localDate(now))
+    Column(Modifier.fillMaxWidth().padding(top = HOME_CARD_GAP), verticalArrangement = Arrangement.spacedBy(gap)) {
+        if (reservationDueWithinDay(state.data, now)) ReservationTile(state.data, now, { nav.navigate(3) })
+        val today: @Composable (Modifier) -> Unit = { modifier -> TodayTile(state, now, { nav.openLog(0, month) }, modifier) }
+        val thisMonth: @Composable (Modifier) -> Unit = { modifier -> MonthTile(state.data, now, { nav.openReport(month) }, modifier) }
+        if (plan.widgetsSideBySide) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
+            today(Modifier.weight(1f))
+            thisMonth(Modifier.weight(1f))
+        } else {
+            today(Modifier)
+            thisMonth(Modifier)
+        }
+    }
+}
+
+/**
+ * The presenter's controls while demo mode is on (2.13, an 80-dp strip above the destinations): the 시연 모드 tag, then drive
+ * and park at 15× (the card's one solid action), a charge (only while parked) and a card approval, at the same weights as
+ * before. Under 560 dp the tag stands over the buttons.
+ */
+@Composable private fun DemoStrip(demoCard: () -> Unit) {
     val moving by DemoDrive.moving.collectAsState()
     val charging by DemoDrive.charging.collectAsState()
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        PrimaryAction(if (moving) "시연 주차 (P)" else "시연 출발 (D)", Modifier.weight(1.3f)) { DemoDrive.setMoving(!moving) }
-        QuietAction(if (charging) "충전 종료" else "충전 시작", Modifier.weight(1f), enabled = !moving) { DemoDrive.setCharging(!charging) }
-        QuietAction("카드 승인", Modifier.weight(1f), onClick = demoCard)
+    CarCard(padding = 12.dp) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val buttons: @Composable RowScope.() -> Unit = {
+                PrimaryAction(if (moving) "시연 주차 (P)" else "시연 출발 (D)", Modifier.weight(1.3f)) { DemoDrive.setMoving(!moving) }
+                QuietAction(if (charging) "충전 종료" else "충전 시작", Modifier.weight(1f), enabled = !moving) { DemoDrive.setCharging(!charging) }
+                QuietAction("카드 승인", Modifier.weight(1f), onClick = demoCard)
+            }
+            if (maxWidth < 560.dp) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                CarTag(HomeCopy.DEMO_TAG, tone = PillTone.DEMO)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), content = buttons)
+            } else Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                CarTag(HomeCopy.DEMO_TAG, Modifier.padding(start = 8.dp), tone = PillTone.DEMO)
+                buttons()
+            }
+        }
     }
 }
 
@@ -1145,34 +1204,6 @@ private fun purposeCaption(purpose: TripPurpose) = if (purpose.business) "업무
             purposeChoices.forEach { purpose -> tile(purpose, Modifier.fillMaxWidth()) }
         } else Row(group.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             purposeChoices.forEach { purpose -> tile(purpose, Modifier.weight(1f)) }
-        }
-    }
-}
-
-@Composable internal fun SetupCard(data: TripLogData, goSettings: () -> Unit, pickDriver: () -> Unit) {
-    val steps = listOf(
-        "법인·차량 정보" to (data.profile.companyName.isNotBlank() && data.profile.plateNumber.isNotBlank()),
-        "직원 등록" to data.drivers.isNotEmpty(),
-        "지금 운전하는 직원 선택" to (data.currentDriverId != null),
-    )
-    Panel {
-        Eyebrow("시작 설정 · ${steps.count { it.second }}/${steps.size}", Scene.brand)
-        Text("운행기록부 양식에 들어갈 정보를 한 번만 등록해 주세요", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
-        steps.forEachIndexed { index, (label, done) ->
-            Row(Modifier.semantics(mergeDescendants = true) { stateDescription = if (done) "완료" else "미완료" },
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                // A done step is the scene's positive green with its own foreground (tertiary / onTertiary follow the scene); an open one sits on the row fill.
-                val colors = MaterialTheme.colorScheme
-                Box(Modifier.size(36.dp).clip(CircleShape).background(if (done) colors.tertiary else Scene.fill), contentAlignment = Alignment.Center) {
-                    Text(if (done) "✓" else "${index + 1}", style = MaterialTheme.typography.labelLarge, color = if (done) colors.onTertiary else colors.onSurface,
-                        modifier = Modifier.clearAndSetSemantics {})
-                }
-                Text(label, style = MaterialTheme.typography.bodyLarge, color = if (done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            PrimaryAction("설정 열기", Modifier.weight(1f), onClick = goSettings)
-            if (data.drivers.isNotEmpty() && data.currentDriverId == null) QuietAction("운전자 선택", Modifier.weight(1f), onClick = pickDriver)
         }
     }
 }

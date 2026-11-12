@@ -153,6 +153,11 @@ class SceneTest {
         assertNull("1400 dp 창의 띠는 48 dp뿐이라 해와 달이 없음", heroOrbAt(Rect(752f, 92f, 800f, 478f), disc, margin, 181.5f, 1092f))
         assertNull("카드 위 하늘이 낮으면 해와 달이 없음", heroOrbAt(full.copy(bottom = 230f), disc, margin, 181.5f, 1092f))
         assertEquals("띠의 위쪽 여백 아래로", 155.2f, heroOrbAt(full, disc, margin, preferredY = 120f, hazeEnd = 1092f)!!.y, .01f)
+        // 2.13: with an attention card the band ends 24 dp above it, at 160 + 92 on screen; the sun keeps its place there.
+        val card = heroOrbAt(Rect(816f, 92f, 1160f, 252f), disc, margin, 181.5f, 1092f)!!
+        assertEquals("카드가 있어도 같은 자리", 1052.8f, card.x, .01f)
+        assertEquals(181.5f, card.y, .01f)
+        assertNull("181.5 + 39.2 + 24 = 244.7: 244에서 끝나는 띠에는 없음", heroOrbAt(Rect(816f, 92f, 1160f, 244f), disc, margin, 181.5f, 1092f))
         // Wherever it rests, the disc and its margin stay inside the band.
         val bands = listOf(full, Rect(800f, 92f, 1062f, 508f), Rect(600f, 40f, 760f, 300f), Rect(824f, 92f, 1400f, 900f), Rect(900f, 200f, 1030f, 330f))
         bands.forEach { band ->

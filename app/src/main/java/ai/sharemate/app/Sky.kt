@@ -246,11 +246,13 @@ internal fun starFade(entering: Boolean, leaving: Boolean, t: Float): Float {
  * [entering] marks a skyline arriving through a scene change (its orb rises into place), [leaving] one on its way out.
  * By day it draws the clouds of the car's hero band [cloudBand] (in this skyline's px) that [visibleDayClouds] keeps clear
  * of the band's edges, of the haze that ends at [hazeEnd] and of the sun; no band, no clouds. [orbAlpha] and [cloudAlpha]
- * are read in the draw only, so a fade or a scroll never rebuilds the cached paths.
+ * are read in the draw only, so a fade or a scroll never rebuilds the cached paths. With [cloudAlphaFor] (2.13, the car's
+ * [HeroSkyline]) each cloud of [HeroClouds] that fits the band's width under its top is drawn at its own alpha, read in the
+ * draw too, so a band that shrinks under a card fades a cloud out instead of dropping it; the phone passes none.
  */
 @Composable internal fun Skyline(phase: ScenePhase, modifier: Modifier = Modifier, horizonAt: Float = .62f, heightScale: Float = 1f, orbAt: Offset = Offset(.53f, .40f),
     entering: Boolean = false, leaving: Boolean = false, showOrb: Boolean = true, showClouds: Boolean = true, cloudBand: Rect? = null, hazeEnd: Float = 0f,
-    orbAlpha: () -> Float = { 1f }, cloudAlpha: () -> Float = { 1f }) {
+    orbAlpha: () -> Float = { 1f }, cloudAlpha: () -> Float = { 1f }, cloudAlphaFor: ((Int) -> Float)? = null) {
     val scene = remember { skylineScene() }
     val p = paintFor(phase)
     // One clock per crossfade, read only inside the draw so the cached paths never rebuild; nothing moves under reduced motion.
@@ -316,15 +318,20 @@ internal fun starFade(entering: Boolean, leaving: Boolean, t: Float): Float {
         }
         // Day clouds: three overlapping ovals per cloud, slightly flattened, drawn before the towers. Only inside the hero band,
         // so none sits behind the header, the greeting or a card (no band, no clouds), and clear of the haze and the sun's disc.
-        val clouds = Path().apply {
-            p.clouds ?: return@apply
-            val band = cloudBand ?: return@apply
-            visibleDayClouds(band, h, ht, hazeEnd, orb.takeIf { showOrb }, ht * p.orbRadius + SUN_CLOUD_MARGIN.toPx(), CLOUD_HAZE_REACH.toPx()).forEach { c ->
+        // With cloudAlphaFor every cloud that fits the band's width under its top is built, one path each, and its own alpha
+        // decides whether it shows (a cloud below a band that shrank fades out over the opaque card that took its place).
+        val clouds: List<Pair<Int, Path>> = run {
+            if (p.clouds == null) return@run emptyList()
+            val band = cloudBand ?: return@run emptyList()
+            val room = if (cloudAlphaFor != null) band.copy(bottom = h) else band
+            visibleDayClouds(room, h, ht, hazeEnd, orb.takeIf { showOrb }, ht * p.orbRadius + SUN_CLOUD_MARGIN.toPx(), CLOUD_HAZE_REACH.toPx()).map { c ->
                 val cx = band.left + ht * c.x; val cy = band.top + ht * c.y; val s = ht * CLOUD_SIZE * c.scale
-                addOval(Rect(Offset(cx, cy), s * .5f))
-                addOval(Rect(Offset(cx - s * .55f, cy + s * .12f), s * .38f))
-                addOval(Rect(Offset(cx + s * .5f, cy + s * .1f), s * .42f))
-                addRect(Rect(cx - s * .8f, cy + s * .05f, cx + s * .8f, cy + s * .45f))
+                HeroClouds.indexOf(c) to Path().apply {
+                    addOval(Rect(Offset(cx, cy), s * .5f))
+                    addOval(Rect(Offset(cx - s * .55f, cy + s * .12f), s * .38f))
+                    addOval(Rect(Offset(cx + s * .5f, cy + s * .1f), s * .42f))
+                    addRect(Rect(cx - s * .8f, cy + s * .05f, cx + s * .8f, cy + s * .45f))
+                }
             }
         }
         val cloudShadeOffset = h * CLOUD_SHADE_DROP
@@ -351,8 +358,13 @@ internal fun starFade(entering: Boolean, leaving: Boolean, t: Float): Float {
             }
             val cloudA = if (showClouds && cloudBand != null) cloudAlpha().coerceIn(0f, 1f) else 0f
             if (cloudA > 0f) p.clouds?.let { fill ->
-                p.cloudShade?.let { shade -> translate(top = cloudShadeOffset) { drawPath(clouds, shade, alpha = cloudA) } }
-                drawPath(clouds, fill, alpha = cloudA)
+                clouds.forEach { (index, path) ->
+                    val a = cloudA * (cloudAlphaFor?.invoke(index)?.coerceIn(0f, 1f) ?: 1f)
+                    if (a > 0f) {
+                        p.cloudShade?.let { shade -> translate(top = cloudShadeOffset) { drawPath(path, shade, alpha = a) } }
+                        drawPath(path, fill, alpha = a)
+                    }
+                }
             }
             drawPath(ridge, p.ridge)
             drawPath(farBodies, p.farBody)
@@ -482,7 +494,9 @@ private class OrbRest { var at: Offset? = null; var band: Rect? = null; var scro
  * The car's skyline for one [phase]: its sun or moon placed in the hero [band] with this phase's disc ([heroOrbAt]) and the
  * day clouds in the same band. Both fade with the page ([pageAlpha]), with the home's [scroll] as the cards come up to the
  * disc ([heroSkyAlpha]), and with the band: a re-measured band that no longer holds the orb leaves it where it last rested and
- * fades it out over 220 ms (a snap under reduced motion). It never slides. Every alpha is read in the draw only.
+ * fades it out over 220 ms (a snap under reduced motion). It never slides. Since 2.13 each day cloud fades in and out with
+ * the band on the same clock ([Skyline]'s cloudAlphaFor): 홈's band shrinks to the greeting's side when an attention card
+ * unfolds and grows back to the bottom band when it goes. Every alpha is read in the draw only.
  */
 @Composable private fun HeroSkyline(phase: ScenePhase, band: Rect?, scroll: (() -> Int)?, w: Float, h: Float, horizonAt: Float, heightScale: Float,
     hazeEnd: Float, entering: Boolean, leaving: Boolean, showOrb: Boolean, showClouds: Boolean, pageAlpha: () -> Float) {
@@ -501,9 +515,18 @@ private class OrbRest { var at: Offset? = null; var band: Rect? = null; var scro
     // The card row starts a margin under the band: the orb is gone by the time the cards come up to its disc and cloud margin.
     val clearance = if (at != null && restBand != null) restBand.bottom + margin - (at.y + disc + cloudMargin) else 0f
     val alpha = { pageAlpha() * fit * heroSkyAlpha(restScroll?.invoke()?.toFloat() ?: 0f, clearance) }
+    // The day clouds this band holds now; the others fade out with it, and a cloud a grown band holds again fades back in.
+    val reach = with(density) { CLOUD_HAZE_REACH.toPx() }
+    val held = remember(restBand, at, disc, hazeEnd, h, heightScale) {
+        if (restBand == null || at == null) emptySet() else visibleDayClouds(restBand, h, h * heightScale, hazeEnd, at, disc + cloudMargin, reach).map { HeroClouds.indexOf(it) }.toSet()
+    }
+    val reduce = LocalReduceMotion.current
+    val cloudFades = HeroClouds.indices.map { index ->
+        animateFloatAsState(if (index in held) 1f else 0f, if (reduce) snap() else tween(MOTION_PAGE_MS, easing = LinearEasing), label = "cloud-$index")
+    }
     Skyline(phase, Modifier.fillMaxSize(), horizonAt, heightScale, orbAt = if (at != null && w > 0f && h > 0f) Offset(at.x / w, at.y / h) else Offset.Zero,
         entering = entering, leaving = leaving, showOrb = at != null, showClouds = showClouds, cloudBand = restBand.takeIf { at != null }, hazeEnd = hazeEnd,
-        orbAlpha = alpha, cloudAlpha = alpha)
+        orbAlpha = alpha, cloudAlpha = alpha, cloudAlphaFor = { index -> cloudFades.getOrNull(index)?.value ?: 0f })
 }
 
 /**

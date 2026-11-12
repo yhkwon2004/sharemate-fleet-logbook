@@ -7,8 +7,8 @@ import java.time.ZoneId
 
 /*
  * What the parked screen asks a person to do, in the order the moment demands: safety, then money the car already
- * measured, then paperwork. One list feeds the home card stack, the stepper above it, the home badge and the last
- * line of the driving screen, so every surface counts the same things. Everything here is pure.
+ * measured, then paperwork. One list feeds 홈's attention queue ([attentionQueue]) and its status line, the home badge and
+ * the last line of the driving screen, so every surface counts the same things. Everything here is pure.
  */
 
 enum class TaskKind(val label: String) {
@@ -50,7 +50,7 @@ internal fun pendingChargeVisible(data: TripLogData, now: Long, prompt: ChargePr
     }
 }
 
-/** The stop whose question is being held back for the card feed; the autopilot strip tells the driver so instead of a silent gap. */
+/** The stop whose question is being held back for the card feed; 홈's waiting card tells the driver so instead of a silent gap. */
 internal fun hiddenPendingCharge(data: TripLogData, now: Long, prompt: ChargePrompt = ChargePrompt.AUTO): ChargeSession? =
     pendingChargeSession(data)?.takeUnless { pendingChargeVisible(data, now, prompt) }
 
@@ -87,16 +87,10 @@ internal fun drivingTasks(tasks: List<ParkedTask>): List<ParkedTask> = tasks.fil
 /** Home badge: how many things the car itself detected and is waiting on. */
 internal fun parkedTaskBadge(tasks: List<ParkedTask>): Int = drivingTasks(tasks).sumOf { it.count }
 
-/** The driving screen's last line: plain text, same numbers as the stepper the driver will see after parking. */
+/** The driving screen's last line: plain text, the same names and numbers as 홈's queue the driver will see after parking. */
 internal fun drivingTaskLine(tasks: List<ParkedTask>): String {
     val later = drivingTasks(tasks)
     return if (later.isEmpty()) "정차 후 할 일 없음" else "정차 후 · " + later.joinToString(" · ") { "${it.kind.label} ${it.count}건" }
-}
-
-/** Stepper caption: "정차 후 정리 1/3 · 충전 비용 → 목적 확인 → 카드 확인"; the narrow form keeps only the current step. */
-internal fun stepperLabel(tasks: List<ParkedTask>, step: Int, total: Int, narrow: Boolean = false): String {
-    val current = tasks.firstOrNull()?.kind?.label ?: ""
-    return if (narrow) "$step/$total · $current" else "정차 후 정리 $step/$total · " + tasks.joinToString(" → ") { it.kind.label }
 }
 
 /** All-done text that only promises automatic recording when the vehicle signal really is there. */
@@ -224,12 +218,18 @@ internal fun driverConfirmDue(data: TripLogData, now: Long, zone: ZoneId, confir
 
 internal fun dateKey(now: Long, zone: ZoneId): String = today(now, zone).toString()
 
-// ───────────────────────── 자동 완성 띠 ─────────────────────────
+// ───────────────────────── 카드 승인 대기 ─────────────────────────
 
-/** Second line of the autopilot strip: what a person still has to do, and what the car is still waiting on. Never "nothing" while a payment waits. */
-internal fun autopilotSubline(summary: AutopilotSummary): String {
-    val parts = listOfNotNull(summary.left.takeIf { it > 0 }?.let { "남은 확인 ${it}건" }, summary.waiting.takeIf { it > 0 }?.let { "카드 결제 ${it}건 대기 중" })
-    return if (parts.isEmpty()) "사람이 확인할 일 없음" else parts.joinToString(" · ")
+/**
+ * The 홈 card's line while a charge waits for its card approval (2.13, pure, unit-tested): when the stop ended and what
+ * happens next, "충전 종료 14:35 · 20분 안에 안 오면 금액을 물어볼게요"; the headline already says the car is waiting, and
+ * TalkBack hears the whole of [chargeWaitingLine]. No countdown.
+ */
+internal fun chargeWaitingShort(session: ChargeSession, prompt: ChargePrompt = ChargePrompt.AUTO, zone: ZoneId = ZoneId.systemDefault()): String {
+    val end = Instant.ofEpochMilli(session.endAt).atZone(zone).let { "%02d:%02d".format(it.hour, it.minute) }
+    val word = if (session.fuel) "주유" else "충전"
+    val tail = if (prompt == ChargePrompt.WAIT) "승인이 오면 자동으로 들어가요" else "20분 안에 안 오면 금액을 물어볼게요"
+    return "$word 종료 $end · $tail"
 }
 
 /** The dimmed waiting row: when the stop ended, that the car is waiting for the card, and what happens next. No countdown. */

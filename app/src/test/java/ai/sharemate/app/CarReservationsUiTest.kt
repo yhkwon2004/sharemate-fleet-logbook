@@ -24,26 +24,23 @@ class CarReservationsUiTest {
         assertEquals("11월 21일 (토) 18:00", carClockText(at(21, 18), now, zone))
     }
 
-    @Test fun activeBookingLineSaysWhetherTheDriverWasSet() {
+    @Test fun theActiveTitleSaysInUseOrStartingSoon() {
         val data = TripLogData(drivers = listOf(kim), reservations = listOf(booking("a", at(4, 14), at(4, 17))))
-        val matched = nextReservationLine(data.copy(currentDriverId = kim.id), at(4, 15), zone)!!
-        assertTrue(matched.active)
-        assertEquals("예약 사용 중 · 김 님 · 17:00까지 · 운전자를 예약한 직원으로 맞췄어요", matched.text)
-        assertEquals("예약 사용 중 · 김 님 · 17:00까지", nextReservationLine(data, at(4, 15), zone)!!.text)
-        assertEquals("곧 예약 시작 · 김 님 · 14:00부터", nextReservationLine(data, at(4, 13, 50), zone)!!.text)
         assertEquals("예약 사용 중 · 17:00까지", carActiveTitle(data.reservations[0], at(4, 15), zone))
         assertEquals("곧 예약 시작 · 14:00부터 17:00까지", carActiveTitle(data.reservations[0], at(4, 13, 50), zone))
     }
 
-    @Test fun upcomingLineOnlyWithinADay() {
+    @Test fun narrowHomeShowsTheBookingTileOnlyWhileOneIsDueWithinADay() {
         val data = TripLogData(drivers = listOf(kim), reservations = listOf(booking("a", at(4, 14), at(4, 17), TripPurpose.BUSINESS, "본사 → 수원")))
-        val line = nextReservationLine(data, at(4, 9), zone)!!
-        assertFalse(line.active)
-        assertEquals("다음 예약 · 오늘 14:00 · 영업 · 김 · 일반 업무 · 본사 → 수원", line.text)
-        assertNull(nextReservationLine(data, at(3, 13), zone))   // more than 24 h ahead
-        assertNull(nextReservationLine(TripLogData(drivers = listOf(kim)), at(4, 9), zone))
+        assertTrue("사용 중", reservationDueWithinDay(data, at(4, 15)))
+        assertTrue("시작 전 리드 시간(13:50)", reservationDueWithinDay(data, at(4, 13, 50)))
+        assertTrue("같은 날 09:00", reservationDueWithinDay(data, at(4, 9)))
+        assertFalse("25시간 앞", reservationDueWithinDay(data, at(3, 13)))
+        assertFalse("예약 없음", reservationDueWithinDay(TripLogData(drivers = listOf(kim)), at(4, 9)))
         val cancelled = data.copy(reservations = data.reservations.map { it.copy(status = ReservationStatus.CANCELLED) })
-        assertNull(nextReservationLine(cancelled, at(4, 9), zone))
+        assertFalse("취소된 예약", reservationDueWithinDay(cancelled, at(4, 9)))
+        assertFalse("시연 예약은 실제 화면에 없음", reservationDueWithinDay(data.copy(reservations = data.reservations.map { it.copy(demo = true) }), at(4, 9)))
+        assertFalse("끝난 예약", reservationDueWithinDay(data, at(4, 18)))
     }
 
     @Test fun theTileLineReadsEveryUpcomingBookingAndNamesOnlySomeoneElse() {
@@ -62,7 +59,7 @@ class CarReservationsUiTest {
         assertEquals("오늘 14:00 · 김 님", today.text)
         assertEquals("예약, 다음 예약 오늘 14:00, 영업 · 김 · 목적 미정", today.spoken)
         assertTrue(today.spoken.startsWith("예약, 다음 예약 오늘 14:00, 영업 · 김"))
-        assertNull("홈의 줄은 24시간 안만", nextReservationLine(data, at(3, 13), zone))
+        assertFalse("좁은 홈은 24시간 안만", reservationDueWithinDay(data, at(3, 13)))
         assertEquals("타일은 24시간 너머도 읽음", "내일 14:00 · 김 님", reservationTileLine(data, at(3, 13), zone).text)
         assertEquals("11월 4일 (수) 14:00 · 김 님", reservationTileLine(data, at(1, 9), zone).text)
         val none = ReservationTileLine("현재 잡힌 예약이 없어요", "예약, 현재 잡힌 예약이 없어요")
