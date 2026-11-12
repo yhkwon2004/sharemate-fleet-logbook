@@ -130,17 +130,14 @@ internal fun Density.settingsFillPx(pane: Dp): Int {
  * stretches with its content at the top. Where the blocks are taller than the room the lower one keeps its own height and
  * the section scrolls as before. A small Layout rather than a weighted Column: the section scrolls, so a Column there has no
  * height to share, and nothing here asks a block for its intrinsic size (the 직원 manager holds a BoxWithConstraints). Each
- * slot emits one node; [bottom] null leaves [top] alone.
+ * slot emits one node; [bottom] null leaves [top] alone, without the gap. [top] keeps its place in the composition either
+ * way, so the manager's editor keeps what is typed in it when the first finished trip brings 직원별 운행 in under it.
  */
 @Composable internal fun SettingsStack(pane: Dp, gap: Dp, top: @Composable () -> Unit, bottom: (@Composable () -> Unit)?) {
-    if (bottom == null) {
-        top()
-        return
-    }
-    Layout(contents = listOf(top, bottom)) { (uppers, lowers), constraints ->
+    Layout(contents = listOf(top, bottom ?: {})) { (uppers, lowers), constraints ->
         val loose = constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity)
         val above = uppers.map { it.measure(loose) }
-        val gapPx = gap.roundToPx()
+        val gapPx = if (lowers.isEmpty()) 0 else gap.roundToPx()
         val room = (settingsFillPx(pane) - above.sumOf { it.height } - gapPx).coerceAtLeast(0)
         // The room goes to the lower block when it is one node; several (never in 설정) stack at their own heights.
         val below = lowers.map { it.measure(if (lowers.size == 1) loose.copy(minHeight = room) else loose) }
