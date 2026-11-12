@@ -86,14 +86,29 @@ internal fun activeCareSnoozes(raw: Set<String>, now: Long): Set<String> = raw.m
 internal fun withCareSnooze(raw: Set<String>, key: String, now: Long, days: Long = CARE_SNOOZE_DAYS): Set<String> =
     (raw.filter { activeCareSnoozes(setOf(it), now).isNotEmpty() && !it.startsWith("$key=") } + "$key=${now + days * DAY_MS}").toSet()
 
+/**
+ * The stored entries without [key]'s snooze (2.13, pure, unit-tested): what 7일 뒤 다시's 실행 취소 writes back, so the deadline
+ * asks again at once. Expired entries go with it, as [withCareSnooze] drops them; other deadlines keep theirs.
+ */
+internal fun withoutCareSnooze(raw: Set<String>, key: String, now: Long): Set<String> =
+    raw.filter { activeCareSnoozes(setOf(it), now).isNotEmpty() && !it.startsWith("$key=") }.toSet()
+
 /** The snoozed deadline keys, read from the `fleet-ui` preferences; the home task list uses this to stay quiet for seven days. */
 internal fun careSnoozes(context: Context, now: Long = System.currentTimeMillis()): Set<String> =
     activeCareSnoozes(context.getSharedPreferences(FLEET_UI_PREFS, Context.MODE_PRIVATE).getStringSet(CARE_SNOOZE_PREF, emptySet()) ?: emptySet(), now)
 
 /** Snoozes [key] for seven days and returns the active set so the screen can update without re-reading preferences. */
-internal fun snoozeCare(context: Context, key: String, now: Long = System.currentTimeMillis()): Set<String> {
+internal fun snoozeCare(context: Context, key: String, now: Long = System.currentTimeMillis()): Set<String> =
+    rewriteCareSnoozes(context, now) { withCareSnooze(it, key, now) }
+
+/** Takes [key]'s snooze back ([withoutCareSnooze]) and returns the active set: the undo of [snoozeCare]. */
+internal fun unsnoozeCare(context: Context, key: String, now: Long = System.currentTimeMillis()): Set<String> =
+    rewriteCareSnoozes(context, now) { withoutCareSnooze(it, key, now) }
+
+/** Rewrites the stored snoozes with [change] and returns the ones still active at [now]. */
+private fun rewriteCareSnoozes(context: Context, now: Long, change: (Set<String>) -> Set<String>): Set<String> {
     val prefs = context.getSharedPreferences(FLEET_UI_PREFS, Context.MODE_PRIVATE)
-    val next = withCareSnooze(prefs.getStringSet(CARE_SNOOZE_PREF, emptySet()) ?: emptySet(), key, now)
+    val next = change(prefs.getStringSet(CARE_SNOOZE_PREF, emptySet()) ?: emptySet())
     prefs.edit { putStringSet(CARE_SNOOZE_PREF, next) }
     return activeCareSnoozes(next, now)
 }
@@ -158,18 +173,20 @@ internal fun careDoneLabel(kind: CareKind) = when (kind) {
     CareKind.SERVICE -> "정비 완료"; CareKind.INSPECTION -> "검사 완료"; CareKind.INSURANCE -> "갱신 완료"; CareKind.LEASE -> "처리 완료"
 }
 
-internal fun careGuidance(kind: CareKind) = when (kind) {
-    CareKind.INSPECTION -> "검사소를 예약하세요. 기한을 넘기면 과태료가 붙어요."
-    CareKind.INSURANCE -> "보험사와 갱신을 확인하세요. 공백이 생기면 운행할 수 없어요."
-    CareKind.LEASE -> "반납·연장을 정하세요. 계약 종료 전 정산 조건을 확인해 두세요."
-    CareKind.SERVICE -> "정비소 방문을 잡아 주세요. 계기판 값 기준이에요."
-}
-
-internal fun careDoneExplanation(kind: CareKind) = when (kind) {
-    CareKind.SERVICE -> "완료를 누르면 지금 계기판 값이 마지막 정비로 기록돼요."
-    CareKind.INSPECTION -> "완료를 누르면 검사 기록을 남기고 만료일을 지워요. 다음 검사일은 설정 › 법인·차량에 적어 주세요."
-    CareKind.INSURANCE -> "완료를 누르면 등록된 만기일을 지워요. 새 만기일은 설정 › 법인·차량에 적어 주세요."
-    CareKind.LEASE -> "완료를 누르면 등록된 만기일을 지워요. 새 계약은 설정 › 법인·차량에 적어 주세요."
+/**
+ * What 완료 on 홈's 차량 관리 card writes, as the action row's one line and what TalkBack says (2.13, pure, unit-tested): the
+ * line starts 완료하면 and fits beside the two buttons; the spoken form keeps 2.12's guidance and explanation in full, the
+ * sentences that stood on the card before the one-line rule.
+ */
+internal fun careTaskNote(kind: CareKind): Pair<String, String> = when (kind) {
+    CareKind.INSPECTION -> "완료하면 검사 기록을 남기고 만료일을 지워요" to
+        "검사소를 예약하세요. 기한을 넘기면 과태료가 붙어요. 완료를 누르면 검사 기록을 남기고 만료일을 지워요. 다음 검사일은 설정 › 법인·차량에 적어 주세요."
+    CareKind.INSURANCE -> "완료하면 등록된 만기일을 지워요" to
+        "보험사와 갱신을 확인하세요. 공백이 생기면 운행할 수 없어요. 완료를 누르면 등록된 만기일을 지워요. 새 만기일은 설정 › 법인·차량에 적어 주세요."
+    CareKind.LEASE -> "완료하면 등록된 만기일을 지워요" to
+        "반납·연장을 정하세요. 계약 종료 전 정산 조건을 확인해 두세요. 완료를 누르면 등록된 만기일을 지워요. 새 계약은 설정 › 법인·차량에 적어 주세요."
+    CareKind.SERVICE -> "완료하면 지금 계기판 값이 마지막 정비로 남아요" to
+        "정비소 방문을 잡아 주세요. 계기판 값 기준이에요. 완료를 누르면 지금 계기판 값이 마지막 정비로 기록돼요."
 }
 
 /** Settings forms put their fields in two columns at EXPANDED and FULL, one below that, and always one at a 1.3× font scale (spec B). */
@@ -423,71 +440,10 @@ private fun careOdometerTag(odometer: Double?, fresh: Boolean): String = when {
 // ───────────────────────── 홈 할 일 카드 ─────────────────────────
 
 /**
- * The next-action card for one deadline: what is due, how far away, what to do about it, and two buttons — snooze a week
- * or mark it done. What 완료 writes is said on the card itself.
+ * The snoozed set as state, read once from preferences; the home task list reads it, and 홈's 차량 관리 card ([CareBody])
+ * writes it back on 7일 뒤 다시 and on its 실행 취소. Since 2.13 the card itself lives with the other attention cards.
  */
-@Composable internal fun CareDueCard(alert: CareAlert, onSnooze: () -> Unit, onDone: () -> Unit, modifier: Modifier = Modifier) {
-    val color = careLevelColor(alert.level)
-    Panel(modifier) {
-        // The card's section label takes the brand eyebrow; a deadline already passed says so in the scene's negative.
-        val eyebrow = "차량 관리 · ${careLevelState(alert.level)}"
-        if (alert.level == CareLevel.OVERDUE) Eyebrow(eyebrow, color) else Eyebrow(eyebrow)
-        Text(alert.title, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() }, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Muted(alert.detail)
-        Text(careGuidance(alert.kind), style = MaterialTheme.typography.bodyLarge)
-        BoxWithConstraints(Modifier.fillMaxWidth()) {
-            if (maxWidth >= 520.dp) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                QuietAction("7일 뒤 다시", Modifier.weight(1f), onClick = onSnooze)
-                PrimaryAction(careDoneLabel(alert.kind), Modifier.weight(1f), onClick = onDone)
-            } else Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                PrimaryAction(careDoneLabel(alert.kind), Modifier.fillMaxWidth(), onClick = onDone)
-                QuietAction("7일 뒤 다시", Modifier.fillMaxWidth(), onClick = onSnooze)
-            }
-        }
-        Text(careDoneExplanation(alert.kind), style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary)
-    }
-}
-
-/** The snoozed set as state, read once from preferences; pass it to [CareDueTask] and to the home task list. */
 @Composable internal fun rememberCareSnoozes(): MutableState<Set<String>> {
     val context = LocalContext.current
     return remember { mutableStateOf(careSnoozes(context)) }
-}
-
-/**
- * [CareDueCard] wired to the repository for the most urgent unsnoozed deadline. Renders nothing when there is none.
- * Done: SERVICE adds an oil/consumables record (which moves the service clock); INSPECTION adds an inspection record and
- * clears the due date; INSURANCE/LEASE clear the date. Every path has undo that restores the previous [VehicleCare].
- */
-@Composable internal fun CareDueTask(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, snoozed: Set<String>, onSnoozed: (Set<String>) -> Unit,
-    modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val followUp = LocalFollowUp.current
-    val care = state.data.care
-    val (odometer, _) = careOdometer(state, now)
-    val alert = careDueAlerts(care, odometer, localDate(now), snoozed).firstOrNull() ?: return
-    CareDueCard(alert, onSnooze = { onSnoozed(snoozeCare(context, careSnoozeKey(alert, care), now)) }, onDone = {
-        act {
-            when (alert.kind) {
-                CareKind.SERVICE -> {
-                    val record = repository.addMaintenance(MaintenanceKind.OIL, 0, null, "정비 완료", odometer)
-                    val interval = care.serviceIntervalKm?.let { " · 다음 정비까지 ${"%,d".format(it)} km" }.orEmpty()
-                    followUp(FollowUp("정비 완료로 기록했어요$interval", "실행 취소") { repository.removeMaintenance(record.id); repository.updateCare(care) })
-                }
-                CareKind.INSPECTION -> {
-                    val record = repository.addMaintenance(MaintenanceKind.INSPECTION, 0, null, "정기검사 완료", odometer)
-                    repository.updateCare(care.copy(inspectionDue = null))
-                    followUp(FollowUp("검사 완료 · 다음 검사일은 설정 › 법인·차량에 적어 주세요", "실행 취소") { repository.removeMaintenance(record.id); repository.updateCare(care) })
-                }
-                CareKind.INSURANCE -> {
-                    repository.updateCare(care.copy(insuranceDue = null))
-                    followUp(FollowUp("보험 만기일을 지웠어요 · 새 만기일은 설정 › 법인·차량에", "실행 취소") { repository.updateCare(care) })
-                }
-                CareKind.LEASE -> {
-                    repository.updateCare(care.copy(leaseEnd = null))
-                    followUp(FollowUp("리스·렌트 만기일을 지웠어요 · 새 계약은 설정 › 법인·차량에", "실행 취소") { repository.updateCare(care) })
-                }
-            }
-        }
-    }, modifier)
 }

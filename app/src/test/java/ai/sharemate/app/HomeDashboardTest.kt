@@ -31,13 +31,39 @@ class HomeDashboardTest {
         assertEquals("기록 중이면 시간대와 무관", "운행을 기록하고 있어요", homeGreeting(8, "권", true))
     }
 
-    @Test fun subtitleSaysWhatTheCarIsDoingInItsRealState() {
-        assertEquals("출발하면 자동으로 기록하고, 주차하면 목적과 비용을 정리해 드려요.", homeSubtitle(SignalStatus.READY, false, null))
-        assertEquals("계기판 누적거리를 읽으려면 차량 정보 권한이 필요해요.", homeSubtitle(SignalStatus.DENIED, false, null))
-        assertTrue(homeSubtitle(SignalStatus.DEMO, true, null).startsWith("시연 주행은 15배속"))
+    @Test fun theStatusLineSaysWhatTheCarIsDoingInItsRealState() {
+        val none = emptyList<AttentionItem>()
+        val ready = homeStatusLine(SignalStatus.READY, false, null, none, tidy = false)
+        assertEquals(HomeLine("출발하면 자동으로 기록해요", "출발하면 자동으로 기록하고, 주차하면 목적과 비용을 정리해 드려요"), ready)
+        assertEquals(HomeLine("차량 정보 권한이 있어야 기록해요", "계기판 누적거리를 읽으려면 차량 정보 권한이 필요해요"),
+            homeStatusLine(SignalStatus.DENIED, false, null, none, false))
+        assertEquals(HomeLine("시연 주행을 15배속으로 기록해요", "시연 주행은 15배속으로 기록되고 ‘시연 데이터’로 구분돼요"),
+            homeStatusLine(SignalStatus.DEMO, true, null, none, false))
+        assertEquals("차량과 연결하고 있어요", homeStatusLine(SignalStatus.STARTING, false, null, none, false).text)
+        val lost = homeStatusLine(SignalStatus.ERROR, false, null, none, false)
+        assertEquals("차량 데이터를 받을 수 없어요 · 연결을 확인해 주세요", lost.text)
+        assertEquals("차량 데이터를 받을 수 없어요, 연결 상태를 확인해 주세요", lost.spoken)
+        assertEquals("지원하지 않는 차량도 같은 줄", lost, homeStatusLine(SignalStatus.UNSUPPORTED, false, null, none, false))
+        assertEquals("오늘 정리 끝 · 다음 운행도 자동 기록", homeStatusLine(SignalStatus.READY, false, null, none, tidy = true).text)
+        assertEquals("권한이 없으면 정리가 끝나도 권한 줄", "차량 정보 권한이 있어야 기록해요", homeStatusLine(SignalStatus.DENIED, false, null, none, tidy = true).text)
+        // A recording trip: its start and live distance, updated in place; TalkBack hears what happens when the car parks.
         val open = Trip(id("o"), at(11, 4, 9), null, 100.0, 103.2)
-        assertTrue(homeSubtitle(SignalStatus.RECORDING, false, open).contains("3.2 km"))
-        assertEquals("차량 데이터를 받을 수 없어요. 연결 상태를 확인해 주세요.", homeSubtitle(SignalStatus.ERROR, false, null))
+        val recording = homeStatusLine(SignalStatus.RECORDING, false, open, none, false)
+        assertTrue(recording.text.endsWith("출발 · 3.2 km"))
+        assertTrue(recording.spoken.endsWith("주차하면 목적과 비용을 정리해 드려요"))
+        // The queue names its items from two up: three names, then how many more.
+        val queue = listOf(AttentionItem(AttentionKind.CARD_REVIEW), AttentionItem(AttentionKind.PURPOSE, 2), AttentionItem(AttentionKind.CARE))
+        assertEquals("확인할 일 3건 · 카드 확인 → 목적 확인 → 차량 관리", homeStatusLine(SignalStatus.READY, false, null, queue, false).text)
+        assertEquals("확인할 일 3건, 카드 확인, 목적 확인, 차량 관리", homeStatusLine(SignalStatus.READY, false, null, queue, false).spoken)
+        val five = queue + AttentionItem(AttentionKind.MONTH_CLOSE) + AttentionItem(AttentionKind.CHARGE_WAITING)
+        assertEquals("확인할 일 5건 · 카드 확인 → 목적 확인 → 차량 관리 외 2건", homeStatusLine(SignalStatus.READY, false, null, five, false).text)
+        assertEquals("하나뿐이면 카드가 말함", ready, homeStatusLine(SignalStatus.READY, false, null, queue.take(1), false))
+        // Precedence: recording, then the queue, then demo, then the signal.
+        assertEquals("기록 중이 큐보다 먼저", recording.text, homeStatusLine(SignalStatus.RECORDING, true, open, queue, false).text)
+        assertTrue("큐가 시연보다 먼저", homeStatusLine(SignalStatus.DEMO, true, null, queue, false).text.startsWith("확인할 일 3건"))
+        assertEquals("시연이 신호보다 먼저", "시연 주행을 15배속으로 기록해요", homeStatusLine(SignalStatus.DENIED, true, null, none, false).text)
+        assertTrue("큐가 권한 줄보다 먼저", homeStatusLine(SignalStatus.DENIED, false, null, queue, false).text.startsWith("확인할 일"))
+        listOf(ready, lost, recording, homeStatusLine(SignalStatus.READY, false, null, five, false)).forEach { assertOneLine(it.text, HOME_STATUS_UNITS) }
     }
 
     @Test fun aRecordingTripMakesTheHomeDistancesLiveTelemetry() {
@@ -151,55 +177,31 @@ class HomeDashboardTest {
         assertEquals("45초가 지난 신호는 확인 필요", "확인 필요", todayTileInfo(live, now + 60_000, zone).odometer)
     }
 
-    @Test fun homePlanFollowsTheWindowClassTheHeightAndTheFontScale() {
-        val full = homePlan(carLayout(1680.dp, 1200.dp), 1f, 1200.dp)
-        assertEquals(3, full.cardColumns)
-        assertTrue(full.widgetsSideBySide && full.showEyebrow && !full.compactWidgets)
-        assertEquals("히어로는 창의 70%, 420~600dp 사이", 600.dp, full.heroMin)
-        // The class comes from width ÷ font scale, so the full window at 1.3× lands in EXPANDED: cards go 2 + 1.
-        assertEquals(2, homePlan(carLayout(1292.dp, 1200.dp), 1.3f, 1200.dp).cardColumns)
-        assertEquals("FULL은 큰 글꼴에서도 3열", 3, homePlan(carLayout(1680.dp, 1200.dp), 1.3f, 1200.dp).cardColumns)
-        assertEquals("EXPANDED의 기본 글꼴은 3열", 3, homePlan(carLayout(1200.dp, 1200.dp), 1f, 1200.dp).cardColumns)
-        val medium = homePlan(carLayout(900.dp, 1000.dp), 1f, 1000.dp)
+    @Test fun homePlanFollowsTheWindowClass() {
+        val full = homePlan(carLayout(1680.dp, 1200.dp))
+        assertEquals(HomePlan(cardColumns = 3, widgetsSideBySide = true, widgetsInColumn = false), full)
+        // The class comes from width ÷ font scale, so the full window at 1.3× lands in EXPANDED: the cards stay three across.
+        assertEquals("1.3배 글꼴도 3열", 3, homePlan(carLayout(1292.dp, 1200.dp)).cardColumns)
+        assertEquals("EXPANDED는 3열", 3, homePlan(carLayout(1200.dp, 1200.dp)).cardColumns)
+        val medium = homePlan(carLayout(900.dp, 1000.dp))
         assertEquals("MEDIUM은 카드 한 줄씩", 1, medium.cardColumns)
-        assertFalse("위젯은 세로로", medium.widgetsSideBySide)
-        val short = homePlan(carLayout(1680.dp, 500.dp), 1f, 500.dp)
-        assertTrue("낮은 창: 위젯 한 줄, 브랜드 줄 숨김", short.compactWidgets && short.widgetsSideBySide && !short.showEyebrow)
-        assertEquals(300.dp, short.heroMin)
+        assertFalse("타일은 세로로", medium.widgetsSideBySide)
+        assertEquals("낮은 FULL도 3열, 타일은 나란히", HomePlan(3, true), homePlan(carLayout(1680.dp, 500.dp)))
         // Today, this month and the next booking leave the page only for the 지금 column beside it.
-        listOf(full, medium, short, homePlan(carLayout(1292.dp, 1200.dp), 1.3f, 1200.dp)).forEach { assertFalse("지금 열이 없으면 페이지에", it.widgetsInColumn) }
-        val beside = homePlan(carLayout(1680.dp, 1200.dp), 1f, 1200.dp, nowColumn = true)
+        listOf(full, medium, homePlan(carLayout(1292.dp, 1200.dp))).forEach { assertFalse("지금 열이 없으면 페이지에", it.widgetsInColumn) }
+        val beside = homePlan(carLayout(1680.dp, 1200.dp), nowColumn = true)
         assertTrue("지금 열이 있으면 그 열로", beside.widgetsInColumn)
-        assertEquals("카드와 히어로는 그대로", full.copy(widgetsInColumn = true), beside)
+        assertEquals("카드는 그대로", full.copy(widgetsInColumn = true), beside)
     }
 
-    @Test fun heroBandLeavesTheSkyRightOfTheGreetingAndAboveTheCards() {
-        // FULL: a 1112-dp page, the hero 600 tall, the greeting's 720 measure inside 8 dp, the 184-dp card row inside 6, 24 clear.
-        assertEquals(Rect(752f, 0f, 1080f, 386f), heroBand(1112f, 600f, 720f, 184f, 8f, 6f, 24f))
-        assertEquals("히어로가 커지면 아래로만 자람", Rect(752f, 0f, 1080f, 486f), heroBand(1112f, 700f, 720f, 184f, 8f, 6f, 24f))
-        assertNull("읽기 폭 옆에 남는 하늘이 없으면 없음", heroBand(760f, 600f, 720f, 184f, 8f, 6f, 24f))
-        assertNull("카드 위에 남는 하늘이 없으면 없음", heroBand(1112f, 200f, 720f, 184f, 8f, 6f, 24f))
-        assertNull("재기 전에는 없음", heroBand(0f, 0f, 720f, 0f, 8f, 6f, 24f))
-    }
-
-    @Test fun heroMinimumIsAFloorNotACeiling() {
-        assertEquals(600.dp, heroMinHeight(1200.dp, short = false))
-        assertEquals(420.dp, heroMinHeight(400.dp, short = false))
-        assertEquals(490f, heroMinHeight(700.dp, short = false).value, .01f)
-        assertEquals(300.dp, heroMinHeight(500.dp, short = true))
-        assertEquals(420.dp, heroMinHeight(900.dp, short = true))
-    }
-
-    @Test fun theThirdCardKeepsOneColumnsWidthAtTwoPlusOne() {
-        assertEquals("3열은 한 줄", listOf(listOf<Int?>(0, 1, 2)), homeCardRows(3, 3))
-        // 2 + 1: the lone third card sits under the first with an empty cell beside it, never stretched across the row.
-        assertEquals(listOf(listOf<Int?>(0, 1), listOf(2, null)), homeCardRows(3, 2))
-        assertEquals("한 열은 카드마다 한 줄", listOf(listOf<Int?>(0), listOf(1), listOf(2)), homeCardRows(3, 1))
-        assertEquals(listOf(listOf<Int?>(0, 1), listOf(2, 3)), homeCardRows(4, 2))
-        assertTrue(homeCardRows(0, 3).isEmpty())
-        assertEquals("열 수가 0이면 한 열로", listOf(listOf<Int?>(0), listOf(1)), homeCardRows(2, 0))
-        // The plan the 1.3× full window gets (EXPANDED by width ÷ font scale) is the one that pads the last row.
-        val large = homePlan(carLayout(1292.dp, 1200.dp), 1.3f, 1200.dp)
-        assertEquals(listOf(2, 2), homeCardRows(3, large.cardColumns).map { it.size })
+    @Test fun theSkyBandRunsRightOfTheGreetingDownToTheFirstCard() {
+        // FULL: a 1112-dp page, the greeting's 720 measure, 24 clear; with a card the first card's top is 160 + 24.
+        assertEquals(Rect(744f, 0f, 1088f, 160f), heroBand(1112f, 184f, 720f, 0f, 0f, 0f, 24f))
+        // Idle the first card is the bottom band's: 1097 − 200 = 897, or 801 with the demo strip.
+        assertEquals(873f, heroBand(1112f, 897f, 720f, 0f, 0f, 0f, 24f)!!.bottom)
+        assertEquals(777f, heroBand(1112f, 801f, 720f, 0f, 0f, 0f, 24f)!!.bottom)
+        assertNull("읽기 폭 옆에 남는 하늘이 없으면 없음", heroBand(760f, 600f, 720f, 0f, 0f, 0f, 24f))
+        assertNull("카드 위에 남는 하늘이 없으면 없음", heroBand(1112f, 20f, 720f, 0f, 0f, 0f, 24f))
+        assertNull("재기 전에는 없음", heroBand(0f, 0f, 720f, 0f, 0f, 0f, 24f))
     }
 }

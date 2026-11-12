@@ -101,12 +101,13 @@ import java.time.ZoneId
 import java.util.Locale
 
 /**
- * The car home, 2.10: a city hero in the current scene's light that greets the driver, a search-style entry to the
- * assistant, three glass cards (차량 정보 · 운행일지 확인 · 정보 내보내기), and how today and this month stand. Every number on
- * it is read from the log or the vehicle; nothing is decorative except the skyline itself. The block keeps to the layout
- * classes of [LocalLayout] (cards 3 across, widgets 2 across) and the motion rules of Motion.kt: press feedback, a gliding
- * selection pill, numbers that cross-fade instead of counting. 2.11: on a wide, tall window today, this month and the next
- * booking move to the 지금 column beside the page ([NowColumn]), and the sun or moon rests in the sky the hero leaves free.
+ * The car home: a city in the current scene's light that greets the driver, and since 2.13 (docs/design/DESIGN_2_13_SPEC.md
+ * §3) a page that never scrolls in the full window: the greeting block, the one attention card (HomeAttention.kt), the open
+ * sky, and the bottom band of the three destinations (차량 정보 · 운행일지 확인 · 정보 내보내기) and the incident dock. Every
+ * number on it is read from the log or the vehicle; nothing is decorative except the skyline itself. The motion rules of
+ * Motion.kt hold: press feedback, a gliding selection pill, numbers that cross-fade instead of counting. 2.11: on a wide, tall
+ * window today, this month and the next booking stand in the 지금 column beside the page ([NowColumn]), and the sun or moon
+ * rests in the sky the page leaves free.
  */
 
 // ───────────────────────── selection pill (tabs and segments) ─────────────────────────
@@ -289,72 +290,55 @@ internal fun homeGreeting(hour: Int, name: String?, recording: Boolean): String 
     }
 }
 
-/** The line under the headline: what the car is doing for the driver right now, in its real state. */
-internal fun homeSubtitle(signal: SignalStatus, demo: Boolean, open: Trip?): String = when {
-    demo -> "시연 주행은 15배속으로 기록되고 ‘시연 데이터’로 구분돼요."
-    open != null -> "${hm(open.startAt)} 출발 · ${kmText(open.distanceKm)} · 주차하면 목적과 비용을 정리해 드려요."
-    signal == SignalStatus.READY || signal == SignalStatus.RECORDING -> "출발하면 자동으로 기록하고, 주차하면 목적과 비용을 정리해 드려요."
-    signal == SignalStatus.DENIED -> "계기판 누적거리를 읽으려면 차량 정보 권한이 필요해요."
-    signal == SignalStatus.STARTING -> "차량과 연결하고 있어요."
-    else -> "차량 데이터를 받을 수 없어요. 연결 상태를 확인해 주세요."
+/**
+ * The status line under the greeting (2.13, pure, unit-tested): what the car is doing for the driver right now, in its real
+ * state, in one line, with the long form for TalkBack. A recording trip first ("09:12 출발 · 3.2 km", live telemetry that
+ * updates in place); then a queue of two or more, by name ([attentionQueueLine]); then demo mode; then a signal that cannot
+ * record (permission, connecting, no data); then the [tidy] day (nothing left, a trip done today, the signal ready); else
+ * ready. Demo used to come first and hid both the live distance and the queue in a demo.
+ */
+internal fun homeStatusLine(signal: SignalStatus, demo: Boolean, open: Trip?, queue: List<AttentionItem>, tidy: Boolean): HomeLine = when {
+    open != null -> "${hm(open.startAt)} 출발 · ${kmText(open.distanceKm)}".let { HomeLine(it, "$it, ${HomeCopy.SPOKEN_RECORDING_TAIL}") }
+    queue.size >= 2 -> attentionQueueLine(queue)
+    demo -> HomeLine(HomeCopy.STATUS_DEMO, HomeCopy.SPOKEN_STATUS_DEMO)
+    signal == SignalStatus.DENIED -> HomeLine(HomeCopy.STATUS_DENIED, HomeCopy.SPOKEN_STATUS_DENIED)
+    signal == SignalStatus.STARTING -> HomeLine(HomeCopy.STATUS_STARTING)
+    signal != SignalStatus.READY && signal != SignalStatus.RECORDING && signal != SignalStatus.DEMO -> HomeLine(HomeCopy.STATUS_NO_SIGNAL, HomeCopy.SPOKEN_STATUS_NO_SIGNAL)
+    tidy -> HomeLine(HomeCopy.STATUS_TIDY, HomeCopy.SPOKEN_STATUS_TIDY)
+    else -> HomeLine(HomeCopy.STATUS_READY, HomeCopy.SPOKEN_STATUS_READY)
 }
 
 /**
- * True while a trip of the data set on screen is being recorded. Its distance is then live telemetry inside the hero's
- * supporting line ([homeSubtitle]) and the 오늘 운행 figure, so those update in place instead of cross-fading (spec C).
+ * True while a trip of the data set on screen is being recorded. Its distance is then live telemetry inside the status
+ * line ([homeStatusLine]) and the 오늘 운행 figure, so those update in place instead of cross-fading (spec C).
  */
 internal fun homeShowsLiveTrip(data: TripLogData): Boolean = data.open?.let { it.demo == data.profile.demoMode } == true
 
 /**
- * How the home lays itself out in one window ([LayoutTokens] plus the font scale and the window height):
- * [cardColumns] 3 across on the wide classes, 2 + 1 below at a large font on the classes under FULL (the third card one
- * column wide, [homeCardRows]), one 96-dp row per card in narrow windows; the widgets sit side by side from EXPANDED up
- * (and on one 120-dp row in a short window, [compactWidgets]);
- * a short window hides the eyebrow and keeps the hero to [heroMin]. The clock is no longer the hero's: since 2.12 the header
- * shows it on every page and window ([headerClock]), so the time is never on screen twice.
- * [widgetsInColumn]: the 지금 column stands beside the page, so today, this month and the next booking live there and leave
- * the page, and the hero reports the sky it leaves free for the sun or moon.
+ * How the home lays itself out in one window (2.13): [cardColumns], the destinations three across from EXPANDED at every
+ * font (360 dp each at FULL) and one per row below; [widgetsSideBySide], 오늘 운행 beside 이달 운행일지 from EXPANDED where no
+ * 지금 column carries them, stacked below; [widgetsInColumn], the 지금 column stands beside the page, so today, this month and
+ * the next booking live there, and the page reports the sky it leaves free for the sun or moon.
  */
 @Immutable
-internal data class HomePlan(val cardColumns: Int, val widgetsSideBySide: Boolean, val compactWidgets: Boolean, val showEyebrow: Boolean,
-    val heroMin: Dp, val widgetsInColumn: Boolean = false)
+internal data class HomePlan(val cardColumns: Int, val widgetsSideBySide: Boolean, val widgetsInColumn: Boolean = false)
 
-internal fun homePlan(layout: LayoutTokens, fontScale: Float, windowHeight: Dp, nowColumn: Boolean = false): HomePlan {
-    val columns = when {
-        !layout.expanded -> 1
-        layout.full || fontScale <= 1.25f -> 3
-        else -> 2
-    }
-    return HomePlan(cardColumns = columns, widgetsSideBySide = layout.expanded || layout.short, compactWidgets = layout.short,
-        showEyebrow = !layout.short, heroMin = heroMinHeight(windowHeight, layout.short), widgetsInColumn = nowColumn)
-}
+internal fun homePlan(layout: LayoutTokens, nowColumn: Boolean = false): HomePlan =
+    HomePlan(cardColumns = if (layout.expanded) 3 else 1, widgetsSideBySide = layout.expanded, widgetsInColumn = nowColumn)
 
 /**
- * The sky the hero leaves free (pure, unit-tested), in the hero's own px: right of the greeting's reading measure
- * ([readingWidth] inside [padH]) and above the card row ([cardsHeight] at the bottom inside [padV]), [margin] clear of both
- * and of the hero's end, from the hero's top. Null when nothing is left, as on a page too narrow beside the reading measure.
- * Built from sizes, never positions, so neither the entrance lift nor the page slide moves it. The full window gives
- * (752, 0)–(1080, 386): (824, 92)–(1152, 478) on screen.
+ * The sky the page leaves free (pure, unit-tested), in the page's own px: right of the greeting's reading measure
+ * ([readingWidth] inside [padH]) and above the first card ([heroHeight], the card's top, less [cardsHeight] inside [padV]),
+ * [margin] clear of both and of the page's end. Null when nothing is left, as on a page too narrow beside the reading measure.
+ * Built from sizes, never positions, so neither the entrance lift nor the page slide moves it. Since 2.13 홈 passes the first
+ * card's top and nothing else: with an attention card the full window gives (744, 0)–(1088, 160), (816, 92)–(1160, 252) on
+ * screen, where the sun still rests at (1052.8, 181.5); idle the band reaches down to the bottom band (873, 777 in demo).
  */
 internal fun heroBand(heroWidth: Float, heroHeight: Float, readingWidth: Float, cardsHeight: Float, padH: Float, padV: Float, margin: Float): Rect? {
     val left = padH + readingWidth + margin
     val right = heroWidth - padH - margin
     val bottom = heroHeight - padV - cardsHeight - margin
     return if (right > left && bottom > 0f) Rect(left, 0f, right, bottom) else null
-}
-
-/** The hero keeps 70 % of the window between 420 and 600 dp; a short window keeps 55 % from 300 dp. A minimum only: the column grows when a large font needs the room. */
-internal fun heroMinHeight(windowHeight: Dp, short: Boolean): Dp =
-    if (short) (windowHeight * .55f).coerceIn(300.dp, 420.dp) else (windowHeight * .70f).coerceIn(420.dp, 600.dp)
-
-/**
- * The destination cards as rows of [columns] card indices. A short last row is padded with nulls (empty cells), so at 2 + 1
- * the third card keeps one column's width and the vertical anatomy, start-aligned under the first, instead of stretching
- * into a full-width strip. One column gives one card per row (the 96-dp horizontal rows).
- */
-internal fun homeCardRows(count: Int, columns: Int): List<List<Int?>> {
-    val per = columns.coerceAtLeast(1)
-    return (0 until count.coerceAtLeast(0)).chunked(per).map { row -> row + List(per - row.size) { null } }
 }
 
 @Immutable
@@ -456,7 +440,7 @@ internal fun todayTileInfo(state: TripLogState, now: Long, zone: ZoneId): TodayT
     return TodayTileInfo(km?.let { String.format(Locale.KOREA, "%,.1f", it) } ?: "—", "${finished.size}건", expenses, odometer, spoken)
 }
 
-// ───────────────────────── hero ─────────────────────────
+// ───────────────────────── greeting and destinations ─────────────────────────
 
 @Immutable
 internal class HomeCardSpec(val title: String, val subtitle: String, val icon: Int, val badge: Int, val onClick: () -> Unit)
@@ -464,7 +448,7 @@ internal class HomeCardSpec(val title: String, val subtitle: String, val icon: I
 /** Set once the home has played its entrance, so the stagger runs once per process and never on a return to the tab or after a sync. */
 private var homeEntranceDone = false
 
-/** True the first time the home composes in this process: the hero block staggers in (greeting → search → cards); false afterwards. */
+/** True the first time the home composes in this process: the greeting block rises in; false afterwards. */
 @Composable internal fun rememberHomeEntrance(): Boolean {
     val animate = remember { !homeEntranceDone }
     LaunchedEffect(Unit) { homeEntranceDone = true }
@@ -472,111 +456,58 @@ private var homeEntranceDone = false
 }
 
 /**
- * The greeting hero: brand line, greeting, the assistant entry and [cards], the three destinations, laid out by [plan].
- * 2.12 took the clock out: the header shows the date and time on every page and window, so the hero never repeats them.
- * Grows past [HomePlan.heroMin] when the font scale needs room instead of clipping; the greeting block keeps to the reading
- * width. [entrance] staggers the block in on the first composition of the session only. With [onBand] the hero measures
- * itself and its card row and reports the sky it leaves free ([heroBand], null when there is none).
+ * The greeting block (2.13): the greeting ([homeGreeting], displaySmall Bold, two lines at most; headlineLarge at a large
+ * font) and 8 dp under it the [status] line ([homeStatusLine], bodyLarge textSecondary, one line at the normal font), both to
+ * the 720-dp reading measure, 8 dp from the page top. The brand line, the inset and the hero's minimum of 2.12 went; beside
+ * the 지금 column [modifier] holds the block to [HOME_GREETING_MIN], which is the sky the sun needs. Both lines cross-fade
+ * when their words change, except a recording trip's distance, which updates in place. TalkBack hears the status line's
+ * long form. [entrance] lifts the block in on the session's first composition only.
  */
-@Composable internal fun HomeHero(state: TripLogState, now: Long, plan: HomePlan, onAssistant: () -> Unit, requestPermissions: () -> Unit,
-    demoControls: @Composable () -> Unit, cards: List<HomeCardSpec>, modifier: Modifier = Modifier, entrance: Boolean = false,
-    onBand: ((Rect?) -> Unit)? = null) {
+@Composable internal fun HomeGreeting(state: TripLogState, now: Long, status: HomeLine, modifier: Modifier = Modifier, entrance: Boolean = false) {
     val data = state.data
-    val demo = data.profile.demoMode
-    val open = data.open?.takeIf { it.demo == demo }
+    val open = data.open?.takeIf { it.demo == data.profile.demoMode }
     val driver = data.drivers.firstOrNull { it.id == data.currentDriverId }
     val hour = Instant.ofEpochMilli(now).atZone(zone).hour
-    val layout = LocalLayout.current
-    val compact = plan.cardColumns == 1
-    val padH = if (compact) 4.dp else 8.dp
-    val padV = if (compact) 4.dp else 6.dp
-    // Sizes only: a band built from positions would move with the entrance lift and the page slide. They are kept current
-    // even while nobody asks (nothing reads them then), so a band asked for later starts from the hero as it stands.
-    var heroSize by remember { mutableStateOf(IntSize.Zero) }
-    var cardsHeight by remember { mutableIntStateOf(0) }
-    if (onBand != null) {
-        val band = with(LocalDensity.current) {
-            heroBand(heroSize.width.toFloat(), heroSize.height.toFloat(), layout.readingMax.toPx(), cardsHeight.toFloat(), padH.toPx(), padV.toPx(), HERO_SKY_MARGIN.toPx())
-        }
-        val report by rememberUpdatedState(onBand)
-        // Reported once per change; the clock recomposes the hero every second.
-        DisposableEffect(band) { report(band); onDispose {} }
-    }
-    // No frame and no chips of its own: the shared header above carries status, employee and tabs on every page, and the
-    // hero is laid straight onto the full-screen backdrop ([HomeBackdrop]).
-    Column(modifier.onSizeChanged { heroSize = it }.fillMaxWidth().heightIn(min = plan.heroMin).padding(horizontal = padH, vertical = padV),
-        verticalArrangement = Arrangement.SpaceBetween) {
-        // The first child holds SpaceBetween's top anchor, where the clock stood until the header took it (2.12).
-        Spacer(Modifier.height(4.dp))
-        Appear(Modifier.readingWidth(), index = 0, animate = entrance) {
-            Column(Modifier.fillMaxWidth().padding(vertical = if (compact || plan.compactWidgets) 12.dp else 22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (plan.showEyebrow) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.clearAndSetSemantics {}) {
-                    Icon(painterResource(R.drawable.ic_splash_logo), null, Modifier.size(30.dp), tint = Scene.brand)
-                    Text("SHAREMATE  ·  FLEET JOURNAL", style = MaterialTheme.typography.labelLarge, color = Scene.brand, letterSpacing = 3.sp)
-                }
-                // One headline, one supporting line. Both cross-fade with a small lift when the text changes (a new employee, a trip starting),
-                // except that while a trip records the line carries its live distance, which updates in place (telemetry never cross-fades).
-                DigitChange(homeGreeting(hour, driver?.name, open != null), Modifier.semantics { heading() },
-                    style = if (compact) MaterialTheme.typography.headlineLarge else scaledDisplay(MaterialTheme.typography.displaySmall, MaterialTheme.typography.headlineLarge),
-                    color = Scene.text, fontWeight = FontWeight.Bold, maxLines = 2, lift = 4.dp)
-                val subtitle = homeSubtitle(state.signal, demo, open)
-                if (homeShowsLiveTrip(data)) Text(subtitle, style = MaterialTheme.typography.bodyLarge, color = Scene.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                else DigitChange(subtitle, style = MaterialTheme.typography.bodyLarge, color = Scene.textSecondary, maxLines = 2, lift = 4.dp)
-                if (state.signal == SignalStatus.DENIED) PrimaryAction("차량 정보 권한 허용", onClick = requestPermissions)
-            }
-        }
-        Appear(Modifier.readingWidth(), index = 1, animate = entrance) { AssistantSearch(onAssistant) }
-        Appear(Modifier.fillMaxWidth().padding(top = if (compact) 16.dp else 24.dp), index = 2, animate = entrance) {
-            Column(Modifier.onSizeChanged { cardsHeight = it.height }, verticalArrangement = Arrangement.spacedBy(layout.cardGap)) {
-                // 3 across, or 2 + 1 at a large font: every card keeps the vertical anatomy at one column's width, and an
-                // empty cell holds the place of a missing one so a lone card never stretches across the row.
-                if (plan.cardColumns == 1) cards.forEach { HomeActionCard(it, Modifier.fillMaxWidth(), horizontal = true) }
-                else homeCardRows(cards.size, plan.cardColumns).forEach { row ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(layout.cardGap)) {
-                        row.forEach { index -> if (index != null) HomeActionCard(cards[index], Modifier.weight(1f)) else Spacer(Modifier.weight(1f)) }
-                    }
-                }
-                demoControls()
-            }
+    val fontScale = LocalDensity.current.fontScale
+    Appear(modifier.fillMaxWidth(), index = 0, animate = entrance) {
+        Column(Modifier.readingWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            DigitChange(homeGreeting(hour, driver?.name, open != null), Modifier.semantics { heading() },
+                style = scaledDisplay(MaterialTheme.typography.displaySmall, MaterialTheme.typography.headlineLarge),
+                color = Scene.text, fontWeight = FontWeight.Bold, maxLines = 2, lift = 4.dp)
+            val spoken = Modifier.clearAndSetSemantics { contentDescription = status.spoken }
+            val lines = carLineMaxLines(fontScale)
+            if (homeShowsLiveTrip(data)) Text(status.text, spoken, style = MaterialTheme.typography.bodyLarge, color = Scene.textSecondary, maxLines = lines,
+                overflow = TextOverflow.Ellipsis)
+            else DigitChange(status.text, spoken, style = MaterialTheme.typography.bodyLarge, color = Scene.textSecondary, maxLines = lines, lift = 4.dp)
         }
     }
 }
 
 /**
- * The search-bar entry to the assistant (640 × 68): it opens the sheet, where the driver picks a suggestion or types one line.
- * Its outline is the solid accent, the one edge that marks it as a control on the hero haze (WCAG 1.4.11 asks 3:1; the .40
- * accent it had was 1.7:1). Since 2.12 that is the car's accent ([CarSkin.accent]), the colour of the chosen tab and of every
- * primary action, so the hero's one control matches the header above it. Darker than the scene's sweep accent, it gains
- * against the white day glass and still clears 3:1 against the night glass (3.25:1 on the opaque night card).
+ * The three destinations (2.13, the bottom band's top row): three across from EXPANDED at every font, one per row below
+ * ([HomePlan.cardColumns]), the card gap apart.
  */
-@Composable private fun AssistantSearch(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val interaction = remember { MutableInteractionSource() }
-    // Day glass that carries text stays at .88 or above, so the composite contrast holds; night keeps its lighter alpha.
-    val glass = Scene.glass.copy(alpha = if (Scene.isDay) .88f else .80f)
-    Surface(onClick = onClick, shape = RoundedCornerShape(50), color = glass, border = BorderStroke(1.dp, Car.skin.accent), interactionSource = interaction,
-        modifier = modifier.widthIn(max = 640.dp).fillMaxWidth().pressable(interaction, .98f)
-            .semantics { contentDescription = "운행 비서 열기. 예: 주차비 4,500원 추가해줘"; role = Role.Button }) {
-        Row(Modifier.pressFill(interaction).heightIn(min = 68.dp).padding(horizontal = 26.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Icon(painterResource(R.drawable.ic_search), null, Modifier.size(28.dp), tint = Scene.textSecondary)
-            Text("운행 비서에게 물어보세요", style = MaterialTheme.typography.titleMedium, color = Scene.text, maxLines = 1)
-            Text("예: 주차비 4,500원 추가해줘", style = MaterialTheme.typography.bodyMedium, color = Scene.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f))
-        }
+@Composable internal fun DestinationRow(cards: List<HomeCardSpec>, columns: Int, modifier: Modifier = Modifier) {
+    val gap = LocalLayout.current.cardGap
+    if (columns >= 3) Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
+        cards.forEach { DestinationCard(it, Modifier.weight(1f)) }
+    } else Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(gap)) {
+        cards.forEach { DestinationCard(it) }
     }
 }
 
 /**
- * The glass of the home's cards and widgets: opaque [Scene.glass] by day, so neither the towers nor the bridge show through
- * the white; by night the scene's glass at [translucent] (null keeps the token's own alpha), as built. The destination
- * cards take it at .78; the 지금 column's tiles left it in 2.12 for the opaque [CarCard].
+ * One destination (2.13, 184 → 104 dp): a tappable [CarCard] with 20 dp of padding, its title row (the icon, the title, the
+ * count badge and the chevron) over one [CarLine] ([homeCardLines]). [HOME_DESTINATION_ROW] tall at least, the frame's
+ * budget. TalkBack hears "차량 정보, 정기검사 D-9 · 배터리 100%, 확인 필요 2건" with the click label 열기.
  */
-@Composable internal fun homeCardGlass(translucent: Float? = null): Color {
-    val glass = Scene.glass
-    return when {
-        Scene.isDay -> glass.copy(alpha = 1f)
-        translucent != null -> glass.copy(alpha = translucent)
-        else -> glass
+@Composable internal fun DestinationCard(spec: HomeCardSpec, modifier: Modifier = Modifier) {
+    val description = "${spec.title}, ${spec.subtitle}" + if (spec.badge > 0) ", 확인 필요 ${spec.badge}건" else ""
+    CarCard(modifier.heightIn(min = HOME_DESTINATION_ROW), onClick = spec.onClick, onClickLabel = HomeCopy.DESTINATION_CLICK, description = description,
+        padding = 20.dp, title = {
+            CarSectionTitle(spec.title, icon = painterResource(spec.icon), chevron = true, trailing = if (spec.badge > 0) { { CountBadge(spec.badge) } } else null)
+        }) {
+        CarLine(spec.subtitle)
     }
 }
 
@@ -591,60 +522,6 @@ private var homeEntranceDone = false
     // The platform scales shadow colours by its own ambient and spot alphas, so the token's tone goes in at full strength.
     val colour = tone.copy(alpha = (tone.alpha / .12f).coerceIn(0f, 1f))
     return shadow(6.dp, shape, clip = false, ambientColor = colour, spotColor = colour)
-}
-
-/**
- * One destination card (184 dp tall on the wide car screen, a 96-dp row in narrow windows). Settles to .98 while held; no
- * ripple on the car. By day it is opaque white glass with the phone's drop shadow and no sheen (the day edge token is a dark
- * hairline, so a sheen drawn from it greys the top, and glass the city shows through reads grey); by night it keeps the
- * translucent glass with its lit top edge.
- */
-@Composable internal fun HomeActionCard(spec: HomeCardSpec, modifier: Modifier = Modifier, horizontal: Boolean = false) {
-    val shape = RoundedCornerShape(26.dp)
-    val description = "${spec.title}, ${spec.subtitle}" + if (spec.badge > 0) ", 확인 필요 ${spec.badge}건" else ""
-    val interaction = remember { MutableInteractionSource() }
-    val day = Scene.isDay
-    val sheen = if (day) null else Brush.verticalGradient(listOf(Scene.colors.edgeTop, Color.Transparent))
-    Surface(onClick = spec.onClick, shape = shape, color = homeCardGlass(translucent = .78f), border = Scene.edge, interactionSource = interaction,
-        modifier = modifier.dayCardShadow(shape).pressable(interaction, .98f).semantics(mergeDescendants = true) { contentDescription = description; role = Role.Button }) {
-        Box(Modifier.then(if (sheen != null) Modifier.background(sheen) else Modifier).pressFill(interaction)) {
-            if (horizontal) Row(Modifier.fillMaxWidth().heightIn(min = 96.dp).padding(horizontal = 20.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                IconTile(spec.icon, small = true)
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(spec.title, style = MaterialTheme.typography.titleLarge, color = Scene.text, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(spec.subtitle, style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                }
-                if (spec.badge > 0) CountBadge(spec.badge)
-                Chevron()
-            } else Column(Modifier.fillMaxWidth().heightIn(min = 184.dp).padding(horizontal = 20.dp, vertical = 22.dp),
-                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically)) {
-                Box { IconTile(spec.icon); if (spec.badge > 0) CountBadge(spec.badge, Modifier.align(Alignment.TopEnd).padding(start = 52.dp)) }
-                Text(spec.title, style = MaterialTheme.typography.headlineSmall, color = Scene.text, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(spec.subtitle, style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary, textAlign = TextAlign.Center,
-                        maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                    Chevron()
-                }
-            }
-        }
-    }
-}
-
-/** The card icon on a blue-to-cyan tile, with a soft halo behind it so the three destinations read as lit buttons. [small] for the 96-dp row. */
-@Composable private fun IconTile(icon: Int, small: Boolean = false) {
-    val shape = RoundedCornerShape(if (small) 16.dp else 20.dp)
-    val halo = Scene.glow.copy(alpha = .30f)
-    val tile = Scene.tile
-    Box(Modifier.size(if (small) 72.dp else 96.dp).drawBehind {
-        drawCircle(Brush.radialGradient(listOf(halo, Color.Transparent), center = center, radius = size.minDimension / 2), radius = size.minDimension / 2)
-    }, contentAlignment = Alignment.Center) {
-        Box(Modifier.size(if (small) 56.dp else 72.dp).clip(shape).background(tile).border(Scene.edge, shape),
-            contentAlignment = Alignment.Center) {
-            Icon(painterResource(icon), null, Modifier.size(if (small) 28.dp else 36.dp), tint = Scene.onTile)
-        }
-    }
 }
 
 /**
@@ -671,87 +548,6 @@ private var homeEntranceDone = false
             contentAlignment = Alignment.Center) {
             Text("$value", style = MaterialTheme.typography.labelMedium, color = digits, fontWeight = FontWeight.Bold)
         }
-    }
-}
-
-@Composable private fun Chevron() =
-    Text("›", style = MaterialTheme.typography.headlineSmall, color = Scene.textMuted, modifier = Modifier.clearAndSetSemantics {})
-
-// ───────────────────────── widgets under the hero ─────────────────────────
-
-/**
- * One glass widget (150 dp, or the 120-dp [compact] row of a short window), on opaque glass by day like the cards above it.
- * A tappable one settles to .98 while held and carries the day drop shadow of the tappable cards.
- */
-@Composable private fun HomeWidget(modifier: Modifier, onClick: (() -> Unit)?, description: String, compact: Boolean = false, content: @Composable RowScope.() -> Unit) {
-    val shape = RoundedCornerShape(28.dp)
-    val interaction = remember { MutableInteractionSource() }
-    val glass = homeCardGlass()
-    val inner: @Composable () -> Unit = {
-        Row(Modifier.then(if (onClick != null) Modifier.pressFill(interaction) else Modifier).fillMaxWidth().heightIn(min = if (compact) 120.dp else 150.dp)
-            .padding(horizontal = if (compact) 24.dp else 30.dp, vertical = if (compact) 16.dp else 24.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(if (compact) 20.dp else 28.dp), content = content)
-    }
-    val semantics = Modifier.semantics(mergeDescendants = true) { contentDescription = description }
-    if (onClick != null) Surface(onClick = onClick, shape = shape, color = glass, border = Scene.edge, interactionSource = interaction,
-        modifier = modifier.dayCardShadow(shape).pressable(interaction, .98f).then(semantics)) { inner() }
-    else Surface(shape = shape, color = glass, border = Scene.edge, modifier = modifier.then(semantics)) { inner() }
-}
-
-/**
- * Today at a glance: distance (the live trip included), finished trips, expenses, and the odometer when the signal is fresh.
- * The count and the expenses cross-fade when they change, and so does the distance between trips; while a trip records the
- * distance is live telemetry like the odometer, and both simply update in place.
- */
-@Composable internal fun TodayWidget(state: TripLogState, now: Long, modifier: Modifier = Modifier, compact: Boolean = false) {
-    val data = state.data
-    val overview = drivingOverviewInfo(state, now, true, zone)
-    val today = localDate(now)
-    val demo = data.profile.demoMode
-    val finished = tripsIn(data.trips.filter { it.demo == demo }, today, today, zone)
-    val km = overview.todayKm
-    val odometer = state.live?.odometerKm?.takeIf { overview.fresh }
-    val kmLabel = km?.let { String.format(Locale.KOREA, "%,.1f", it) } ?: "—"
-    val spoken = "오늘 운행 ${km?.let(::kmText) ?: "정보 없음"}, 완료 ${finished.size}건, 등록 경비 ${formatWon(finished.sumOf { it.expenseWon })}, " +
-        "계기판 ${odometer?.let(::kmText) ?: "확인 필요"}"
-    HomeWidget(modifier, null, spoken, compact) {
-        Column(verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 6.dp)) {
-            Text("오늘 운행", style = MaterialTheme.typography.labelLarge, color = Scene.textMuted)
-            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val kmStyle = (if (compact) scaledDisplay(MaterialTheme.typography.displaySmall, MaterialTheme.typography.headlineLarge)
-                    else scaledDisplay(MaterialTheme.typography.displayMedium, MaterialTheme.typography.displaySmall)).copy(fontFeatureSettings = "tnum")
-                if (homeShowsLiveTrip(data)) Text(kmLabel, style = kmStyle, color = Scene.text, maxLines = 1)
-                else DigitChange(kmLabel, style = kmStyle, color = Scene.text)
-                Text("km", style = MaterialTheme.typography.titleMedium, color = Scene.textMuted, modifier = Modifier.padding(bottom = if (compact) 6.dp else 10.dp))
-            }
-        }
-        Box(Modifier.width(1.dp).height(if (compact) 64.dp else 84.dp).background(Scene.divider))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 8.dp)) {
-            WidgetLine("완료 운행", "${finished.size}건")
-            WidgetLine("등록 경비", formatWon(finished.sumOf { it.expenseWon }))
-            WidgetLine("계기판", odometer?.let(::kmText) ?: "확인 필요", live = true)
-        }
-    }
-}
-
-/** This month in one word, like a traffic widget: 대기 · 완성 · 마감됨 · 확인 N건, and where the month stands. Opens 월간·Excel. */
-@Composable internal fun MonthWidget(data: TripLogData, now: Long, onOpen: () -> Unit, modifier: Modifier = Modifier, compact: Boolean = false) {
-    val info = monthWidgetInfo(data, localDate(now), zone)
-    val color = when (info.tone) { 1 -> Scene.glow; 2 -> Scene.warn; else -> Scene.text }
-    HomeWidget(modifier, onOpen, "${info.title} ${info.headline}, ${info.detail}${info.auto?.let { ", $it" }.orEmpty()}, 월간 현황 열기", compact) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Icon(painterResource(R.drawable.ic_report), null, Modifier.size(26.dp), tint = Scene.textSecondary)
-                Text(info.title, style = MaterialTheme.typography.titleMedium, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                DigitChange(info.headline, style = if (compact) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.displaySmall, color = color, fontWeight = FontWeight.Bold)
-                DigitChange(info.detail, Modifier.padding(bottom = 6.dp).weight(1f, fill = false), style = MaterialTheme.typography.bodyLarge, color = Scene.textMuted, maxLines = 2)
-            }
-            if (!compact) info.auto?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-        }
-        CompletionRing(info.percent, color, diameter = if (compact) 44.dp else 104.dp, thickness = if (compact) 5.dp else 10.dp, sweepKey = "home-month-ring")
-        Chevron()
     }
 }
 
@@ -785,30 +581,6 @@ private var homeEntranceDone = false
             DigitChange(percent?.let { "$it%" } ?: "—", style = style.copy(fontFeatureSettings = "tnum"), color = Scene.text, fontWeight = FontWeight.Bold)
             if (diameter >= 96.dp) Text("완성률", style = MaterialTheme.typography.labelSmall, color = Scene.textMuted)
         }
-    }
-}
-
-/** One label-and-value line of a widget. A [live] value (telemetry) updates in place; the others cross-fade. */
-@Composable private fun WidgetLine(label: String, value: String, live: Boolean = false) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, color = Scene.textMuted, modifier = Modifier.weight(1f))
-        val style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum")
-        if (live) Text(value, style = style, color = Scene.text, maxLines = 1) else DigitChange(value, style = style, color = Scene.text)
-    }
-}
-
-/**
- * Two widgets side by side on the wide classes where the 지금 column does not stand (2 × 542 on a 1200-dp window), stacked
- * in a narrow window; one 120-dp row when [compact]. Beside the column, today and this month are its tiles instead.
- */
-@Composable internal fun HomeWidgets(state: TripLogState, now: Long, sideBySide: Boolean = LocalLayout.current.expanded, compact: Boolean = false, onOpenMonth: () -> Unit) {
-    val layout = LocalLayout.current
-    if (sideBySide) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(layout.cardGap)) {
-        TodayWidget(state, now, Modifier.weight(1f), compact)
-        MonthWidget(state.data, now, onOpenMonth, Modifier.weight(1f), compact)
-    } else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(layout.cardGap)) {
-        TodayWidget(state, now, Modifier.fillMaxWidth(), compact)
-        MonthWidget(state.data, now, onOpenMonth, Modifier.fillMaxWidth(), compact)
     }
 }
 

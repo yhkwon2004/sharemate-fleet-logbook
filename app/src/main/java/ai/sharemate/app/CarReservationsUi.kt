@@ -38,7 +38,8 @@ import java.time.ZoneId
 
 /*
  * Bookings on the car (2.9). The car owns the calendar: phones ask, the car confirms, and the car can cancel any booking
- * (with undo). The home shows one line for the booking in use or the next one within a day; the 차량 tab lists them all.
+ * (with undo). The 지금 column's 예약 tile names the booking in use or the next one, and 홈 without the column shows the same
+ * tile while one is due within a day; the 차량 tab lists them all.
  */
 
 // ───────────────────────── pure copy (unit-tested) ─────────────────────────
@@ -70,7 +71,7 @@ internal data class ReservationTileLine(val text: String, val spoken: String)
 /**
  * The 예약 tile's line (2.12, pure, unit-tested): the booking in use ("사용 중 · 17:00까지"), or starting within the lead
  * ("곧 시작 · 14:00부터"), else the next confirmed booking however far ahead ("오늘 14:00", "내일 09:30", "11월 21일 (토)
- * 18:00"), else "현재 잡힌 예약이 없어요". Unlike the home's line ([nextReservationLine], 24 hours) it reads every upcoming
+ * 18:00"), else "현재 잡힌 예약이 없어요". Unlike 홈's rule for the tile ([reservationDueWithinDay], 24 hours) it reads every upcoming
  * booking, so "none" is only said when it is true. The booker's name ends the line (" · 김 님") unless they are the 사용자
  * already or not on the roster. [ReservationTileLine.spoken] is the long form: "예약, 사용 중, 17:00까지, 영업 · 김", with
  * "운전자를 예약한 직원으로 맞췄어요" once the car has made the booker the driver (the reason their name left the line).
@@ -93,24 +94,13 @@ internal fun reservationTileLine(data: TripLogData, now: Long, zone: ZoneId): Re
     return ReservationTileLine("$start${name(next)}", "예약, 다음 예약 $start, ${reservationDetailText(data, next)}")
 }
 
-@Immutable
-internal data class CarReservationLine(val text: String, val active: Boolean)
-
 /**
- * The single line under the car home hero: the booking in use (with whether the car already set its booker as the
- * driver), else the next booking starting within 24 hours, else nothing.
+ * Whether 홈 without the 지금 column shows the 예약 tile (2.13, pure, unit-tested): while a booking is in use or in its lead
+ * before it starts, or the next one starts within 24 hours. The tile itself ([ReservationTile]) says which, in the column's
+ * words; further ahead a booking waits on 차량, so the narrow 홈 keeps its room for what is due.
  */
-internal fun nextReservationLine(data: TripLogData, now: Long, zone: ZoneId): CarReservationLine? {
-    activeReservation(data, now)?.let { r ->
-        val head = if (now < r.startAt) "곧 예약 시작 · ${bookerName(data, r.driverId)} 님 · ${carClockText(r.startAt, now, zone)}부터"
-        else "예약 사용 중 · ${bookerName(data, r.driverId)} 님 · ${carClockText(r.endAt, now, zone)}까지"
-        val matched = data.currentDriverId == r.driverId && data.drivers.any { it.id == r.driverId }
-        return CarReservationLine(head + if (matched) " · 운전자를 예약한 직원으로 맞췄어요" else "", active = true)
-    }
-    val next = upcomingReservations(data, now).firstOrNull { it.startAt > now && it.startAt - now <= LINE_HORIZON_MILLIS } ?: return null
-    val parts = listOfNotNull("다음 예약 · ${reservationStartText(next, now, zone)}", bookerLabel(data, next.driverId), next.purpose?.label, next.destination.ifBlank { null })
-    return CarReservationLine(parts.joinToString(" · "), active = false)
-}
+internal fun reservationDueWithinDay(data: TripLogData, now: Long): Boolean =
+    activeReservation(data, now) != null || upcomingReservations(data, now).any { it.startAt > now && it.startAt - now <= LINE_HORIZON_MILLIS }
 
 /**
  * What the empty card says (2.12, pure, unit-tested), as the ⓘ row's line and what it folds: where bookings come from, then what
@@ -190,21 +180,4 @@ internal fun carReservationsOverflow(more: Int): String = "외 ${more}건은 휴
     CarRow(title, line = detail, lead = { Box(Modifier.size(12.dp).clip(CircleShape).background(dot)) },
         titleColor = if (highlighted) Scene.glow else Scene.text, titleMaxLines = 2,
         trailing = { CarPillButton("취소", onCancel, color = Scene.negative, description = cancelDescription) })
-}
-
-// ───────────────────────── home line ─────────────────────────
-
-/** One glass line under the car home hero; nothing when no booking is in use or due within 24 hours. */
-@Composable internal fun NextReservationLine(data: TripLogData, now: Long, modifier: Modifier = Modifier) {
-    val tz = remember { ZoneId.systemDefault() }
-    val line = remember(data, now) { nextReservationLine(data, now, tz) } ?: return
-    Surface(shape = RoundedCornerShape(20.dp), color = Scene.glass.copy(alpha = if (Scene.isDay) .88f else .84f), contentColor = Scene.text, border = Scene.edge,
-        modifier = modifier.fillMaxWidth().heightIn(min = 56.dp).semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }) {
-        Row(Modifier.heightIn(min = 56.dp).padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Box(Modifier.size(10.dp).clip(CircleShape).background(if (line.active) Scene.glow else Scene.brand))
-            Text(line.text, style = MaterialTheme.typography.labelLarge, color = if (line.active) Scene.text else Scene.textSecondary,
-                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-        }
-    }
 }

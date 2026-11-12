@@ -96,9 +96,26 @@ class FleetCareUiTest {
     @Test fun doneButtonsSayWhatTheyWrite() {
         CareKind.values().forEach { kind ->
             assertTrue(careDoneLabel(kind).endsWith("완료"))
-            assertTrue(careDoneExplanation(kind).startsWith("완료를 누르면"))
-            assertFalse(careGuidance(kind).isBlank())
+            val (line, spoken) = careTaskNote(kind)
+            assertTrue(line, line.startsWith("완료하면"))
+            assertOneLine(line, HOME_CARD_LINE_UNITS)
+            assertTrue("읽어 주는 말이 더 김: $kind", spoken.length > line.length)
+            assertTrue("2.12의 안내를 그대로 읽어 줌", spoken.contains("완료를 누르면"))
         }
+        assertEquals("완료하면 검사 기록을 남기고 만료일을 지워요", careTaskNote(CareKind.INSPECTION).first)
+        assertTrue(careTaskNote(CareKind.INSPECTION).second.contains("과태료"))
+    }
+
+    @Test fun aSnoozeCanBeTakenBack() {
+        val now = 1_000_000L
+        val key = "INSPECTION:2026-11-20:SOON"
+        val other = "INSURANCE:2026-11-05:OVERDUE"
+        val raw = withCareSnooze(withCareSnooze(emptySet(), key, now), other, now)
+        assertEquals(setOf(key, other), activeCareSnoozes(raw, now))
+        val back = withoutCareSnooze(raw, key, now)
+        assertEquals("실행 취소: 그 기한만 다시 알림", setOf(other), activeCareSnoozes(back, now))
+        assertEquals("만료된 항목도 함께 정리", emptySet<String>(), withoutCareSnooze(raw, key, now + (CARE_SNOOZE_DAYS + 1) * 86_400_000L))
+        assertEquals("없는 키는 그대로", activeCareSnoozes(raw, now), activeCareSnoozes(withoutCareSnooze(raw, "SERVICE:x", now), now))
     }
 
     @Test fun settingsFieldsSitInTwoColumnsOnlyOnAWideWindowAtANormalFontScale() {
