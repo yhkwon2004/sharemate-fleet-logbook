@@ -256,8 +256,9 @@ internal fun deleteIncident(incident: Incident, act: Act, repository: TripLogRep
 
 /**
  * History for the vehicle page (2.12): the count as a tag beside the title, then one row per report with its state as a dot
- * (open in the negative, done in positive) and in words for TalkBack; a report closed too early can be reopened. Rows arrive
- * staggered the first time only.
+ * (open in the negative, done in positive) and in words for TalkBack; a report closed too early can be reopened, and the
+ * reopen's way back is 실행 취소, the one word for undo (2.13). Rows arrive staggered the first time only. The title's mark is
+ * the line warning triangle of the car's icon family (2.13, ic_warning), where 2.12 drew Material's solid one.
  */
 @Composable internal fun IncidentHistory(data: TripLogData, act: Act, repository: TripLogRepository, modifier: Modifier = Modifier) {
     val items = recentIncidents(data)
@@ -268,7 +269,7 @@ internal fun deleteIncident(incident: Incident, act: Act, repository: TripLogRep
     val initial = remember { items.map { it.id }.toSet() }
     LaunchedEffect(Unit) { introduced = true }
     CarCard(modifier, title = {
-        CarSectionTitle(VehicleCopy.INCIDENTS_TITLE, icon = rememberVectorPainter(Icons.Outlined.Warning), trailing = {
+        CarSectionTitle(VehicleCopy.INCIDENTS_TITLE, icon = painterResource(R.drawable.ic_warning), trailing = {
             CarTag("${data.incidents.count { it.demo == data.profile.demoMode }}건")
         })
     }) {
@@ -290,7 +291,7 @@ internal fun deleteIncident(incident: Incident, act: Act, repository: TripLogRep
                                     if (open) closeIncident(incident, act, repository, followUp)
                                     else act {
                                         repository.updateIncident(incident.id, status = IncidentStatus.OPEN)
-                                        followUp(FollowUp("${incident.kind.label} 기록을 다시 열었어요 · 홈에 대처 안내가 떠요", "되돌리기") { repository.updateIncident(incident.id, status = IncidentStatus.CLOSED) })
+                                        followUp(FollowUp("${incident.kind.label} 기록을 다시 열었어요 · 홈에 대처 안내가 떠요", "실행 취소") { repository.updateIncident(incident.id, status = IncidentStatus.CLOSED) })
                                     }
                                 }, description = "${incident.kind.label} $stamp ${if (open) "처리 완료" else "다시 열기"}")
                             })
@@ -340,13 +341,15 @@ internal fun phoneLinkTag(enabled: Boolean, running: Boolean, error: String?, on
 
 /**
  * 휴대폰 연결 on the vehicle page (2.12): the link's state as a live tag beside the title ([phoneLinkTag]); while the link is on,
- * three small figures (the record version, the phone's last call, the phones paired) and, while the server runs, the pairing:
- * the code with its countdown, the vehicle key and the addresses a phone types, and a new code. The home keeps its own
- * pairing card ([PairingCard]). What the link does sits behind ⓘ; switched off, one line says where to turn it on.
+ * three small figures (the record version, the phone's last call, the phones paired) and, while the server runs, the pairing
+ * ([PhonePairing]): the three things a phone types, in the phone's order. The home keeps its own pairing card ([PairingCard]).
+ * What the link does sits behind ⓘ. Switched off (2.13), the card holds the switch itself, the same row as 설정 › 기록's
+ * ([SettingsCopy.PHONE_SYNC_TITLE]), where 2.12 only said where to find it.
  */
-@Composable internal fun PhoneSyncCard(state: TripLogState, now: Long, modifier: Modifier = Modifier) {
+@Composable internal fun PhoneSyncCard(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, modifier: Modifier = Modifier) {
     val info = state.sync
-    val enabled = state.data.profile.phoneSync
+    val profile = state.data.profile
+    val enabled = profile.phoneSync
     val seen = info.lastPhoneSeenAt.takeIf { it > 0 }?.let { (now - it) / 1000 }
     // A long-poll is held for up to 20 s, so anything under 45 s means the phone is sitting on the line right now.
     val online = seen != null && seen < 45
@@ -355,7 +358,10 @@ internal fun phoneLinkTag(enabled: Boolean, running: Boolean, error: String?, on
     CarCard(modifier, title = {
         CarSectionTitle(VehicleCopy.PHONE_TITLE, icon = phone, trailing = { CarTag(tag, tone = tone, live = true) })
     }) {
-        if (!enabled) CarLine(VehicleCopy.PHONE_OFF)
+        // The title already carries the phone mark, so the switch row goes without its disc.
+        if (!enabled) SwitchRow(SettingsCopy.PHONE_SYNC_TITLE, SettingsCopy.PHONE_SYNC_LINE, checked = false, spoken = SettingsCopy.SPOKEN_PHONE_SYNC) { value ->
+            act { repository.updateProfile(profile.copy(phoneSync = value)) }
+        }
         else {
             // The server's own words for what went wrong; the tag already says that it did.
             if (!info.running) info.error?.let { CarLine(it) }
@@ -376,34 +382,49 @@ internal fun phoneLinkTag(enabled: Boolean, running: Boolean, error: String?, on
 }
 
 /**
- * The pairing inside [PhoneSyncCard]: 연결 번호 with its countdown as a tag (it ticks in place, never announced), the six digits
- * as the phone shows them, or why there is no code; the vehicle key, wrapping onto as many lines as it needs and never cut
- * (a phone types all 64 characters, and a 1.3× font in a narrow window takes three lines); the addresses, two lines at most;
- * and the button for a new code.
+ * The pairing inside [PhoneSyncCard] (2.13): the three things the phone asks for, in the phone's order (address, code, key),
+ * each led by its step disc ([CarStepDisc]) so the driver reads them off top to bottom as they are typed. ① The addresses, two
+ * lines at most. ② 연결 번호 with its countdown as a tag (it ticks in place, never announced) and, at the end of that row, the
+ * pill for a new code (2.12 left it alone under the key); under them the six digits as the phone shows them, or why there is
+ * no code. ③ The vehicle key, wrapping onto as many lines as it needs and never cut (a phone types all 64 characters, and a
+ * 1.3× font in a narrow window takes three lines). TalkBack hears each step's number with what it holds.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable private fun PhonePairing(info: SyncInfo, now: Long) {
     val code = info.pairingCode
     val remaining = pairingRemaining(info, now)
     val key = info.fingerprint.chunked(8).joinToString(" ")
     val addresses = if (info.addresses.isEmpty()) VehicleCopy.PHONE_ADDRESS_PENDING else info.addresses.joinToString("  ·  ") { "$it:${info.port}" }
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(VehicleCopy.PHONE_CODE, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, color = Scene.text)
-            if (code != null && remaining != null) CarTag("$remaining 남음")
+    // Under a step's own row, the content starts where the step's words do: the 32-dp disc and the 12-dp gap after it.
+    val under = 44.dp
+    Column(Modifier.fillMaxWidth()) {
+        CarRow(addresses, line = VehicleCopy.PHONE_ADDRESS, lead = { CarStepDisc(1, done = false) }, titleMaxLines = 2,
+            spoken = "1단계 ${VehicleCopy.SPOKEN_PHONE_ADDRESS}, $addresses")
+        CarDivider(Modifier.padding(start = under))
+        // ② as a title row whose end (the countdown and the pill) wraps under the title where it does not fit beside it.
+        FlowRow(Modifier.fillMaxWidth().heightIn(min = 72.dp), horizontalArrangement = Arrangement.SpaceBetween,
+            verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically), itemVerticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.padding(end = 12.dp).clearAndSetSemantics { contentDescription = "2단계 ${VehicleCopy.PHONE_CODE}" },
+                verticalAlignment = Alignment.CenterVertically) {
+                CarStepDisc(2, done = false)
+                Spacer(Modifier.width(12.dp))
+                Text(VehicleCopy.PHONE_CODE, style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 1)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (code != null && remaining != null) CarTag("$remaining 남음")
+                CarPillButton(if (code == null) "새 연결 번호" else "번호 다시 만들기", { SyncServer.active?.refreshPairingCode() })
+            }
         }
-        if (code != null) {
-            Text(pairingDisplay(code), style = MaterialTheme.typography.displayMedium.copy(fontFeatureSettings = "tnum"), fontWeight = FontWeight.Medium, color = Scene.text,
-                modifier = Modifier.semantics { contentDescription = "연결 번호 " + code.toCharArray().joinToString(" ") })
-            CarLine(VehicleCopy.PHONE_HOW)
-        } else Text(if (info.pairedPhones > 0) VehicleCopy.PHONE_ANOTHER else VehicleCopy.PHONE_EXPIRED, style = MaterialTheme.typography.titleSmall, color = Scene.text)
-        Column {
-            CarRow(key, line = VehicleCopy.PHONE_KEY, lead = { Icon(Icons.Outlined.Lock, contentDescription = null, Modifier.size(24.dp), tint = Car.skin.icon) },
-                titleMaxLines = Int.MAX_VALUE, spoken = "${VehicleCopy.SPOKEN_PHONE_KEY}, $key")
-            // No icon of its own: an empty lead keeps the address under the key's text.
-            CarRow(addresses, line = VehicleCopy.PHONE_ADDRESS, lead = { Spacer(Modifier.size(24.dp)) }, titleMaxLines = 2,
-                spoken = "${VehicleCopy.SPOKEN_PHONE_ADDRESS}, $addresses")
+        Column(Modifier.fillMaxWidth().padding(start = under, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (code != null) {
+                Text(pairingDisplay(code), style = MaterialTheme.typography.displayMedium.copy(fontFeatureSettings = "tnum"), fontWeight = FontWeight.Medium, color = Scene.text,
+                    modifier = Modifier.semantics { contentDescription = "연결 번호 " + code.toCharArray().joinToString(" ") })
+                CarLine(VehicleCopy.PHONE_HOW)
+            } else Text(if (info.pairedPhones > 0) VehicleCopy.PHONE_ANOTHER else VehicleCopy.PHONE_EXPIRED, style = MaterialTheme.typography.titleSmall, color = Scene.text)
         }
-        CarPillButton(if (code == null) "새 연결 번호" else "번호 다시 만들기", { SyncServer.active?.refreshPairingCode() })
+        CarDivider(Modifier.padding(start = under))
+        CarRow(key, line = VehicleCopy.PHONE_KEY, lead = { CarStepDisc(3, done = false) }, titleMaxLines = Int.MAX_VALUE,
+            spoken = "3단계 ${VehicleCopy.SPOKEN_PHONE_KEY}, $key")
     }
 }
 

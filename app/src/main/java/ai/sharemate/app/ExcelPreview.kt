@@ -293,7 +293,9 @@ internal fun sheetTabsNaturalWidth(count: Int): Dp = 72.dp * count + 4.dp * (cou
 /**
  * One table row: the row number and the first column pinned, the other cells in a row that scrolls sideways on the shared
  * [sideways] state. A data row is a 72-dp (64 when [compact]) button that opens its full contents, pressed with the car's
- * scale and no ripple on the car (a narrow car window too), or the phone's ripple.
+ * scale and no ripple on the car (a narrow car window too), or the phone's ripple. On the car (2.13, [isCar]) a numeric cell
+ * (an amount, a distance) sets its digits tabular, so the right-aligned figures of a column line up digit for digit as they
+ * do in the one money style; the phone keeps its proportional digits.
  */
 @Composable private fun PreviewRow(number: String, cells: List<String>, widths: List<Dp>, sideways: ScrollState, header: Boolean, compact: Boolean,
     zebra: Boolean = false, numeric: List<Boolean> = emptyList(), clickLabel: String? = null, onClick: (() -> Unit)? = null) {
@@ -309,9 +311,11 @@ internal fun sheetTabsNaturalWidth(count: Int): Dp = 72.dp * count + 4.dp * (cou
         else -> base.carTap(source, label = clickLabel, onClick = onClick)
     }
     val cellStyle = if (header) MaterialTheme.typography.labelLarge else MaterialTheme.typography.bodyMedium
+    val figures = if (isCar()) cellStyle.copy(fontFeatureSettings = "tnum") else cellStyle
     val cell: @Composable (Int, String) -> Unit = { index, text ->
-        Text(text, Modifier.width(widths[index]).padding(12.dp), style = cellStyle, maxLines = 2, overflow = TextOverflow.Ellipsis,
-            color = Scene.text, textAlign = if (!header && numeric.getOrNull(index) == true) TextAlign.End else TextAlign.Start)
+        val figure = !header && numeric.getOrNull(index) == true
+        Text(text, Modifier.width(widths[index]).padding(12.dp), style = if (figure) figures else cellStyle, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            color = Scene.text, textAlign = if (figure) TextAlign.End else TextAlign.Start)
     }
     Row(tappable, verticalAlignment = Alignment.CenterVertically) {
         Text(number, Modifier.width(ROW_NUMBER_WIDTH), style = if (header) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelSmall,

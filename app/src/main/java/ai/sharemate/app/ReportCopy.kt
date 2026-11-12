@@ -6,7 +6,9 @@ package ai.sharemate.app
  * gets at the normal font (CarCopyRules). A line that needs a second fact folds it behind an ⓘ row (its *_MORE, which may
  * wrap) or into what TalkBack reads (SPOKEN_*). Lines built from data (a count, an amount, the period on screen) come from
  * the pure helpers beside their cards: settlementCopy, taxBasis, taxCardBlocker, taxDifferenceLine, exportConfirmLines,
- * monthCloseNote, vehicleHeroCopy, phoneLinkTag, carReservationsEmptyText and carReservationsOverflow.
+ * reportRangeLabel, monthCloseNote, vehicleHeroCopy, phoneLinkTag, carReservationsEmptyText and carReservationsOverflow.
+ * Money (2.13, DESIGN_2_13_SPEC §5) is never written here as a figure: an amount is a CarAmount beside its label, a rate
+ * reads "km당 150원", and no line holds the ₩ sign or 원/km.
  */
 
 /** 월간·Excel: the month close, 운행 현황, 경비·정산, the Excel view and 검토. */
@@ -16,6 +18,14 @@ internal object ReportCopy {
     const val CLOSE_NOTE_MORE = "고친 운행엔 ‘마감 후 수정’이 붙어요"
     /** A past month without trips: nothing waits for a close. */
     const val CLOSE_NOTHING = "운행이 없는 달은 마감하지 않아도 돼요"
+    /**
+     * This month while it has no trips (2.13): the card shows no steps and no close button that cannot enable, only what the
+     * close waits for, beside 이전 달 보기.
+     */
+    const val CLOSE_WAITING = "운행이 기록되면 여기서 마감해요"
+
+    /** The range tag's second tag in demo mode, beside [reportRangeLabel]: the figures under it are demo data. */
+    const val RANGE_DEMO = "시연 데이터"
 
     // 운행 현황
     const val RATIO_TITLE = "업무사용비율"
@@ -28,12 +38,17 @@ internal object ReportCopy {
 
     // 경비·정산
     const val EXPENSE_TITLE = "등록 경비"
+    /** 2.13: a period without registered expenses shows this one line and no total (a list of money never draws a 0원 sum). */
+    const val EXPENSE_EMPTY = "등록한 경비가 없어요"
+    /** The label of the total row under the expense types. */
+    const val EXPENSE_TOTAL = "경비 합계"
     const val EXPENSE_NOTE = "직접 등록한 금액이에요"
     val EXPENSE_NOTE_MORE = listOf("영수증 인증이나 지급 완료를 뜻하지 않아요")
     const val SETTLEMENT_TITLE = "유류비 정산"
     /** Without a km rate the card has no figure: it says what would give it one. */
     const val SETTLEMENT_ASK = "km당 단가를 입력하면 직원별로 계산해요"
-    const val SETTLEMENT_NOTE = "직원 미지정 운행은 정산을 보류해요"
+    /** 2.13: one word for a trip without its person everywhere, 사용자 미지정 (the issue's own label). */
+    const val SETTLEMENT_NOTE = "사용자 미지정 운행은 정산을 보류해요"
     val SETTLEMENT_NOTE_MORE = listOf("등록 경비는 이 금액에 자동으로 더하지 않아요")
 
     // Excel
@@ -117,7 +132,7 @@ internal object VehicleCopy {
     const val PHONE_ADDRESS_PENDING = "네트워크 주소 확인 중"
     const val PHONE_NOTE = "차량 기록이 원본이에요"
     val PHONE_NOTE_MORE = listOf("휴대폰에서 바꾼 목적·경비·특이사항은 ‘휴대폰’ 출처로 남아요", "휴대폰은 인증키로 차량을 확인한 뒤 번호를 보내요")
-    const val PHONE_OFF = "설정 › 기록에서 켜면 휴대폰이 실시간으로 받아요"
+    // 2.13: with the link off the card shows the switch itself (SettingsCopy.PHONE_SYNC_*), where 2.12 sent the driver to 설정.
 
     // 차량 예약 and 사고·특이사항
     const val RESERVATIONS_TITLE = "차량 예약"

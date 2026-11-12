@@ -170,6 +170,7 @@ class HomeDashboardTest {
         assertEquals("기록 중인 운행도 거리에는 들어감", "15.6", info.km)
         assertEquals("완료 건수에는 기록 중인 운행이 빠짐", "1건", info.trips)
         assertEquals("4,500원", info.expenses)
+        assertEquals("타일의 금액은 숫자로 (2.13)", 4_500L, info.expenseWon)
         assertEquals("차량 신호가 없으면 계기판은 확인 필요", "확인 필요", info.odometer)
         assertEquals("오늘 운행 15.6 km, 완료 1건, 등록 경비 4,500원, 계기판 확인 필요", info.spoken)
         val live = state.copy(live = DriveSample(now - 5_000, GearState.MOVING, 51_300.0))

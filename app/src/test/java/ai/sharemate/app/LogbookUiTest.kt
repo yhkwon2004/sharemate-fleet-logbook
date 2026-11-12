@@ -39,9 +39,13 @@ class LogbookUiTest {
     }
 
     @Test fun theExcelPreviewCardFillsThePaneUnderTheViewTabsAndNeverDropsUnder560() {
-        // FULL car pane, about 950 dp: less the pinned save bar (72 + 16) and the view tabs with the range line (66 + 16 + 16 + 16).
-        assertEquals(748f, excelPreviewHeight(950.dp).value, .01f)
-        assertEquals("큰 글꼴은 범위 줄이 커진 만큼만 줄어듦", 743.2f, excelPreviewHeight(950.dp, 1.3f).value, .01f)
+        // FULL car pane, about 950 dp: less the pinned save bar (72 + 16) and the view tabs with the range tags (66 + 16 + 32 + 16).
+        assertEquals(732f, excelPreviewHeight(950.dp).value, .01f)
+        assertEquals("큰 글꼴은 범위 태그가 커진 만큼만 줄어듦", 729.3f, excelPreviewHeight(950.dp, 1.3f).value, .01f)
+        // The tag row is a CarTag: 32 dp at least, its labelMedium line (19 dp at 1×) in 5 dp of padding above and below.
+        assertEquals(32f, reportRangeRowHeight(1f).value, .01f)
+        assertEquals("작은 글꼴도 32", 32f, reportRangeRowHeight(.85f).value, .01f)
+        assertEquals(34.7f, reportRangeRowHeight(1.3f).value, .01f)
         // 2.11's 480 plus 80 for the card: its padding (2 × 24) and the 32 dp more that the 56-dp ⓘ row takes than 2.11's note.
         assertEquals("짧은 창은 560에서 멈추고 창이 더 스크롤", 560f, excelPreviewHeight(400.dp).value, .01f)
         assertEquals(480f, EXCEL_PREVIEW_MIN_HEIGHT.value, .01f)
@@ -57,7 +61,7 @@ class LogbookUiTest {
         val floor = excelPreviewHeight(400.dp)
         assertEquals("EXPANDED 이상은 패딩 24", 440f, excelPreviewInnerHeight(floor, 24.dp).value, .01f)
         assertEquals("MEDIUM·COMPACT는 패딩 20", 448f, excelPreviewInnerHeight(floor, 20.dp).value, .01f)
-        assertEquals("FULL 창", 628f, excelPreviewInnerHeight(excelPreviewHeight(950.dp), 24.dp).value, .01f)
+        assertEquals("FULL 창", 612f, excelPreviewInnerHeight(excelPreviewHeight(950.dp), 24.dp).value, .01f)
         assertEquals("큰 글꼴", 584f, excelPreviewInnerHeight(excelPreviewHeight(400.dp, 1.3f), 24.dp).value, .01f)
         // At the floor, what the preview draws above its page at 1× (the title block 32 + 4 + 22, the sheet tabs 56, the sheet
         // name 30, three 12-dp gaps and the 8-dp bottom padding) still leaves one page: the table's header and a row as

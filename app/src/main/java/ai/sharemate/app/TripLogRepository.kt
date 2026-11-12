@@ -262,6 +262,12 @@ class TripLogRepository private constructor(context: Context) {
 
     suspend fun removeMaintenance(id: String) = mutate { data -> data.copy(maintenance = data.maintenance.filterNot { it.id == id }) }
 
+    /**
+     * Undo for [removeMaintenance] (2.13): the record itself returns ([restoredMaintenance]), with its id, date, source and card
+     * link, where 2.12's undo added a new record dated now. The care settings stay as they are: a delete never moved them.
+     */
+    suspend fun restoreMaintenance(record: MaintenanceRecord) = mutate { data -> restoredMaintenance(data, record) }
+
     /** Books the car for [request]; the car is the only judge of conflicts, so two phones cannot both win a slot. */
     suspend fun reserve(request: Reservation) = mutate { data -> reserveIn(data, request, System.currentTimeMillis(), zone) }
 
@@ -500,6 +506,19 @@ internal fun sampleNeedsSave(before: TripLogData, after: TripLogData, checkpoint
 internal fun chargeSessionPlace(data: TripLogData, sample: DriveSample): String? =
     if (data.profile.storeAddresses) (sample.destination ?: sample.address ?: data.trips.lastOrNull { it.demo == sample.demo }
         ?.let { it.destination ?: it.endAddress })?.take(120) else null
+
+/**
+ * The maintenance list with a deleted [record] back in it (pure, unit-tested; [TripLogRepository.restoreMaintenance]): the same
+ * record, so its id, date, source and card link return with it, placed before the first record dated after it so the others
+ * keep their order. Unchanged when it is already there (an undo pressed twice, or a sync that restored it); the care settings
+ * are never touched.
+ */
+internal fun restoredMaintenance(data: TripLogData, record: MaintenanceRecord): TripLogData {
+    if (data.maintenance.any { it.id == record.id }) return data
+    require(data.maintenance.size < MAX_MAINTENANCE) { "정비 기록이 ${MAX_MAINTENANCE}건에 도달했어요." }
+    val at = data.maintenance.indexOfFirst { it.at > record.at }.let { if (it < 0) data.maintenance.size else it }
+    return data.copy(maintenance = data.maintenance.toMutableList().apply { add(at, record) })
+}
 
 internal val BUSINESS_NUMBER = Regex("^\\d{3}-\\d{2}-\\d{5}$")
 

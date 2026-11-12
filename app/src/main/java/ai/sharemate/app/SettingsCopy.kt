@@ -34,7 +34,14 @@ internal object SettingsCopy {
 
     /** The list's title, 0명 included. */
     fun driversTitle(count: Int) = "직원 ${count}명"
+    /** A tag beside the title (2.13), as 정비 기록 carries its count: a fact, never a control. */
     const val DRIVERS_CAP = "최대 50명"
+    /**
+     * The pill at the end of the list's title row (2.13, as 정비 기록's 추가): it opens an empty editor. 2.12 had 새 직원 as an
+     * outlined button under the rows, an orphan at the foot of a long list. TalkBack hears [SPOKEN_ADD_DRIVER].
+     */
+    const val ADD_DRIVER = "추가"
+    const val SPOKEN_ADD_DRIVER = "새 직원 추가"
     /** Under the title while nobody is registered. */
     const val DRIVERS_EMPTY = "운행기록부 ④ 사용자 칸에 부서와 성명이 들어가요"
     const val DRIVERS_FULL = "직원은 50명까지 등록할 수 있어요"
