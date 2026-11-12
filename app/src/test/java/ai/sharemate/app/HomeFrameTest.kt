@@ -98,6 +98,12 @@ class HomeFrameTest {
         assertEquals("방금 운행은 같은 운행의 목적 바꾸기로", 1, attentionIndex(after, AttentionPin(finished, incident)))
         assertEquals("다른 운행의 질문은 따라가지 않음", 0,
             attentionIndex(listOf(incident, AttentionItem(AttentionKind.RECLASSIFY, id = "u"), care), AttentionPin(finished, incident)))
+        // 지금 입력 on the waiting 충전 비용 card: the amount question takes its place higher in the queue, and the page follows it.
+        val waiting = AttentionItem(AttentionKind.CHARGE_WAITING)
+        val charge = AttentionItem(AttentionKind.CHARGE)
+        assertEquals(2, attentionIndex(listOf(incident, care, waiting), AttentionPin(waiting, incident)))
+        assertEquals("기다리던 충전은 금액 질문으로", 1, attentionIndex(listOf(incident, charge, care), AttentionPin(waiting, incident)))
+        assertEquals("충전 질문이 없으면 맨 앞", 0, attentionIndex(listOf(incident, care), AttentionPin(waiting, incident)))
     }
 
     @Test fun captionsSitBesideTheLabelFrom196Dp() {

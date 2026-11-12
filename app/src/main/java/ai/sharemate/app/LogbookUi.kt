@@ -32,6 +32,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -1133,9 +1135,12 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
             reportBand(if (resting) bandDp else 0.dp)
             onDispose { reportBand(0.dp) }
         }
-        // Only where the frame's budget holds: the full, tall window beside the 지금 column at the normal font.
+        // Only where the frame's budget holds: the full, tall window beside the 지금 column at the normal font, and not
+        // while the keyboard takes the lower half of the page (the page then scrolls the field into view on purpose).
         if (BuildConfig.DEBUG && layout.full && nowColumn && density.fontScale <= 1f) LaunchedEffect(scroll.maxValue) {
-            if (scroll.maxValue > 0) Log.w("HomeFrame", "홈 needs ${scroll.maxValue} px more than the ${viewport.value} dp page: ${queue.map { it.kind }}")
+            if (scroll.maxValue > 0 && viewport >= HOME_PAGE_FULL - 8.dp) {
+                Log.w("HomeFrame", "홈 needs ${scroll.maxValue} px more than the ${viewport.value} dp page: ${queue.map { it.kind }}")
+            }
         }
         Column(Modifier.fillMaxSize().fadingTopEdge(scroll).verticalScroll(scroll, enabled = scroll.maxValue > 0)) {
             // At least the page's height: under the scroll's unbounded maximum the column weighs its sky against this minimum,
@@ -1754,6 +1759,16 @@ private const val EXPENSE_FOLD_MS = 200
             var expenseType by rememberSaveable { mutableIntStateOf(1) }
             var amount by rememberSaveable { mutableStateOf("") }
             var adding by rememberSaveable { mutableStateOf(false) }
+            // The form unfolds under the trip's cost rows, often past the pane's edge: 추가 scrolls it into view once it has
+            // opened. Bumped by the pill only, so a trip reopened with the form standing does not scroll by itself.
+            val form = remember { BringIntoViewRequester() }
+            var reveal by remember { mutableIntStateOf(0) }
+            LaunchedEffect(reveal) {
+                if (reveal > 0) {
+                    if (!reduce) delay(EXPENSE_FOLD_MS.toLong())
+                    form.bringIntoView()
+                }
+            }
             val driver = data.drivers.firstOrNull { it.id == trip.driverId }
             CarDivider()
             // The distance as 오늘 운행 shows it, then the form's two odometer columns and the time.
@@ -1800,7 +1815,7 @@ private const val EXPENSE_FOLD_MS = 200
             CarDivider()
             CarSectionTitle(LogCopy.COSTS, icon = painterResource(R.drawable.ic_won)) {
                 if (trip.expenses.isNotEmpty()) CarAmount(trip.expenseWon)
-                CarPillButton(if (adding) LogCopy.CLOSE else LogCopy.ADD, { adding = !adding },
+                CarPillButton(if (adding) LogCopy.CLOSE else LogCopy.ADD, { adding = !adding; if (adding) reveal++ },
                     Modifier.semantics { stateDescription = if (adding) LogCopy.UNFOLDED else LogCopy.FOLDED },
                     description = if (adding) LogCopy.SPOKEN_CLOSE_COST else LogCopy.SPOKEN_ADD_COST)
             }
@@ -1826,7 +1841,7 @@ private const val EXPENSE_FOLD_MS = 200
             AnimatedVisibility(adding, label = "expense-form",
                 enter = if (reduce) fadeIn(snap()) else fadeIn(tween(EXPENSE_FOLD_MS, easing = FastOutSlowInEasing)) + expandVertically(tween(EXPENSE_FOLD_MS, easing = FastOutSlowInEasing)),
                 exit = if (reduce) fadeOut(snap()) else fadeOut(tween(EXPENSE_FOLD_MS, easing = FastOutSlowInEasing)) + shrinkVertically(tween(EXPENSE_FOLD_MS, easing = FastOutSlowInEasing))) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.bringIntoViewRequester(form), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     FlowRow(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         ExpenseType.entries.forEachIndexed { index, type -> CarChoiceChip(type.label, index == expenseType) { expenseType = index } }
                     }

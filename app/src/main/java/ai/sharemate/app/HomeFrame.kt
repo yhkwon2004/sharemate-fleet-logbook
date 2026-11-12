@@ -26,6 +26,9 @@ internal val HOME_WINDOW_FULL = 1209.dp
 internal val HOME_HEADER_ROW = 84.dp
 internal val HOME_PAGE_PADDING = 28.dp
 
+/** The page the frame is budgeted for: the full window less the header row and the page slot's padding (1,097 dp). */
+internal val HOME_PAGE_FULL = HOME_WINDOW_FULL - HOME_HEADER_ROW - HOME_PAGE_PADDING
+
 /** The greeting block's minimum beside the 지금 column: the sun rests right of it and needs the band down to 152.7 dp. */
 internal val HOME_GREETING_MIN = 160.dp
 
@@ -155,7 +158,9 @@ internal fun attentionQueue(tasks: List<ParkedTask>, signal: SignalStatus, finis
  * Which item of [queue] the slot shows (pure, unit-tested). The queue's head unless the driver paged ([pin]) while the same
  * head stood: then the item of the pinned kind and trip, wherever it moved (a count that changed keeps it). A 방금 운행 pin
  * follows the 목적 바꾸기 question of the same trip that its 다른 목적 opens, so the driver lands on the question just asked
- * for. A new head (something more urgent arrived, or the head was answered) or a pinned item that has gone shows the head.
+ * for; a 충전 비용 card that was waiting for the card approval follows the amount question that 지금 입력 (or the end of the
+ * wait) puts in its place, even when something more urgent stands at the head. A new head (something more urgent arrived,
+ * or the head was answered) or a pinned item that has gone shows the head.
  */
 internal fun attentionIndex(queue: List<AttentionItem>, pin: AttentionPin?): Int {
     if (pin == null || queue.isEmpty() || queue.first() != pin.head) return 0
@@ -163,6 +168,10 @@ internal fun attentionIndex(queue: List<AttentionItem>, pin: AttentionPin?): Int
     if (at >= 0) return at
     if (pin.item.kind == AttentionKind.FINISHED) {
         val next = queue.indexOfFirst { it.kind == AttentionKind.RECLASSIFY && it.id == pin.item.id }
+        if (next >= 0) return next
+    }
+    if (pin.item.kind == AttentionKind.CHARGE_WAITING) {
+        val next = queue.indexOfFirst { it.kind == AttentionKind.CHARGE }
         if (next >= 0) return next
     }
     return 0
