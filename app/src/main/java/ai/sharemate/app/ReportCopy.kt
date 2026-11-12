@@ -107,6 +107,20 @@ internal object VehicleCopy {
     const val SPOKEN_STORED_CHARGE = "현재 상태와 다를 수 있음"
     const val NO_TRIP_YET = "완료된 운행이 아직 없어요"
 
+    // The 지금 column's 차량 tile (2.15, NowVehicle.kt): the plate, the car's picture and three live figures, one stop for TalkBack.
+    const val NOW_TITLE = "차량"
+    const val NOW_OPEN = "차량 정보 보기"
+    const val NOW_BATTERY = "배터리"
+    const val NOW_SIGNAL = "신호"
+    /** 신호 in the header pill's terms ([nowVehicleSignal]): the samples arrive, or the link is still starting; otherwise [CHECK]. */
+    const val NOW_RECEIVING = "수신 중"
+    const val NOW_CONNECTING = "연결 중"
+    /** A figure the car does not report right now, and what TalkBack says in its place. */
+    const val NOW_NONE = "—"
+    const val SPOKEN_NOW_NONE = "정보 없음"
+    /** The car drawing's description: a staged picture, never the car's real model (the 차량 page's card says the same). */
+    const val DRAWING = "연출용 차량 이미지 · 실제 차종과 다를 수 있음"
+
     // 차량 관리 (deadlines) and 정비 기록
     const val CARE_TITLE = "차량 관리"
     const val CARE_EMPTY = "등록된 기한이 없어요"
