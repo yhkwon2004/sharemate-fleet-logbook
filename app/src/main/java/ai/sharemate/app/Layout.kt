@@ -71,8 +71,9 @@ internal fun carLayout(width: Dp, height: Dp = 1200.dp): LayoutTokens {
     return when {
         width < 760.dp -> LayoutTokens(WidthClass.COMPACT, h, gutter = 20.dp, contentMax = Dp.Infinity, readingMax = 560.dp, cardGap = 12.dp, sectionGap = 20.dp, panelPadding = 22.dp, startAnchored = true)
         width < 1100.dp -> LayoutTokens(WidthClass.MEDIUM, h, gutter = 32.dp, contentMax = Dp.Infinity, readingMax = 640.dp, cardGap = 16.dp, sectionGap = 24.dp, panelPadding = 26.dp, startAnchored = true)
-        width < 1400.dp -> LayoutTokens(WidthClass.EXPANDED, h, gutter = 48.dp, contentMax = Dp.Infinity, readingMax = 720.dp, cardGap = 20.dp, sectionGap = 28.dp, panelPadding = 28.dp, startAnchored = true)
-        else -> LayoutTokens(WidthClass.FULL, h, gutter = 72.dp, contentMax = Dp.Infinity, readingMax = 720.dp, cardGap = 24.dp, sectionGap = 32.dp, panelPadding = 28.dp, startAnchored = true)
+        // 2.13: one card gap of 16 dp from EXPANDED up (2.12 had 20 and 24 on the pages beside 16 in the 지금 column), the mock's one gap.
+        width < 1400.dp -> LayoutTokens(WidthClass.EXPANDED, h, gutter = 48.dp, contentMax = Dp.Infinity, readingMax = 720.dp, cardGap = 16.dp, sectionGap = 28.dp, panelPadding = 28.dp, startAnchored = true)
+        else -> LayoutTokens(WidthClass.FULL, h, gutter = 72.dp, contentMax = Dp.Infinity, readingMax = 720.dp, cardGap = 16.dp, sectionGap = 32.dp, panelPadding = 28.dp, startAnchored = true)
     }
 }
 

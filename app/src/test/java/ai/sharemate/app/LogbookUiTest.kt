@@ -223,11 +223,13 @@ class LogbookUiTest {
     }
 
     @Test fun theLogSplitsOnlyWhenThePageHasRoom() {
-        // FULL beside the 지금 column: the 1112-dp page, less the 24-dp gap, gives the list 48 % (the detail the other 566).
-        assertEquals(522.24f, logListWidth(carLayout(1680.dp), 1112.dp, 24.dp, 1f)!!.value, .01f)
-        assertNull("1400 dp 창의 832 페이지는 옆 시트", logListWidth(carLayout(1400.dp), 832.dp, 24.dp, 1f))
-        assertNull("1.3배 글꼴의 1046 페이지(805 상당)는 옆 시트", logListWidth(carLayout(1680.dp / 1.3f), 1046.dp, 20.dp, 1.3f))
-        assertEquals("열이 없는 EXPANDED", 520.32f, logListWidth(carLayout(1200.dp), 1104.dp, 20.dp, 1f)!!.value, .01f)
+        assertEquals("2.13: FULL의 카드 간격은 하나", 16.dp, carLayout(1680.dp).cardGap)
+        assertEquals("EXPANDED도 16", 16.dp, carLayout(1200.dp).cardGap)
+        // FULL beside the 지금 column: the 1112-dp page, less the 16-dp card gap (2.13), gives the list 48 % (the detail the other 570).
+        assertEquals(526.08f, logListWidth(carLayout(1680.dp), 1112.dp, 16.dp, 1f)!!.value, .01f)
+        assertNull("1400 dp 창의 832 페이지는 옆 시트", logListWidth(carLayout(1400.dp), 832.dp, 16.dp, 1f))
+        assertNull("1.3배 글꼴의 1046 페이지(805 상당)는 옆 시트", logListWidth(carLayout(1680.dp / 1.3f), 1046.dp, 16.dp, 1.3f))
+        assertEquals("열이 없는 EXPANDED", 522.24f, logListWidth(carLayout(1200.dp), 1104.dp, 16.dp, 1f)!!.value, .01f)
         assertNull("MEDIUM은 옆 시트", logListWidth(carLayout(1000.dp), 936.dp, 16.dp, 1f))
     }
 

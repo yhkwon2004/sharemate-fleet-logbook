@@ -848,13 +848,14 @@ internal val NOW_TILE_PADDING = 20.dp
  * 예약 (2.12, the mock's layout): the bell, "예약" and one bold line, the booking in use or the next one however far ahead
  * ([reservationTileLine]), so 현재 잡힌 예약이 없어요 means there is none at all. "사용 중" and "곧 시작" carry the state where
  * 2.11 had a dot. A tap opens 차량, where the bookings are listed; TalkBack hears the long form, and a new line is announced.
+ * Shared since 2.13: 홈 without the 지금 column shows it under its card while a booking is due.
  */
-@Composable private fun ReservationTile(data: TripLogData, now: Long, onOpen: () -> Unit) {
+@Composable internal fun ReservationTile(data: TripLogData, now: Long, onOpen: () -> Unit, modifier: Modifier = Modifier) {
     // The line names its times to the minute.
     val minute = now / 60_000
     val line = remember(data, minute) { reservationTileLine(data, now, zone) }
     val fontScale = LocalDensity.current.fontScale
-    CarCard(onClick = onOpen, onClickLabel = "예약 보기", description = line.spoken, live = true, padding = NOW_TILE_PADDING) {
+    CarCard(modifier, onClick = onOpen, onClickLabel = "예약 보기", description = line.spoken, live = true, padding = NOW_TILE_PADDING) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Notifications, contentDescription = null, Modifier.size(28.dp), tint = Car.skin.icon)
             Spacer(Modifier.width(12.dp))
@@ -874,11 +875,12 @@ internal val NOW_TILE_PADDING = 20.dp
 /**
  * 오늘 운행 (2.12): the distance large, then 완료 운행 · 등록 경비 · 계기판 as three mini stats ([todayTileInfo]). The distance
  * updates in place while a trip records ([homeShowsLiveTrip]) and cross-fades between trips; the odometer is live telemetry
- * and simply updates. A tap opens 운행기록 on this month, as the chevron in its title promises.
+ * and simply updates. A tap opens 운행기록 on this month, as the chevron in its title promises. Shared since 2.13 with 홈
+ * without the 지금 column.
  */
-@Composable private fun TodayTile(state: TripLogState, now: Long, onOpen: () -> Unit) {
+@Composable internal fun TodayTile(state: TripLogState, now: Long, onOpen: () -> Unit, modifier: Modifier = Modifier) {
     val info = todayTileInfo(state, now, zone)
-    CarCard(onClick = onOpen, onClickLabel = "운행기록 보기", description = info.spoken, padding = NOW_TILE_PADDING,
+    CarCard(modifier, onClick = onOpen, onClickLabel = "운행기록 보기", description = info.spoken, padding = NOW_TILE_PADDING,
         title = { CarSectionTitle("오늘 운행", icon = painterResource(R.drawable.ic_report), chevron = true) }) {
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val kmStyle = MaterialTheme.typography.displaySmall.copy(fontFeatureSettings = "tnum")
@@ -899,13 +901,14 @@ internal val NOW_TILE_PADDING = 20.dp
  * 이달 운행일지 (2.12): the month's one word in its tone ([monthWidgetInfo]; on the card glow 6.14 / 10.32 and warn 6.80 /
  * 9.09) over one line of where it stands ([MonthWidgetInfo.line]), the completion ring at the end. What the car filled in
  * by itself left the view for the one-line rule; TalkBack still hears it after the detail. A tap opens 월간·Excel on this month.
+ * Shared since 2.13 with 홈 without the 지금 column.
  */
-@Composable private fun MonthTile(data: TripLogData, now: Long, onOpen: () -> Unit) {
+@Composable internal fun MonthTile(data: TripLogData, now: Long, onOpen: () -> Unit, modifier: Modifier = Modifier) {
     val today = localDate(now)
     val info = remember(data, today) { monthWidgetInfo(data, today, zone) }
     val color = when (info.tone) { 1 -> Scene.glow; 2 -> Scene.warn; else -> Scene.text }
     val fontScale = LocalDensity.current.fontScale
-    CarCard(onClick = onOpen, onClickLabel = "월간 현황 열기", description = "${info.title} ${info.headline}, ${info.detail}${info.auto?.let { ", $it" }.orEmpty()}",
+    CarCard(modifier, onClick = onOpen, onClickLabel = "월간 현황 열기", description = "${info.title} ${info.headline}, ${info.detail}${info.auto?.let { ", $it" }.orEmpty()}",
         padding = NOW_TILE_PADDING, title = { CarSectionTitle(info.title, chevron = true) }) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {

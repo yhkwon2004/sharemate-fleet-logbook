@@ -50,7 +50,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -70,7 +69,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -93,7 +91,6 @@ import androidx.compose.ui.unit.isFinite
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -300,14 +297,8 @@ internal const val NOW_CARD_NO_DRIVERS_SPOKEN = "운행기록부 ④ 사용자 �
             }
         }
     }
-    val reduce = LocalReduceMotion.current
     Dialog(onDismissRequest = dismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        // Set while the dialog's content first composes, which is before the window's first layout, so the enter fade applies.
-        val window = (LocalView.current.parent as? DialogWindowProvider)?.window
-        DisposableEffect(window, reduce) {
-            window?.setWindowAnimations(if (reduce) 0 else R.style.CarDialogFade)
-            onDispose {}
-        }
+        CarDialogFade()
         // The content wraps the card (the window spans the screen's width), so a tap beside the card still dismisses it.
         BoxWithConstraints(Modifier.padding(24.dp)) {
             val columns = pickerColumns(minOf(maxWidth, 720.dp) - 56.dp, LocalDensity.current.fontScale)
@@ -408,8 +399,8 @@ internal const val NOW_CARD_NO_DRIVERS_SPOKEN = "운행기록부 ④ 사용자 �
 
 /**
  * 설정 › 직원 puts the editor beside the list from this card width, under it below. At FULL the 1112-dp page gives two halves of
- * 508 dp either side of the hairline (2.12: 24-dp card padding, twice the card gap between them), so a line beside the
- * daily-check switch keeps 380 dp.
+ * 516 dp either side of the hairline (24-dp card padding, twice the card gap between them, 16 dp since 2.13), so a line
+ * beside the daily-check switch keeps 388 dp.
  */
 private val DRIVER_MANAGER_SIDE_BY_SIDE = 960.dp
 

@@ -3,8 +3,6 @@ package ai.sharemate.app
 import androidx.core.content.edit
 import android.content.Context
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -18,10 +16,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material3.LinearProgressIndicator
@@ -42,7 +38,6 @@ import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -378,24 +373,6 @@ private fun careOdometerTag(odometer: Double?, fresh: Boolean): String = when {
 }
 
 /**
- * A maintenance kind (2.12): a 46-dp stadium in a 56-dp target, a radio button of the form's group. The chosen one is filled
- * with the accent (the label in onAccent, 4.93; the press darkens the fill under it), the others are outlined with the chip
- * border. The swap is instant; the press settles to .98.
- */
-@Composable private fun ChoiceChip(label: String, active: Boolean, onClick: () -> Unit) {
-    val skin = Car.skin
-    val interaction = remember { MutableInteractionSource() }
-    val shape = RoundedCornerShape(50)
-    Box(Modifier.pressable(interaction, .98f)
-        .selectable(selected = active, interactionSource = interaction, indication = null, role = Role.RadioButton, onClick = onClick)
-        .padding(vertical = 5.dp).heightIn(min = 46.dp).clip(shape), contentAlignment = Alignment.Center) {
-        Box(Modifier.matchParentSize().then(if (active) Modifier.background(skin.accent) else Modifier.border(1.dp, skin.chipBorder, shape))
-            .pressFill(interaction, if (active) skin.pressOnAccent else Scene.fill))
-        Text(label, Modifier.padding(horizontal = 18.dp), style = MaterialTheme.typography.labelLarge, color = if (active) skin.onAccent else Scene.text, maxLines = 1)
-    }
-}
-
-/**
  * The record form, inline in [MaintenanceCard] (2.12): the kind first (seven radio chips, one row or two), then amount and
  * odometer (prefilled from the car), merchant and note. While 엔진오일·소모품 is chosen one line says that it also moves the
  * last service.
@@ -413,7 +390,7 @@ private fun careOdometerTag(odometer: Double?, fresh: Boolean): String = when {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text(VehicleCopy.MAINTENANCE_KIND, style = MaterialTheme.typography.titleSmall, color = Scene.text)
         FlowRow(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            MaintenanceKind.entries.forEach { option -> ChoiceChip(option.label, option == kind) { kind = option } }
+            MaintenanceKind.entries.forEach { option -> CarChoiceChip(option.label, option == kind) { kind = option } }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Field("금액", amount, { if (it.length <= 8 && it.all(Char::isDigit)) amount = it }, Modifier.weight(1f), number = true, suffix = "원",

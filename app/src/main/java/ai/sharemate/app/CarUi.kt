@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -46,6 +47,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material3.ButtonColors
@@ -58,6 +60,7 @@ import androidx.compose.material3.SwitchColors
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
@@ -69,11 +72,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.layout.HorizontalAlignmentLine
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.Measured
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -81,20 +89,29 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 
 /*
  * The car's 2.12 components (docs/design/DESIGN_2_12_SPEC.md §2): cards, one-line copy, ⓘ rows, tags, pill buttons, chips,
  * mini stats and rows in the [CarSkin] tokens. They exist for the car only; the phone keeps [Panel] and its own pieces.
  * Every target is 56 dp or more (72 for a row with a line); a press is the .98 settle plus the press fill, never a ripple;
  * every motion snaps under reduced motion. Supporting copy is one line ([CarLine]): anything longer goes into an ⓘ row's
- * `more`, or into what TalkBack says.
+ * `more`, or into what TalkBack says. 2.13 (docs/design/DESIGN_2_13_SPEC.md §1) adds the one paint for a current row
+ * ([carSelection]), choice tiles and chips, the step disc, the car's own dialog ([CarDialog]) and the money mini stat; amounts
+ * themselves live in CarMoney.kt.
  */
 
 // ───────────────────────── press ─────────────────────────
@@ -111,14 +128,16 @@ import androidx.compose.ui.unit.sp
 }
 
 /**
- * [PrimaryAction]'s colours: the accent, darkened by [CarSkin.pressOnAccent] while held (the label keeps 5.70 on it); disabled,
- * the chip fill with a textMuted label (5.19 / 5.88), never a slab that reads stronger than an enabled button.
+ * [PrimaryAction]'s colours: the accent, darkened by [CarSkin.pressOnAccent] while held (the label keeps 5.70 on it). Disabled
+ * (2.13) it has no fill and a textMuted label (5.82 / 6.27 on the card) inside the 38 % outline [PrimaryAction] draws: the
+ * 2.12 chip-fill slab read as a field (설정's 카드 저장, 저장된 기준), so a button that cannot act now looks like
+ * [QuietAction]'s disabled one instead.
  */
 @Composable internal fun primaryActionColors(interaction: InteractionSource): ButtonColors {
     val skin = Car.skin
     val strength by pressStrength(interaction)
     return ButtonDefaults.buttonColors(containerColor = lerp(skin.accent, skin.pressOnAccent.compositeOver(skin.accent), strength), contentColor = skin.onAccent,
-        disabledContainerColor = skin.chipFill, disabledContentColor = Scene.textMuted)
+        disabledContainerColor = Color.Transparent, disabledContentColor = Scene.textMuted)
 }
 
 /** [QuietAction]'s colours: no container but the scene's press fill while held; disabled, [color] at 38 %. */
@@ -177,11 +196,12 @@ import androidx.compose.ui.unit.sp
  * alone; at the far end [trailing] (a tag, a link, a pill button), then a chevron on a card whose whole surface opens a
  * page. Where the end part does not fit beside the title (a 1.3× font, a narrow card) it wraps under it, start-aligned,
  * instead of squeezing the title. 32 dp tall, 56 when [trailing] holds a control. [trailing] keeps its own semantics, so a
- * status tag there stays its own live region.
+ * status tag there stays its own live region. A [live] title (2.13: 운행 상세's date and time in the pane, which changes with
+ * the row the driver opens) is a polite live region, so TalkBack hears the new title without a touch.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable internal fun CarSectionTitle(title: String, modifier: Modifier = Modifier, icon: Painter? = null, chevron: Boolean = false,
-    heading: Boolean = true, trailing: (@Composable RowScope.() -> Unit)? = null) {
+    heading: Boolean = true, live: Boolean = false, trailing: (@Composable RowScope.() -> Unit)? = null) {
     val end = trailing != null || chevron
     FlowRow(modifier.fillMaxWidth().heightIn(min = 32.dp), horizontalArrangement = Arrangement.SpaceBetween,
         verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically), itemVerticalAlignment = Alignment.CenterVertically) {
@@ -192,7 +212,10 @@ import androidx.compose.ui.unit.sp
                 Spacer(Modifier.width(10.dp))
             }
             Text(title, style = MaterialTheme.typography.titleMedium, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = if (heading) Modifier.semantics { heading() } else Modifier)
+                modifier = if (heading || live) Modifier.semantics {
+                    if (heading) heading()
+                    if (live) liveRegion = LiveRegionMode.Polite
+                } else Modifier)
         }
         if (end) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             trailing?.invoke(this)
@@ -203,6 +226,28 @@ import androidx.compose.ui.unit.sp
 
 /** The card hairline as a divider (decorative): 1 dp of [CarSkin.cardBorder]. */
 @Composable internal fun CarDivider(modifier: Modifier = Modifier) = HorizontalDivider(modifier, thickness = 1.dp, color = Car.skin.cardBorder)
+
+// ───────────────────────── selection ─────────────────────────
+
+/**
+ * The current row of a list (2.13, docs/design/DESIGN_2_13_SPEC.md §1.1): the open trip, the chosen person, a filter that
+ * narrows the list. Selected, the row sits on the chip fill under a 2-dp accentInk ring (4.39 / 7.18 on the fill, 4.93 /
+ * 7.66 against the card beside it); its name stays [Scene.text] and a check, where the row has one, is `Icons.Filled.Check`
+ * in accentInk. Not selected, nothing, or a 1-dp chip border when [outlined] (a grid of cards). The car had two selection
+ * colours, the teal selection fill and ring beside the blue accent; this is the one paint for a current row, while a control
+ * that is chosen (a segment, a chip, a purpose tile) fills with the accent. Everything that sits on a selected row keeps AA on
+ * the chip fill (CarSkinTest). A card that holds buttons (an issue card) takes the 2-dp accentInk ring alone, without this
+ * fill, so its outlined buttons keep the card under them. Apply it inside the press scale and before the press fill, and clip
+ * to [shape] there if the row draws a press fill.
+ */
+@Composable internal fun Modifier.carSelection(selected: Boolean, shape: Shape, outlined: Boolean = false): Modifier {
+    val skin = Car.skin
+    return when {
+        selected -> background(skin.chipFill, shape).border(2.dp, skin.accentInk, shape)
+        outlined -> border(1.dp, skin.chipBorder, shape)
+        else -> this
+    }
+}
 
 // ───────────────────────── one line ─────────────────────────
 
@@ -289,24 +334,28 @@ private const val INFO_FOLD_MS = 200
 }
 
 /**
- * A tag: a short fact on the tag fill (a count, a basis, a state), never a control. With a [tone] a 10-dp dot leads the label,
- * which then takes the text colour; without one the label is textSecondary. One node for TalkBack ([description] replaces
+ * A tag: a short fact on the tag fill (a count, a basis, a state), never a control, and never a sum (an amount is a
+ * [CarAmount]). With a [tone] a 10-dp dot leads the label, which then takes the text colour; without one the label is
+ * textSecondary. [dot] (2.13) leads it with a dot in a colour of its own instead, a trip's purpose ([PurposeChip]), whose
+ * four colours clear 4.0 on the tag fill in both scenes; it wins over [tone]. One node for TalkBack ([description] replaces
  * the words); [live] announces a change politely. A changed tone swaps the dot at once: status colours never animate.
  */
-@Composable internal fun CarTag(text: String, modifier: Modifier = Modifier, tone: PillTone? = null, live: Boolean = false, description: String? = null) {
+@Composable internal fun CarTag(text: String, modifier: Modifier = Modifier, tone: PillTone? = null, live: Boolean = false, description: String? = null,
+    dot: Color? = null) {
     val skin = Car.skin
     val shape = RoundedCornerShape(50)
+    val mark = dot ?: tone?.let { pillDotColor(it) }
     Row(modifier.heightIn(min = 32.dp).clip(shape).background(skin.tagFill).border(1.dp, skin.tagBorder, shape)
         .semantics(mergeDescendants = true) {
             if (live) liveRegion = LiveRegionMode.Polite
             description?.let { contentDescription = it }
         }
         .padding(horizontal = 12.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (tone != null) {
-            Box(Modifier.size(10.dp).clip(CircleShape).background(pillDotColor(tone)))
+        if (mark != null) {
+            Box(Modifier.size(10.dp).clip(CircleShape).background(mark))
             Spacer(Modifier.width(8.dp))
         }
-        Text(text, style = MaterialTheme.typography.labelMedium, color = if (tone != null) Scene.text else Scene.textSecondary, maxLines = 1,
+        Text(text, style = MaterialTheme.typography.labelMedium, color = if (mark != null) Scene.text else Scene.textSecondary, maxLines = 1,
             overflow = TextOverflow.Ellipsis)
     }
 }
@@ -359,6 +408,63 @@ private const val INFO_FOLD_MS = 200
 }
 
 /**
+ * A choice among a few options that each need a word of explanation (2.13: the three purposes, on 홈 and in 운행 상세): a
+ * 72-dp tile, corner 16, that settles to .98 with the press fill. At rest it is outlined with the chip border (3.47 / 3.69):
+ * an optional 10-dp [dot] (a purpose's colour), 8 dp, the [title] in labelLarge text, over one [line] in bodySmall textMuted,
+ * centred. Chosen ([selected] true) it fills with the accent, both lines turn onAccent (4.93) and a 16-dp check takes the
+ * dot's place, as a chosen [CarChoiceChip] does; the press darkens it with pressOnAccent. With [selected] set the tile is a
+ * radio button of its group (put the row in `selectableGroup()`); left null it is a button that acts at once. TalkBack
+ * hears one stop, "[title], [line]", or [description].
+ */
+@Composable internal fun CarChoiceTile(title: String, line: String, onClick: () -> Unit, modifier: Modifier = Modifier,
+    selected: Boolean? = null, dot: Color? = null, description: String? = null) {
+    val skin = Car.skin
+    val interaction = remember { MutableInteractionSource() }
+    val shape = RoundedCornerShape(16.dp)
+    val chosen = selected == true
+    val ink = if (chosen) skin.onAccent else Scene.text
+    val tap = if (selected != null) Modifier.selectable(selected = chosen, interactionSource = interaction, indication = null, role = Role.RadioButton, onClick = onClick)
+        else Modifier.clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick)
+    val spoken = description ?: "$title, $line"
+    Box(modifier.pressable(interaction, .98f).then(tap).semantics { contentDescription = spoken }.heightIn(min = 72.dp).clip(shape),
+        contentAlignment = Alignment.Center) {
+        // The fill and the press layer sit under the words (as on a chosen chip), so the press never dims the label.
+        Box(Modifier.matchParentSize().then(if (chosen) Modifier.background(skin.accent) else Modifier.border(1.dp, skin.chipBorder, shape))
+            .pressFill(interaction, if (chosen) skin.pressOnAccent else Scene.fill))
+        Column(Modifier.clearAndSetSemantics {}.padding(horizontal = 16.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (chosen) Icon(Icons.Filled.Check, contentDescription = null, Modifier.size(16.dp), tint = skin.onAccent)
+                else if (dot != null) Box(Modifier.size(10.dp).clip(CircleShape).background(dot))
+                if (chosen || dot != null) Spacer(Modifier.width(8.dp))
+                Text(title, style = MaterialTheme.typography.labelLarge, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Text(line, style = MaterialTheme.typography.bodySmall, color = if (chosen) skin.onAccent else Scene.textMuted, maxLines = 1,
+                overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+        }
+    }
+}
+
+/**
+ * One option of a short group (2.12's maintenance kinds; 2.13 the expense types too): a 46-dp stadium in a 56-dp target, a
+ * radio button of the group (put the row in `selectableGroup()`). The chosen one is filled with the accent (the label in
+ * onAccent, 4.93; the press darkens the fill under it), the others are outlined with the chip border. The swap is instant;
+ * the press settles to .98.
+ */
+@Composable internal fun CarChoiceChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val skin = Car.skin
+    val interaction = remember { MutableInteractionSource() }
+    val shape = RoundedCornerShape(50)
+    Box(Modifier.pressable(interaction, .98f)
+        .selectable(selected = selected, interactionSource = interaction, indication = null, role = Role.RadioButton, onClick = onClick)
+        .padding(vertical = 5.dp).heightIn(min = 46.dp).clip(shape), contentAlignment = Alignment.Center) {
+        Box(Modifier.matchParentSize().then(if (selected) Modifier.background(skin.accent) else Modifier.border(1.dp, skin.chipBorder, shape))
+            .pressFill(interaction, if (selected) skin.pressOnAccent else Scene.fill))
+        Text(label, Modifier.padding(horizontal = 18.dp), style = MaterialTheme.typography.labelLarge, color = if (selected) skin.onAccent else Scene.text, maxLines = 1)
+    }
+}
+
+/**
  * A link inside a card (시연 체험 다시보기): the label and a chevron in the accent ink, which is AA on the card only (4.93 /
  * 7.66), so never on a chip or the page. A 56-dp target that settles to .98 with the press fill. [description] replaces the
  * label for TalkBack.
@@ -406,17 +512,13 @@ private const val INFO_FOLD_MS = 200
  * One of three small figures across a card (완료 운행 · 등록 경비 · 계기판): an 18-dp icon and the label, the value 4 dp
  * below in titleSmall with tabular digits. A value never ellipsises: it steps down to 14 sp where it would not fit its third
  * of the card ("12,345.6 km" takes 107 of 109 dp at 1×). A [live] value (telemetry) updates in place; any other value
- * cross-fades as [DigitChange] does. One node for TalkBack.
+ * cross-fades as [DigitChange] does. A [muted] value (2.13: 없음, a count of zero) is textMuted in Medium, the way a zero
+ * amount is ([moneyText]), so an empty figure never reads as loud as a real one. One node for TalkBack.
  */
-@Composable internal fun CarMiniStat(icon: Painter, label: String, value: String, modifier: Modifier = Modifier, live: Boolean = false) {
+@Composable internal fun CarMiniStat(icon: Painter, label: String, value: String, modifier: Modifier = Modifier, live: Boolean = false, muted: Boolean = false) {
     Column(modifier.semantics(mergeDescendants = true) {}) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, contentDescription = null, Modifier.size(18.dp), tint = Car.skin.icon)
-            Spacer(Modifier.width(6.dp))
-            Text(label, style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        Spacer(Modifier.height(4.dp))
-        if (live) MiniStatValue(value)
+        MiniStatLabel(icon, label)
+        if (live) MiniStatValue(value, muted)
         else {
             val reduce = LocalReduceMotion.current
             val lift = with(LocalDensity.current) { 6.dp.roundToPx() }
@@ -426,17 +528,58 @@ private const val INFO_FOLD_MS = 200
                 else (fadeIn(tween(160, easing = ease)) + slideInVertically(tween(160, easing = ease)) { lift }) togetherWith
                     (fadeOut(tween(120, easing = ease)) + slideOutVertically(tween(160, easing = ease)) { -lift })
                 swap using SizeTransform(clip = false) { _, _ -> digitSizeSpec(reduce) }
-            }) { shown -> MiniStatValue(shown) }
+            }) { shown -> MiniStatValue(shown, muted) }
         }
     }
 }
 
-/** A mini stat's figure: titleSmall, tabular, one line, stepping down to 14 sp instead of ellipsising. */
-@Composable private fun MiniStatValue(value: String) {
-    val style = MaterialTheme.typography.titleSmall.copy(fontFeatureSettings = "tnum")
-    val ink = Scene.text
+/**
+ * A mini stat of money (2.13, the spec's §5: 등록 경비, 월 마감's 경비): the label row as above, then the amount in the one
+ * money style at the mini stat's size, the digits titleSmall with tabular figures and 원 the same size in textMuted, stepping
+ * down to 14 sp with the digits. Zero is "0원" muted and Medium, no amount ([won] null) is "—", heard as 금액 없음. Money
+ * never animates, so it lands in place. The card's ₩ mark belongs in [icon], once per card. One node for TalkBack: the
+ * label and the amount ("등록 경비, 4,500원").
+ */
+@Composable internal fun CarMiniStat(icon: Painter, label: String, won: Long?, modifier: Modifier = Modifier) {
+    val money = moneyText(won, "—")
+    Column(modifier.clearAndSetSemantics { contentDescription = "$label, ${money.spoken}" }) {
+        MiniStatLabel(icon, label)
+        AmountText(money, MaterialTheme.typography.titleSmall, unitSize = TextUnit.Unspecified, tone = MoneyTone.NEUTRAL,
+            autoSize = TextAutoSize.StepBased(minFontSize = 14.sp, maxFontSize = 19.sp, stepSize = .5.sp), alignEnd = false)
+    }
+}
+
+/** A mini stat's label row: the 18-dp icon (decorative) and the label in labelMedium textSecondary, then 4 dp to the value. */
+@Composable private fun MiniStatLabel(icon: Painter, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, contentDescription = null, Modifier.size(18.dp), tint = Car.skin.icon)
+        Spacer(Modifier.width(6.dp))
+        Text(label, style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+    Spacer(Modifier.height(4.dp))
+}
+
+/** A mini stat's figure: titleSmall, tabular, one line, stepping down to 14 sp instead of ellipsising; [muted] in textMuted Medium. */
+@Composable private fun MiniStatValue(value: String, muted: Boolean = false) {
+    val base = MaterialTheme.typography.titleSmall.copy(fontFeatureSettings = "tnum")
+    val style = if (muted) base.copy(fontWeight = FontWeight.Medium) else base
+    val ink = if (muted) Scene.textMuted else Scene.text
     BasicText(value, style = style, color = { ink }, maxLines = 1, softWrap = false,
         autoSize = TextAutoSize.StepBased(minFontSize = 14.sp, maxFontSize = 19.sp, stepSize = .5.sp))
+}
+
+/**
+ * A step's disc (2.12, shared since 2.13: 월 마감's steps, 홈's setup and incident steps, 휴대폰 연결's rows): done, the
+ * scene's positive with a check in the scheme's text for it (6.21 / 7.44); otherwise the icon disc with the [number] in text,
+ * a quieter number while the step is [idle]. [size] is 32 dp, 28 where the discs stack in 32-dp rows and would touch.
+ * Decorative: the step's own node says the number.
+ */
+@Composable internal fun CarStepDisc(number: Int, done: Boolean, idle: Boolean = false, size: Dp = 32.dp) {
+    Box(Modifier.size(size).clip(CircleShape).background(if (done) Scene.positive else Car.skin.disc), contentAlignment = Alignment.Center) {
+        Text(if (done) "✓" else number.toString(), style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center,
+            color = when { done -> MaterialTheme.colorScheme.onTertiary; idle -> Scene.textSecondary; else -> Scene.text },
+            modifier = Modifier.clearAndSetSemantics {})
+    }
 }
 
 /**
@@ -463,6 +606,127 @@ private const val INFO_FOLD_MS = 200
         if (trailing != null) {
             Spacer(Modifier.width(12.dp))
             trailing()
+        }
+    }
+}
+
+// ───────────────────────── dialogs ─────────────────────────
+
+/**
+ * Makes the dialog window it is composed in fade in and out (spec C: a car dialog fades only) instead of the platform's
+ * fade-and-slide: [R.style.CarDialogFade], 160 / 120 ms, and no window animation at all under reduced motion. Call it first
+ * in a `Dialog`'s content: that content first composes before the window's first layout, so the enter fade applies.
+ */
+@Composable internal fun CarDialogFade() {
+    val reduce = LocalReduceMotion.current
+    val window = (LocalView.current.parent as? DialogWindowProvider)?.window
+    DisposableEffect(window, reduce) {
+        window?.setWindowAnimations(if (reduce) 0 else R.style.CarDialogFade)
+        onDispose {}
+    }
+}
+
+/**
+ * The car's dialog window and card (2.13, the spec's §1.1), for a dialog that lays out its own content (the driver picker):
+ * a platform-width-free `Dialog` that fades ([CarDialogFade]), and in it the opaque [CarSkin.card] with a 1-dp card hairline,
+ * corner 28, padding 28, at most [maxWidth] wide. Material's AlertDialog sat on surfaceContainerHigh, where the accent ink
+ * falls to 4.26 by day and an accent button's edge to 3.05 by night, and its window slid. The pane is named [title] for
+ * TalkBack; the [content] draws the title itself (a [CarSectionTitle]). The content wraps the card, so Back and a tap beside
+ * the card dismiss ([onDismiss]).
+ */
+@Composable internal fun CarDialogFrame(title: String, onDismiss: () -> Unit, maxWidth: Dp = 600.dp, content: @Composable ColumnScope.() -> Unit) {
+    val skin = Car.skin
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        CarDialogFade()
+        Box(Modifier.padding(24.dp)) {
+            Surface(Modifier.widthIn(max = maxWidth).fillMaxWidth().semantics { paneTitle = title }, shape = RoundedCornerShape(28.dp),
+                color = skin.card, contentColor = Scene.text, border = BorderStroke(1.dp, skin.cardBorder)) {
+                Column(Modifier.padding(28.dp), content = content)
+            }
+        }
+    }
+}
+
+/**
+ * A car dialog (2.13): in a [CarDialogFrame], the title row ([CarSectionTitle] with an optional [icon], the dialog's heading),
+ * 12 dp, the [lines] in bodySmall textSecondary (8.07 / 9.88), one sentence each ([dialogLines]) and one node for TalkBack
+ * ([spoken] replaces their words where the long form says more), then the optional [body], 24 dp, and the [buttons]. A line is
+ * written to fit one line at 600 dp (DIALOG_LINE_UNITS, 30) but may take two, so a narrow window or a large font never cuts a
+ * warning. The buttons are equal parts of the row, 56 dp tall, in the order given, so the way on, given last, is at the right;
+ * under 400 dp of content or above a 1.05× font they stack full width in the same order ([DialogButtons]). Acknowledge:
+ * `PrimaryAction("확인")` alone. Decide: [QuietAction] then [PrimaryAction]. Destroy: `QuietAction("취소")` then
+ * `QuietAction("삭제", color = Scene.negative)`, never the accent. Read only: `QuietAction("닫기")`.
+ */
+@Composable internal fun CarDialog(title: String, onDismiss: () -> Unit, icon: Painter? = null, lines: List<String> = emptyList(),
+    spoken: String? = null, body: (@Composable ColumnScope.() -> Unit)? = null, buttons: @Composable RowScope.() -> Unit) {
+    CarDialogFrame(title, onDismiss) {
+        CarSectionTitle(title, icon = icon)
+        if (lines.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            Column(Modifier.fillMaxWidth().semantics(mergeDescendants = true) { spoken?.let { contentDescription = it } },
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                lines.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary) }
+            }
+        }
+        if (body != null) {
+            Spacer(Modifier.height(12.dp))
+            body()
+        }
+        Spacer(Modifier.height(24.dp))
+        DialogButtons(buttons)
+    }
+}
+
+/**
+ * A message as a dialog's lines (pure, unit-tested): one sentence per line, without the final period, the car's one-line
+ * rule. It splits after a period, ? or ! that is followed by a space or a line break, and at a line break, then drops one
+ * trailing period of each line; a period inside a number ("1.5MB") stays. Blank → no lines. The repository's messages stay
+ * as they are written and are drawn through this.
+ */
+internal fun dialogLines(text: String): List<String> =
+    text.split('\n').flatMap { it.trim().split(Regex("(?<=[.?!])\\s+")) }
+        .map { it.trim().removeSuffix(".").trim() }.filter { it.isNotEmpty() }
+
+/**
+ * The scope [CarDialog]'s buttons are written in. [DialogButtons] sizes every button itself (equal parts, or full width when
+ * stacked), so what a caller asks of a Row here, a weight or an alignment, changes nothing and the buttons stay equal.
+ */
+private object DialogButtonScope : RowScope {
+    override fun Modifier.weight(weight: Float, fill: Boolean): Modifier = this
+    override fun Modifier.align(alignment: Alignment.Vertical): Modifier = this
+    override fun Modifier.alignBy(alignmentLine: HorizontalAlignmentLine): Modifier = this
+    override fun Modifier.alignByBaseline(): Modifier = this
+    override fun Modifier.alignBy(alignmentLineBlock: (Measured) -> Int): Modifier = this
+}
+
+/** Under this much width of a dialog's content (or above a 1.05× font) its buttons stack. */
+private val DIALOG_STACK_UNDER = 400.dp
+
+/**
+ * A dialog's buttons: equal parts of the width 12 dp apart, each at least 56 dp tall, in the order given (the last at the
+ * right, mirrored in RTL); stacked full width, 12 dp apart and in the same order, under [DIALOG_STACK_UNDER] or above a 1.05×
+ * font, so a label never wraps or ellipsises in a narrow window. TalkBack reads them in that order.
+ */
+@Composable private fun DialogButtons(buttons: @Composable RowScope.() -> Unit) {
+    val largeFont = LocalDensity.current.fontScale > 1.05f
+    Layout(content = { DialogButtonScope.buttons() }, modifier = Modifier.fillMaxWidth()) { measurables, constraints ->
+        val width = if (constraints.hasBoundedWidth) constraints.maxWidth else 600.dp.roundToPx()
+        if (measurables.isEmpty()) return@Layout layout(width, 0) {}
+        val gap = 12.dp.roundToPx()
+        val minHeight = 56.dp.roundToPx()
+        if (largeFont || width < DIALOG_STACK_UNDER.roundToPx()) {
+            val placeables = measurables.map { it.measure(Constraints(minWidth = width, maxWidth = width, minHeight = minHeight)) }
+            layout(width, placeables.sumOf { it.height } + gap * (placeables.size - 1)) {
+                var y = 0
+                placeables.forEach { it.placeRelative(0, y); y += it.height + gap }
+            }
+        } else {
+            val each = ((width - gap * (measurables.size - 1)) / measurables.size).coerceAtLeast(0)
+            val placeables = measurables.map { it.measure(Constraints(minWidth = each, maxWidth = each, minHeight = minHeight)) }
+            val height = placeables.maxOf { it.height }
+            layout(width, height) {
+                placeables.forEachIndexed { index, placeable -> placeable.placeRelative(index * (each + gap), (height - placeable.height) / 2) }
+            }
         }
     }
 }

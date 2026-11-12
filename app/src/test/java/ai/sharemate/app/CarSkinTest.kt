@@ -73,7 +73,9 @@ class CarSkinTest {
         pair("text on chipFill", text, 15.49 to 15.00, chip) { it.scene.text }
         pair("textSecondary on chipFill", text, 7.19 to 9.27, chip) { it.scene.textSecondary }
         pair("icon on chipFill", nonText, 15.49 to 9.27, chip) { it.car.icon }
-        pair("disabled primary label (textMuted) on chipFill", text, 5.19 to 5.88, chip) { it.scene.textMuted }
+        // 2.13: a disabled primary has no fill any more (textMuted on the card, 5.82 / 6.27); textMuted on the chip fill is a
+        // muted line on a selected row ([carSelection]).
+        pair("textMuted on chipFill", text, 5.19 to 5.88, chip) { it.scene.textMuted }
         val tag = { s: Skin -> s.car.tagFill }
         pair("text on tagFill", text, 15.36 to 15.00, tag) { it.scene.text }
         pair("textSecondary on tagFill", text, 7.13 to 9.27, tag) { it.scene.textSecondary }
@@ -88,6 +90,37 @@ class CarSkinTest {
         pair("person glyph on the disc", nonText, 14.80 to 8.19, disc) { it.car.icon }
         // 직원 rows on the selection fill take textSecondary: textMuted would be 4.48 there by night.
         pair("textSecondary on the selection fill", text, 6.77 to 7.07, { it.scene.selectionFill }) { it.scene.textSecondary }
+    }
+
+    @Test fun theOneSelectionPaintKeepsEverythingOnASelectedRowReadable() {
+        // [carSelection] (DESIGN_2_13_SPEC.md §1.1): the chip fill under a 2-dp accentInk ring.
+        val chip = { s: Skin -> s.car.chipFill }
+        pair("the ring and its check on chipFill", nonText, 4.39 to 7.18, chip) { it.car.accentInk }
+        pair("the ring against the card beside the row", nonText, 4.93 to 7.66, card) { it.car.accentInk }
+        pair("text on a selected row", text, 15.49 to 15.00, chip) { it.scene.text }
+        pair("textSecondary on a selected row", text, 7.19 to 9.27, chip) { it.scene.textSecondary }
+        pair("textMuted on a selected row", text, 5.19 to 5.88, chip) { it.scene.textMuted }
+        pair("negative (a 점검 dot) on a selected row", nonText, 4.99 to 4.51, chip) { it.scene.negative }
+        pair("positive on a selected row", nonText, 5.53 to 8.51, chip) { it.scene.positive }
+        pair("warn on a selected row", nonText, 6.06 to 8.53, chip) { it.scene.warn }
+        pair("chipBorder of an outlined row on chipFill", nonText, 3.10 to 3.46, chip) { it.car.chipBorder }
+        // DriverAvatar(ring = true): a 2-dp accentInk ring around the chosen person's disc.
+        pair("the avatar ring against the disc", nonText, 4.20 to 6.35, { it.car.disc }) { it.car.accentInk }
+    }
+
+    @Test fun thePurposeDotsStandOutOnTheTagFill() {
+        // [purposeColor] reads the Pleos palette of the scene (DayPleos by day, DarkPleos by night, private to SharemateTheme.kt):
+        // COMMUTE positive, BUSINESS chartActive, PERSONAL textTertiary, UNCLASSIFIED negative. [PurposeChip] draws each as the
+        // dot of a [CarTag] on the car (2.13), so each must stand out from the tag fill (1.4.11); every one clears 4.0.
+        val tag = { s: Skin -> s.car.tagFill }
+        val dots = listOf(
+            Triple("COMMUTE (positive)", Color(0xFF0064FF) to Color(0xFF0082FF), 4.35 to 4.03),
+            Triple("BUSINESS (chartActive)", Color(0xFF00703C) to Color(0xFF00E074), 5.49 to 8.51),
+            Triple("PERSONAL (textTertiary)", Color(0xFF5A6678) to Color(0xFF97A3B6), 5.15 to 5.88),
+            Triple("UNCLASSIFIED (negative)", Color(0xFFC62B0C) to Color(0xFFFF4C28), 4.95 to 4.51),
+        )
+        // 3 is the floor for a mark; the spec (§1.3) holds the dots to 4.0.
+        for ((what, colors, figures) in dots) pair("$what dot", maxOf(nonText, 4.0), figures, tag) { if (it === day) colors.first else colors.second }
     }
 
     @Test fun controlsAndOutlinesStandOutFromTheCard() {

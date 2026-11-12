@@ -430,18 +430,6 @@ private fun closeStepSpoken(number: Int, step: CloseStep): String = "${number}ë‹
     if (!step.done && !step.optional && step.action != null) Scene.negative else Scene.textMuted
 
 /**
- * A step's disc (2.12): done, the scene's positive with a check in the scheme's text for it (6.21 / 7.44); otherwise the icon
- * disc with the number in text, a quieter number while the step is idle. Decorative: the step's node says the number.
- */
-@Composable private fun StepDisc(number: Int, step: CloseStep) {
-    Box(Modifier.size(32.dp).clip(CircleShape).background(if (step.done) Scene.positive else Car.skin.disc), contentAlignment = Alignment.Center) {
-        Text(if (step.done) "âœ“" else number.toString(), style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center,
-            color = when { step.done -> MaterialTheme.colorScheme.onTertiary; step.idle -> Scene.textSecondary; else -> Scene.text },
-            modifier = Modifier.clearAndSetSemantics {})
-    }
-}
-
-/**
  * One step of four across ([closeStepsAcross]): the disc beside the label, the detail under the label ([CarLine]) and the
  * step's action as a pill under that. The words are one node with the step's state; the pill keeps its own.
  */
@@ -451,7 +439,7 @@ private fun closeStepSpoken(number: Int, step: CloseStep): String = "${number}ë‹
         Column(Modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = closeStepSpoken(number, step); stateDescription = closeStepState(step) },
             verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                StepDisc(number, step)
+                CarStepDisc(number, step.done, step.idle)
                 Spacer(Modifier.width(10.dp))
                 Text(step.label, style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
@@ -465,7 +453,7 @@ private fun closeStepSpoken(number: Int, step: CloseStep): String = "${number}ë‹
 /** One step as a row ([CarRow]) where the four do not fit across: the disc as its lead, the action as a pill at its end. */
 @Composable private fun StepLine(number: Int, step: CloseStep, busy: Boolean, onAction: (() -> Unit)?) {
     val action = step.action
-    CarRow(step.label, line = step.detail, lead = { StepDisc(number, step) }, lineColor = closeStepDetailColor(step),
+    CarRow(step.label, line = step.detail, lead = { CarStepDisc(number, step.done, step.idle) }, lineColor = closeStepDetailColor(step),
         state = closeStepState(step), spoken = closeStepSpoken(number, step),
         trailing = if (action != null && onAction != null) { { CarPillButton(if (busy) "ì €ìž¥ ì¤‘â€¦" else action, onAction, enabled = !busy) } } else null)
 }

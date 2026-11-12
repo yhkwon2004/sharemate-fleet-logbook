@@ -1,5 +1,7 @@
 # SHAREMATE 2.12: car "한 줄" restyle — final build spec
 
+> 2.13 builds on this spec: [DESIGN_2_13_SPEC.md](DESIGN_2_13_SPEC.md) (no clock, the header search bar, the no-scroll 홈, one money style) wins wherever the two differ.
+
 **Base and conventions**
 - Base: `main` @ a0f073e (2.11.0).
 - `src/` = `app/src/main/java/ai/sharemate/app/`; `test/` = `app/src/test/java/ai/sharemate/app/`.

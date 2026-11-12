@@ -82,8 +82,11 @@ internal const val ASSISTANT_NOTE = "기기 안에서 규칙으로 처리해요 
 internal const val ASSISTANT_SETTINGS_NOTE = "Gleo 음성 연동은 승인 후 제공돼요 · 지금은 운행 비서에서 같은 세 동작(목적 기록 · 비용 추가 · 요약)을 화면으로 써요"
 private const val THINKING_DELAY_MS = 300L
 
-/** The sheet's scrim settles at .45 over the page (spec C); the sheet itself keeps Material's slide. */
-private const val SHEET_SCRIM_ALPHA = .45f
+/**
+ * The sheet's scrim settles at .45 over the page (spec C); the sheet itself keeps Material's slide. Shared since 2.13 with
+ * 운행 상세's side sheet, whose scrim was the page colour at .55, a white veil by day.
+ */
+internal const val SHEET_SCRIM_ALPHA = .45f
 
 /**
  * The assistant's touch target, chosen by the device and not by the window: 48 dp on the phone, 56 on the car even in a

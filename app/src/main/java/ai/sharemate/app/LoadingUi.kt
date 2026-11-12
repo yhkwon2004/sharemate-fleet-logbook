@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -109,18 +110,22 @@ internal object IntroducedSweeps {
 /**
  * [PrimaryAction] that shows progress while [loading]: the same 56-dp stadium, a 20-dp ring and [loadingLabel] in place of
  * the label (and of its optional [icon]). [quiet] gives it [QuietAction]'s outlined look instead of the accent, for a second
- * save beside a card's primary one. The button is disabled while loading so one tap cannot start the work twice; TalkBack
- * hears the state change.
+ * save beside a card's primary one. While loading (2.13) it keeps its look, the accent or the outline, and ignores taps, so
+ * one tap cannot start the work twice: in 2.12 it turned disabled and became the pale slab of a button that cannot act.
+ * TalkBack hears it as disabled and 진행 중, announced politely. Disabled ([enabled] false) it takes [PrimaryAction]'s
+ * disabled look.
  */
 @Composable internal fun LoadingAction(label: String, loading: Boolean, modifier: Modifier = Modifier, loadingLabel: String = "저장 중…",
     enabled: Boolean = true, icon: Painter? = null, quiet: Boolean = false, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
+    // While loading the button gets a source of its own that nothing reads, so a tap neither presses nor darkens it.
+    val idle = remember { MutableInteractionSource() }
     val press = if (isCar()) Modifier.pressable(interaction, .98f) else Modifier
-    val active = enabled && !loading
-    Button(onClick = onClick, enabled = active, shape = RoundedCornerShape(50), interactionSource = interaction,
+    Button(onClick = { if (!loading) onClick() }, enabled = enabled, shape = RoundedCornerShape(50), interactionSource = if (loading) idle else interaction,
         colors = if (quiet) quietActionColors(interaction, MaterialTheme.colorScheme.onSurface) else primaryActionColors(interaction),
-        border = if (quiet) quietActionBorder(active) else null, elevation = if (quiet) null else ButtonDefaults.buttonElevation(),
-        modifier = modifier.then(press).heightIn(min = 56.dp).semantics { if (loading) { stateDescription = "진행 중"; liveRegion = LiveRegionMode.Polite } },
+        border = if (quiet) quietActionBorder(enabled) else if (enabled) null else quietActionBorder(enabled = false),
+        elevation = if (quiet) null else ButtonDefaults.buttonElevation(),
+        modifier = modifier.then(press).heightIn(min = 56.dp).semantics { if (loading) { disabled(); stateDescription = "진행 중"; liveRegion = LiveRegionMode.Polite } },
         contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (loading) {
