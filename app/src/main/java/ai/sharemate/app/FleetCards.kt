@@ -342,7 +342,7 @@ internal fun phoneLinkTag(enabled: Boolean, running: Boolean, error: String?, on
 /**
  * 휴대폰 연결 on the vehicle page (2.12): the link's state as a live tag beside the title ([phoneLinkTag]); while the link is on,
  * three small figures (the record version, the phone's last call, the phones paired) and, while the server runs, the pairing
- * ([PhonePairing]): the three things a phone types, in the phone's order. The home keeps its own pairing card ([PairingCard]).
+ * ([PhonePairing]): the three things a phone types, in the phone's order. The home keeps its own pairing card (2.13: the 휴대폰 연결 attention card, HomeAttention.kt).
  * What the link does sits behind ⓘ. Switched off (2.13), the card holds the switch itself, the same row as 설정 › 기록's
  * ([SettingsCopy.PHONE_SYNC_TITLE]), where 2.12 only said where to find it.
  */

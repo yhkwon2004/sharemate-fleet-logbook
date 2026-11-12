@@ -1150,7 +1150,8 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
                 Column(Modifier.fillMaxWidth().onSizeChanged { bandHeight = it.height }, verticalArrangement = Arrangement.spacedBy(HOME_BAND_GAP)) {
                     if (demo) DemoStrip { act { repository.ingestCardEvents(listOf(demoCardApproval(repository.state.value.data, System.currentTimeMillis()))) } }
                     DestinationRow(cards, plan.cardColumns)
-                    IncidentDock(data, act, repository)
+                    // Held to the frame's slot, as the destinations are, so the band is the height homeFrame budgets.
+                    IncidentDock(data, act, repository, Modifier.heightIn(min = HOME_DOCK))
                 }
             }
         }
@@ -1182,12 +1183,13 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
 /**
  * The presenter's controls while demo mode is on (2.13, an 80-dp strip above the destinations): the 시연 모드 tag, then drive
  * and park at 15× (the card's one solid action), a charge (only while parked) and a card approval, at the same weights as
- * before. Under 560 dp the tag stands over the buttons.
+ * before. Under 560 dp the tag stands over the buttons. It is held to the frame's slot ([HOME_DEMO_STRIP]), the height
+ * [homeFrame] budgets for it.
  */
 @Composable private fun DemoStrip(demoCard: () -> Unit) {
     val moving by DemoDrive.moving.collectAsState()
     val charging by DemoDrive.charging.collectAsState()
-    CarCard(padding = 12.dp) {
+    CarCard(Modifier.heightIn(min = HOME_DEMO_STRIP), padding = 12.dp) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val buttons: @Composable RowScope.() -> Unit = {
                 PrimaryAction(if (moving) "시연 주차 (P)" else "시연 출발 (D)", Modifier.weight(1.3f)) { DemoDrive.setMoving(!moving) }

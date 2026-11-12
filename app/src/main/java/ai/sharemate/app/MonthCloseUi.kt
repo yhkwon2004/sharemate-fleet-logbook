@@ -210,7 +210,7 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
 // ───────────────────────── 월간·Excel 마감 카드 (2.12) ─────────────────────────
 
 /**
- * 월간·Excel's month card (2.12) in the car's one-line look; the home keeps [MonthClosePanel]. The title is 월 마감 with the
+ * 월간·Excel's month card (2.12) in the car's one-line look; the home keeps its own (2.13: the 월 마감 attention card, HomeAttention.kt). The title is 월 마감 with the
  * month's trips as a tag (2.13: a count is a tag, never part of a title) and, once it is closed, a 마감됨 tag; then the
  * headline and the completion bar (keyed for this card alone, so the home card's sweep never carries over). A closed month
  * shows its three figures (경비 in the one money style) and one row: the note, 마감 해제 as a pill and Excel 저장 (2.12 had two
