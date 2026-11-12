@@ -286,6 +286,21 @@ internal fun monthCloseTaskLine(status: MonthStatus): HomeLine = when {
     else -> HomeLine("남은 확인 ${status.issues}건")
 }
 
+/** The one way on of a month-close card ([monthCloseNext]). */
+internal enum class MonthCloseNext { TIDY, REVIEW, CLOSE }
+
+/**
+ * The one way on that both month-close cards offer (pure, unit-tested), in [monthCloseTaskLine]'s order: 정리하기 while trips
+ * still want a purpose or a driver, 확인하기 while only card questions are left, and the close once nothing is. Card questions
+ * get their own step because 점검 필요 lists trips alone: sent there, a month whose last open items are card payments would
+ * find an empty list and no way on.
+ */
+internal fun monthCloseNext(status: MonthStatus): MonthCloseNext = when {
+    status.unfinished > 0 -> MonthCloseNext.TIDY
+    status.reviews > 0 -> MonthCloseNext.REVIEW
+    else -> MonthCloseNext.CLOSE
+}
+
 /** When a trip ran (pure, unit-tested): "09:30 – 10:00" today, "11월 8일 (일) 09:30 – 10:00" on another day. */
 internal fun tripWhenLine(trip: Trip, now: Long, zone: ZoneId): String {
     val start = Instant.ofEpochMilli(trip.startAt).atZone(zone)

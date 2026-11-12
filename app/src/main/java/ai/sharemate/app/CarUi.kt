@@ -90,6 +90,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -164,11 +165,13 @@ import androidx.compose.ui.window.DialogWindowProvider
  * so a card reads the same over the sky, the backdrop and by night. [title] sits 12 dp above the [content], whose blocks
  * stand [gap] apart. A tappable card ([onClick]) adds the day drop shadow, the .98 settle and the press fill and names its
  * action for TalkBack ([onClickLabel]); [description] replaces the merged words where the card's own read badly aloud, and
- * [live] makes the card a polite live region, so a change TalkBack should hear is announced without a touch.
+ * [live] makes the card a polite live region, so a change TalkBack should hear is announced without a touch. [selected]
+ * (2.13: the 점검 필요 card whose trip the detail shows) is set on the tappable, merged node TalkBack focuses, not on the
+ * outer surface, which TalkBack never lands on; a caller's own `semantics { selected }` on [modifier] would go unheard.
  */
 @Composable internal fun CarCard(modifier: Modifier = Modifier, title: (@Composable () -> Unit)? = null, onClick: (() -> Unit)? = null,
     onClickLabel: String? = null, description: String? = null, live: Boolean = false, padding: Dp = carCardPadding(), gap: Dp = 16.dp,
-    content: @Composable ColumnScope.() -> Unit) {
+    selected: Boolean? = null, content: @Composable ColumnScope.() -> Unit) {
     val shape = RoundedCornerShape(20.dp)
     val skin = Car.skin
     val interaction = remember { MutableInteractionSource() }
@@ -181,7 +184,8 @@ import androidx.compose.ui.window.DialogWindowProvider
             description?.let { contentDescription = it }
             if (live) liveRegion = LiveRegionMode.Polite
         }
-        Column(tap.then(merged).fillMaxWidth().padding(padding)) {
+        val state = if (selected == null) Modifier else Modifier.semantics { this.selected = selected }
+        Column(tap.then(merged).then(state).fillMaxWidth().padding(padding)) {
             if (title != null) {
                 title()
                 Spacer(Modifier.height(12.dp))

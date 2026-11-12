@@ -6,6 +6,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 /**
  * The header's pure rules (2.12, 2.13): how it lays itself out in each window (one row or two, the driver chip and the
@@ -63,6 +64,19 @@ class HeaderTest {
         assertTrue(HeaderCopy.SPOKEN_BAR.endsWith(HeaderCopy.BAR_EXAMPLE))
         assertEquals("운행 비서에게 물어보세요, 예: 주차비 4,500원 추가해줘", HeaderCopy.SPOKEN_BAR)
         assertOneLine(HeaderCopy.BAR_PHRASE, BAR_PHRASE_UNITS)
+    }
+
+    /**
+     * ic_search is drawn by the phone header too (PhoneShell), and the phone does not change: the bar's thinner 1.6 stroke
+     * lives in the car's own ic_search_bar, and the shared drawable keeps 2.12's 1.8.
+     */
+    @Test fun theBarsMagnifierIsTheCarsOwnAndThePhoneKeepsItsIcon() {
+        val drawables = File("src/main/res/drawable")
+        val phone = File(drawables, "ic_search.xml").readText().replace("\r\n", "\n")
+        val car = File(drawables, "ic_search_bar.xml").readText().replace("\r\n", "\n")
+        assertTrue("휴대폰 돋보기는 2.12 그대로", phone.contains("android:strokeWidth=\"1.8\""))
+        assertTrue("차량 검색 바는 1.6 선", car.contains("android:strokeWidth=\"1.6\""))
+        assertEquals("선 굵기 말고는 같은 그림", phone.replace("\"1.8\"", "\"1.6\""), car)
     }
 
     @Test fun theDriverChipSaysItsCaptionThePersonAndWhatATapDoes() {

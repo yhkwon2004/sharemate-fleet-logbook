@@ -162,7 +162,9 @@ private val AttentionPinSaver = Saver<AttentionPin?, String>(
         AttentionKind.PAIRING -> PairingBody(state.sync, now, pager)
         AttentionKind.MONTH_CLOSE -> monthCloseTarget(data, today, zone)?.let { MonthCloseBody(it, today, act, repository, nav, pager) { pinKind(AttentionKind.CARD_REVIEW) } }
         AttentionKind.CARE -> CareBody(state, now, act, repository, snoozes, nav, pager)
-        AttentionKind.CLOSE_REMINDER -> monthCloseTarget(data, today, zone)?.let { status -> CloseReminderBody(status, today, nav, pager) { onReminderClosed(status.month) } }
+        AttentionKind.CLOSE_REMINDER -> monthCloseTarget(data, today, zone)?.let { status ->
+            CloseReminderBody(status, today, nav, pager, onReview = { pinKind(AttentionKind.CARD_REVIEW) }) { onReminderClosed(status.month) }
+        }
         AttentionKind.CHARGE_WAITING -> hiddenPendingCharge(data, now, prompt.value)?.let { ChargeWaitingBody(data, now, it, prompt, pager) }
     }
 }
@@ -613,9 +615,9 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
 
 /**
  * A month that passed without being closed: where it stands ([monthCloseHeadline]) over its completion bar, the first step
- * still open ([monthCloseTaskLine]), and the one thing to do next: 정리하기 opens 점검 필요 of that month, 확인하기 turns the
- * pager to 카드 확인 ([onReview]), and a ready month closes here with today's answer. The four steps are one tap away
- * (월간에서 보기).
+ * still open ([monthCloseTaskLine]), and the one thing to do next ([monthCloseNext]): 정리하기 opens 점검 필요 of that month,
+ * 확인하기 turns the pager to 카드 확인 ([onReview]), and a ready month closes here with today's answer. The four steps are one
+ * tap away (월간에서 보기).
  */
 @Composable private fun MonthCloseBody(status: MonthStatus, today: LocalDate, act: Act, repository: TripLogRepository, nav: HomeNav, pager: AttentionPager?,
     onReview: () -> Unit) {
@@ -635,10 +637,10 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
         lines = listOf(line),
         start = { CarLink(HomeCopy.CLOSE_OPEN_REPORT, { nav.openReport(status.month) }) },
         actions = {
-            when {
-                status.unfinished > 0 -> PrimaryAction(HomeCopy.CLOSE_TIDY) { nav.openLog(1, status.month) }
-                status.reviews > 0 -> PrimaryAction(HomeCopy.CLOSE_REVIEW, onClick = onReview)
-                else -> LoadingAction("$name 마감", "마감 중…", act, enabled = status.ready) {
+            when (monthCloseNext(status)) {
+                MonthCloseNext.TIDY -> PrimaryAction(HomeCopy.CLOSE_TIDY) { nav.openLog(1, status.month) }
+                MonthCloseNext.REVIEW -> PrimaryAction(HomeCopy.CLOSE_REVIEW, onClick = onReview)
+                MonthCloseNext.CLOSE -> LoadingAction("$name 마감", "마감 중…", act, enabled = status.ready) {
                     repository.closeMonth(key)
                     followUp(FollowUp("${name}을 마감했어요", "마감 해제") { repository.reopenMonth(key) })
                 }
@@ -647,16 +649,21 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
 }
 
 /**
- * This month's close reminder from the 25th ([monthCloseBannerText], the real days left and the real count): 정리하기 opens
- * 점검 필요 of that month, 마감하기 opens 월간·Excel; 닫기 hides it for this month.
+ * This month's close reminder from the 25th ([monthCloseBannerText], the real days left and the real count), with the same
+ * way on as the month-close card ([monthCloseNext]): 정리하기 opens 점검 필요 of that month, 확인하기 turns the pager to
+ * 카드 확인 ([onReview]), 마감하기 opens 월간·Excel; 닫기 hides it for this month.
  */
-@Composable private fun CloseReminderBody(status: MonthStatus, today: LocalDate, nav: HomeNav, pager: AttentionPager?, onClose: () -> Unit) {
+@Composable private fun CloseReminderBody(status: MonthStatus, today: LocalDate, nav: HomeNav, pager: AttentionPager?, onReview: () -> Unit,
+    onClose: () -> Unit) {
     AttentionCard(AttentionKind.CLOSE_REMINDER, HomeCopy.CLOSE_TITLE, rememberVectorPainter(Icons.Outlined.CheckCircle), pager, monthCloseBannerText(status, today),
         live = true, tag = { CarTag(HomeCopy.CLOSE_REMINDER_TAG) },
         actions = {
             QuietAction(HomeCopy.CLOSE, description = HomeCopy.SPOKEN_REMINDER_CLOSE, onClick = onClose)
-            if (status.issues == 0) PrimaryAction(HomeCopy.CLOSE_REMINDER_CLOSE) { nav.openReport(status.month) }
-            else PrimaryAction(HomeCopy.CLOSE_TIDY) { nav.openLog(1, status.month) }
+            when (monthCloseNext(status)) {
+                MonthCloseNext.TIDY -> PrimaryAction(HomeCopy.CLOSE_TIDY) { nav.openLog(1, status.month) }
+                MonthCloseNext.REVIEW -> PrimaryAction(HomeCopy.CLOSE_REVIEW, onClick = onReview)
+                MonthCloseNext.CLOSE -> PrimaryAction(HomeCopy.CLOSE_REMINDER_CLOSE) { nav.openReport(status.month) }
+            }
         })
 }
 

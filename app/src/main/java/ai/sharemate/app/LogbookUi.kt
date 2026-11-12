@@ -741,7 +741,8 @@ internal fun headerChipMax(cluster: Dp, fixed: Dp, fontScale: Float): Dp =
 @Composable private fun HeaderSearchBar(onClick: () -> Unit) {
     BoxWithConstraints {
         val mode = searchBarMode(maxWidth, LocalDensity.current.fontScale)
-        val icon = painterResource(R.drawable.ic_search)
+        // The car's own magnifier at the 1.6 stroke of its other glyphs: ic_search is the phone header's and keeps its 1.8.
+        val icon = painterResource(R.drawable.ic_search_bar)
         when (mode) {
             SearchBarMode.ICON -> HeaderTool(icon, label = null, description = HeaderCopy.SPOKEN_BAR, onClick = onClick, clickLabel = HeaderCopy.BAR_CLICK)
             SearchBarMode.LABEL -> HeaderTool(icon, label = HeaderCopy.BAR_LABEL, description = HeaderCopy.SPOKEN_BAR, onClick = onClick, clickLabel = HeaderCopy.BAR_CLICK)
@@ -1671,7 +1672,7 @@ private class LastShown<T> { var value: T? = null }
         items(issues, key = { "${it.type}-${it.tripId}" }) { issue ->
             val trip = trips[issue.tripId] ?: return@items
             val open = trip.id == selectedId
-            CarCard(Modifier.then(if (open) Modifier.border(2.dp, ring, RoundedCornerShape(20.dp)) else Modifier).semantics { selected = open },
+            CarCard(Modifier.then(if (open) Modifier.border(2.dp, ring, RoundedCornerShape(20.dp)) else Modifier), selected = open,
                 padding = 20.dp, onClick = { onOpen(trip.id) }, onClickLabel = LogCopy.ROW_ACTION) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {

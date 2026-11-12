@@ -48,7 +48,7 @@ internal fun dialogLines(text: String): List<String>
 | Visibility | LU:1298, AS:86, HD:852-903 | `MonthStepButton`, `SHEET_SCRIM_ALPHA`, `ReservationTile`, `TodayTile`, `MonthTile` become internal; the three tiles gain `modifier: Modifier = Modifier` |
 | Card gap | LY:74-75 | `cardGap = 16.dp` at EXPANDED and FULL (were 20 and 24): the mock's one gap |
 | Follow-up data | LU:151 | `FollowUp(message, action, perform, second: FollowUpAction? = null)`; `data class FollowUpAction(val label: String, val perform: suspend () -> Unit)` |
-| Drawables | res/drawable | ic_won: `M4,6 L8,18.5 L12,6 L16,18.5 L20,6 M3,11.5 L21,11.5`. ic_search: stroke 1.6. New ic_warning: `M12,4.5 L21,19.5 L3,19.5 Z M12,10.5 L12,14.5 M12,17 L12,17.1` (same family as ic_calendar) |
+| Drawables | res/drawable | ic_won: `M4,6 L8,18.5 L12,6 L16,18.5 L20,6 M3,11.5 L21,11.5`. New car-only ic_search_bar: ic_search at stroke 1.6 (ic_search itself keeps 1.8, because the phone header draws it too). New ic_warning: `M12,4.5 L21,19.5 L3,19.5 Z M12,10.5 L12,14.5 M12,17 L12,17.1` (same family as ic_calendar) |
 
 ### 1.4 Seams (mechanical, no visible change)
 
@@ -93,7 +93,7 @@ Heights stay 84 (76 short) and 152 (136).
 - **FULL with the column** (tab pill 628, 시연 체험 102): 824 → 706 with 시연 체험 → 600 with three badges → 526 at worst. Always EXAMPLE.
 - **Elsewhere:** 672 in a 1120-dp window. In a 600-dp window the chip is the avatar and the bar keeps 312.
 
-**Anatomy.** A 56-dp stadium on `card` with a 1-dp chipBorder; never the accent (it marks the chosen tab beside it). Padding start 20, end 24. ic_search 22 dp in `Car.skin.icon` · 12 · the phrase (bodyLarge, textSecondary 8.07 / 9.88) · 12 · the example (bodyMedium, textMuted 5.82 / 6.27, weight 1, ellipsis). One line. Press `.98` + pressFill. It is a button, not a field: it calls `onAssistant` (LU:384) and opens the sheet (LU:441). TalkBack in every mode: "운행 비서에게 물어보세요, 예: 주차비 4,500원 추가해줘", button, click label 운행 비서 열기.
+**Anatomy.** A 56-dp stadium on `card` with a 1-dp chipBorder; never the accent (it marks the chosen tab beside it). Padding start 20, end 24. ic_search_bar 22 dp in `Car.skin.icon` · 12 · the phrase (bodyLarge, textSecondary 8.07 / 9.88) · 12 · the example (bodyMedium, textMuted 5.82 / 6.27, weight 1, ellipsis). One line. Press `.98` + pressFill. It is a button, not a field: it calls `onAssistant` (LU:384) and opens the sheet (LU:441). TalkBack in every mode: "운행 비서에게 물어보세요, 예: 주차비 4,500원 추가해줘", button, click label 운행 비서 열기.
 
 **Deleted.**
 - LU: `ClockText` and `headerClock` (:120-136), `HeaderPlan.clockInline` (:507-510), `clockFitsInline` (:512-517), `HEADER_CHIP_RESERVE` (:526-530), `clockText` (:551), the search icon tool (:581-582), the `clock` lambda and its calls (:589-596, :625, :635, :644), `HeaderClock` (:652-676).
@@ -167,7 +167,7 @@ Under an unbounded maximum a Column weighs against its minimum, so the spacer ta
 | PAIRING | 휴대폰 연결 (ic_phone) · 4:32 남음 | 연결 번호 · the code (displaySmall, tnum) / `PHONE_HOW` | 주소 row; 인증키 row, never cut | `PHONE_NOTE` line · 번호 다시 만들기 or 새 연결 번호 | 346 |
 | MONTH_CLOSE | 월 마감 (CheckCircle) · N건 | `monthCloseHeadline`, the 10-dp bar 12 dp under it / `monthCloseTaskLine` | none | link 월간에서 보기 · 정리하기, 확인하기 or {10월} 마감 | 264 |
 | CARE | 차량 관리 (ic_calendar) · 곧 만기, or 기한 지남 (NEGATIVE) | `alert.title` / `alert.detail` | none | `careTaskNote` line · 7일 뒤 다시 · 검사 완료 (`careDoneLabel` =) | 242 |
-| CLOSE_REMINDER | 월 마감 (CheckCircle) · 마감 전 | `monthCloseBannerText` (=) | none | 닫기 · 정리하기 or 마감하기 | 219 |
+| CLOSE_REMINDER | 월 마감 (CheckCircle) · 마감 전 | `monthCloseBannerText` (=) | none | 닫기 · 정리하기, 확인하기 or 마감하기 | 219 |
 | CHARGE_WAITING | 충전 비용 (ic_won) · 카드 승인 대기 | 카드 승인을 기다리고 있어요 / `chargeWaitingShort` | while autopilot is on: 이달 완성 · 목적 자동 분류 · 카드 자동 반영 (`CarMiniStat`) | 지금 입력 | 304 |
 
 Maxima include the pager; without it each is 24 less. Sums: card padding 48, title 56, 12, headline 31 or 53, 23 per line, 16 + body, 16 + 56.
@@ -181,7 +181,7 @@ Maxima include the pager; without it each is 24 less. Sums: card padding 48, tit
 - **SETUP.** Each button opens its own place: 설정 › 법인·차량, 설정 › 직원, the picker (`goSettings` becomes `(Int) -> Unit`).
 - **MONTH_CLOSE.** 정리하기 opens 점검 필요 of that month; 확인하기 pins 카드 확인; {10월} 마감 is the `LoadingAction` with today's answer (MC:294). The full stepper is one tap away (월간에서 보기).
 - **CARE.** 7일 뒤 다시 answers "7일 뒤 다시 알려요 · 실행 취소" (`withoutCareSnooze`). 완료 answers 검사 완료로 기록했어요 / 보험 만기일을 지웠어요 / 리스·렌트 만기일을 지웠어요 with two actions, 새 기한 입력 (설정 › 법인·차량) · 실행 취소; 정비 = (FU:498).
-- **CLOSE_REMINDER.** 정리하기 opens 점검 필요 of that month; 마감하기 opens 월간·Excel. 닫기 hides it for this month, as × does today.
+- **CLOSE_REMINDER.** The same way on as MONTH_CLOSE (`monthCloseNext`): 정리하기 opens 점검 필요 of that month while trips are open; 확인하기 pins 카드 확인 when only card questions are left (점검 필요 lists trips alone, so it would be empty); 마감하기 opens 월간·Excel. 닫기 hides it for this month, as × does today.
 - **Follow-up words.** An incident answers "{종류} 기록됨 · 실행 취소" (was 실수예요). 처리 완료 answers 실행 취소 (was 되돌리기); a 고장·경고 offers 남기기 · 실행 취소.
 
 ### 3.3 What each state shows
@@ -327,7 +327,7 @@ object WonTransformation : VisualTransformation                  // groupDigits 
 | 운행 상세 (LU:1520, 1533-1535) | inline text; raw field | `CarMoneyRow` + 삭제 pill; `CarMoneyField`; the sum trails the 운행 비용 title | L |
 | 자동 반영 list (HC:379-381) | tertiaryContainer chip | `CarMoneyRow(lead = ic_receipt)` + 회사 비용 아님 | L |
 | 충전 비용 (FC:335-403), 카드 확인 (FC:604), 카드 반영 | chips, raw field, 44-sp text | §3.2 | H |
-| 시연 체험 (DT:98, 103) | literal 55,000원; 200원/km | `CarAmount(TOTAL)`; km당 200원 · 정산 참고 2,480원 | D |
+| 시연 체험 (DT:98, 102, 103) | literal 55,000원; `Stat` 업무 거리 · 등록 경비 (formatWon); 200원/km | `CarAmount(TOTAL)`; `CarMiniStat` 업무 거리 (ic_gauge) · `CarMiniStat(won =)` 등록 경비 (ic_won); km당 200원 · 정산 참고 2,480원 | D (DT:102 in the fix pass) |
 | Trip row, follow-ups, chips, TalkBack | `formatWon` inline | = | — |
 
 ## 6. Polish (after the money work)
@@ -341,7 +341,7 @@ object WonTransformation : VisualTransformation                  // groupDigits 
 | 5 | Three tag shapes in one trip row; counts in titles | `PurposeChip` → `CarTag` with a dot (F2). 월 마감 + `CarTag("9건")`. `CarTag` for 최대 50명 and the 화면 밝기 state | MC:355, DU:487, Scene.kt:413 (P) |
 | 6 | Orphan buttons | 추가 pill in the 직원 title row (as 정비 기록, FU:345). The 번호 pill ends the 연결 번호 row. 운행 상세's 변경 → 바꾸기 pill (§7) | DU:500, FC:528-546 (P) · LU:1515 (L) |
 | 7 | Two card rhythms (24 and 16) | `cardGap` 16 (F2); 설정's one-up gap 20 → 16 | LY:74-75 (F2) · LU:2105 (P) |
-| 8 | Material's solid warning triangle; ic_search stroke 1.8 | ic_warning; ic_search 1.6 (F2) | FC:297 (P), the dock and incident card (H) |
+| 8 | Material's solid warning triangle; ic_search stroke 1.8 | ic_warning; the bar's ic_search_bar at 1.6 (F2; the shared ic_search stays 1.8 for the phone) | FC:297 (P), the dock and incident card (H) |
 | 9 | The range line is raw ISO on the bare page | `CarTag(reportRangeLabel(…))`: 10월 1일 ~ 31일 · 9건, plus `CarTag("시연 데이터", DEMO)`. `excelPreviewHeight` counts the tag: `max(32, 10 + 19·scale)` for the line | LU:1606, 1879 (P) |
 | 10 | In-card gaps off the 8-12-16-24 scale | 14 → 16; 10 → 12; 28 / 20 → 24 / 16; 6 → 8 | FU:413 · VP:218-219, 230 (P) |
 | 11 | Card pairs end ragged (v13: 284 and 213 dp) | `SideBySide(equalHeight = true)` = `Row(Modifier.height(IntrinsicSize.Min))` for the six card pairs (LU:1891, 1892, 1896, 2107, 2113, 2118); check on the emulator that they compose | LU:1586 (P) |
@@ -496,6 +496,7 @@ The window fades (`CarDialogFade`); the backdrop stays `Scene.bg` with a cardBor
 | DT:96 | eyebrow 기록 중 · 출발·주차 신호와 … | `CarTag("기록 중", POSITIVE)` · Stat = · 출발·주차 신호와 누적거리로 기록해요 |
 | DT:97 | 다음 버튼으로 … | 목적을 고른 뒤 ‘목적 확인’을 눌러요 |
 | DT:98 | eyebrow · Stat 55,000원 · 시연은 금액을 … | 주유·충전 over `CarAmount(55_000, TOTAL)` · ⓘ 시연은 금액을 미리 채워요; more: 실제 경비는 운행 상세에서 종류와 금액만 입력해요 |
+| DT:102 | `Stat` 업무 거리 · `Stat` 등록 경비 | `CarMiniStat(ic_gauge, "업무 거리")` · `CarMiniStat(ic_won, "등록 경비", won =)`, the money style of step 4 |
 | DT:103 | 회사 단가 200원/km · 정산 참고 … | km당 200원 · 정산 참고 2,480원 |
 | DT:105-114 | GLEO / 음성 액션 로직 체험 · OutlinedButton · note | 음성 요약 체험 · `CarExampleChip("“오늘 운행 요약해 줘”", actionLabel = "요약 실행")` · ⓘ 앱 안의 요약 처리만 체험해요; more: 실제 마이크·Gleo 연결은 스키마 등록과 승인 후 쓸 수 있어요 |
 | DT:128-137 | OutlinedButton 이전 · Button | `QuietAction` · `PrimaryAction`; step 6 is `LoadingAction("시연 Excel 저장", loadingLabel = "만드는 중…")` and closes after the save, so its answer is seen |
@@ -545,7 +546,7 @@ internal fun homeFrame(kind: AttentionKind?, pager: Boolean, demo: Boolean): Hom
 internal fun homeStatusLine(signal: SignalStatus, demo: Boolean, open: Trip?, queue: List<AttentionItem>, tidy: Boolean): HomeLine
 internal fun incidentCaptionBeside(button: Dp, fontScale: Float): Boolean                  // ≥ 196·s
 ```
-Also `chargeReviewHeadline`, `incidentHint`, `incidentFacts`, `monthCloseTaskLine`, `chargeWaitingShort`, `careTaskNote(kind): Pair<String, String>`, `withoutCareSnooze`, `tripWhenLine`, `purposeCardTag`, `setupSteps`, `matchedBatchMonth`, `reservationDueWithinDay`.
+Also `chargeReviewHeadline`, `incidentHint`, `incidentFacts`, `monthCloseTaskLine`, `monthCloseNext` (the fix pass: both month-close cards' button), `chargeWaitingShort`, `careTaskNote(kind): Pair<String, String>`, `withoutCareSnooze`, `tripWhenLine`, `purposeCardTag`, `setupSteps`, `matchedBatchMonth`, `reservationDueWithinDay`.
 - **HeaderTest.** `headerPlan` without `clockInline` (the five cases of :19-39). `searchBarMode`: 824 and 496 → EXAMPLE; 495 and 280 → PHRASE; 279 and 160 → LABEL; 159 → ICON; 364 at 1.3x → PHRASE, 363 → LABEL; .85x counts as 1. `headerChipMax`: (1024, 176) → 552; (560, 176) → 88; (560, 295) → 56. Delete :41-47.
 - **HomeFrameTest** (new). For every kind x pager x demo: `total + 84 + 28 ≤ 1209` and `attentionCardMax ≤ 480`. Idle total 384; INCIDENT with pager and demo 981. The column: 323 + 84 + 199 + 172 + 56 = 834 ≤ 1097. Queue order; FINISHED behind CARD_REVIEW; no CLOSE_REMINDER beside MONTH_CLOSE; the shared labels equal `TaskKind.label`. `attentionIndex`: 0 without a pin, when the pinned item has gone, and when the head changed; a FINISHED pin follows its RECLASSIFY.
 - **HomeDashboardTest.** :34-41 become the `homeStatusLine` cases (each state of §3.3, the precedence, spoken forms). :154-174 drop `heroMin`, `showEyebrow` and `compactWidgets` and expect 3 columns at 1.3x. :176-183 become `heroBand(1112f, 184f, 720f, 0f, 0f, 0f, 24f) == Rect(744f, 0f, 1088f, 160f)`, and 897f → bottom 873f. Delete :185-191 and :193-204.

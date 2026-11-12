@@ -120,4 +120,35 @@ class HomeCopyTest {
         assertEquals("계기판 51,300.0 km · 운전자 권 · 성남시 분당구", incidentFacts(incident, driver))
         assertEquals("계기판 미수신 · 운전자 미지정 · 내비 주소 미수신", incidentFacts(incident.copy(odometerKm = null, address = null), null))
     }
+
+    @Test fun theMonthCloseLineNamesTheFirstOpenStep() {
+        val oct = YearMonth.of(2026, 10)
+        assertEquals(HomeLine("목적·사용자 확인 3건 남음", "1단계 목적·사용자 확인, 3건 남음"), monthCloseTaskLine(MonthStatus(oct, 10, 3, 2, null)))
+        assertEquals(HomeLine("카드 확인 2건 남음", "2단계 카드 확인, 2건 남음"), monthCloseTaskLine(MonthStatus(oct, 10, 0, 2, null)))
+        assertEquals("모두 확인했어요 · 지금 마감할 수 있어요", monthCloseTaskLine(MonthStatus(oct, 10, 0, 0, null)).text)
+        listOf(MonthStatus(oct, 999, 999, 0, null), MonthStatus(oct, 999, 0, 999, null), MonthStatus(oct, 10, 0, 0, null)).map(::monthCloseTaskLine).forEach {
+            assertOneLine(it.text, HOME_CARD_LINE_UNITS)
+            assertTrue("${it.spoken} ⊄ ${it.text}", it.spoken.length >= it.text.length)
+        }
+    }
+
+    /**
+     * Both month-close cards (the card and the 25th's reminder) offer the step the line names: trips first, then card questions,
+     * which 점검 필요 never lists, so a month left with only card payments is sent to 카드 확인, not to an empty list.
+     */
+    @Test fun theMonthCloseCardsOfferTheStepTheirLineNames() {
+        val oct = YearMonth.of(2026, 10)
+        assertEquals(MonthCloseNext.TIDY, monthCloseNext(MonthStatus(oct, 10, 3, 2, null)))
+        assertEquals("카드 질문만 남으면 카드 확인으로", MonthCloseNext.REVIEW, monthCloseNext(MonthStatus(oct, 10, 0, 1, null)))
+        assertEquals(MonthCloseNext.CLOSE, monthCloseNext(MonthStatus(oct, 10, 0, 0, null)))
+        // The button and the line never disagree on which step is open.
+        (0..2).flatMap { unfinished -> (0..2).map { reviews -> MonthStatus(oct, 10, unfinished, reviews, null) } }.forEach { status ->
+            val step = when (monthCloseNext(status)) {
+                MonthCloseNext.TIDY -> "목적·사용자 확인"
+                MonthCloseNext.REVIEW -> "카드 확인"
+                MonthCloseNext.CLOSE -> "지금 마감할 수 있어요"
+            }
+            assertTrue("$status: ${monthCloseTaskLine(status).text}", monthCloseTaskLine(status).text.contains(step))
+        }
+    }
 }

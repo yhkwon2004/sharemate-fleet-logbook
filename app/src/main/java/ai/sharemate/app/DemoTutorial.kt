@@ -138,7 +138,11 @@ internal fun DemoTutorial(exporting: Boolean, saveFile: (String, String, ByteArr
                                     else -> {
                                         val totals = logbookTotals(shownData.trips)
                                         Stat("${shownData.drivers[employee].label} · 이번 운행", "12.4 km", large = true)
-                                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) { Stat("업무 거리", "${totals.businessKm} km", Modifier.weight(1f)); Stat("등록 경비", formatWon(totals.expenseWon), Modifier.weight(1f)) }
+                                        // Car mini stats, so step 4's 55,000원 reads here in the same money style (원 muted, tabular digits).
+                                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                            CarMiniStat(painterResource(R.drawable.ic_gauge), "업무 거리", kmText(totals.businessKm), Modifier.weight(1f))
+                                            CarMiniStat(painterResource(R.drawable.ic_won), "등록 경비", won = totals.expenseWon, modifier = Modifier.weight(1f))
+                                        }
                                         CarLine(OverlayCopy.tutorialRate(TUTORIAL_PER_KM_WON, reimbursements(shownData.trips, TUTORIAL_PER_KM_WON).sumOf { it.amountWon }))
                                         if (shown == 5) {
                                             CarDivider()
