@@ -1633,9 +1633,19 @@ private class LastShown<T> { var value: T? = null }
 
 // ───────────────────────── 리포트 ─────────────────────────
 
-/** Two blocks of a page: side by side with [gap] between them when [sideBySide], one under the other otherwise. */
-@Composable private fun SideBySide(sideBySide: Boolean, gap: Dp, first: @Composable (Modifier) -> Unit, second: @Composable (Modifier) -> Unit) {
-    if (sideBySide) Row(horizontalArrangement = Arrangement.spacedBy(gap)) { first(Modifier.weight(1f)); second(Modifier.weight(1f)) }
+/**
+ * Two blocks of a page: side by side with [gap] between them when [sideBySide], one under the other otherwise. With
+ * [equalHeight] (2.13, two cards side by side) the row is as tall as the taller block (`IntrinsicSize.Min`) and both blocks
+ * are handed `fillMaxHeight`, so a pair of cards ends on one line where 2.12's ended ragged (v13: 284 and 213 dp). A block
+ * stretched that way keeps its content at the top. Only for blocks that answer intrinsic measurements: nothing in them may be
+ * a SubcomposeLayout, a BoxWithConstraints or a lazy list, which throw when a Row asks them for their minimum height.
+ */
+@Composable private fun SideBySide(sideBySide: Boolean, gap: Dp, first: @Composable (Modifier) -> Unit, equalHeight: Boolean = false,
+    second: @Composable (Modifier) -> Unit) {
+    if (sideBySide && equalHeight) Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(gap)) {
+        first(Modifier.weight(1f).fillMaxHeight()); second(Modifier.weight(1f).fillMaxHeight())
+    }
+    else if (sideBySide) Row(horizontalArrangement = Arrangement.spacedBy(gap)) { first(Modifier.weight(1f)); second(Modifier.weight(1f)) }
     else Column(verticalArrangement = Arrangement.spacedBy(gap)) { first(Modifier); second(Modifier) }
 }
 
@@ -1643,19 +1653,26 @@ private class LastShown<T> { var value: T? = null }
 internal val SAVE_BAR_RESERVE = 72.dp + 16.dp
 
 /**
+ * The height of the range tags' row over a view (2.13): a [CarTag] is at least 32 dp, its labelMedium line (19 dp at 1×)
+ * inside 5 dp of padding above and below, so a font past about 1.16× makes it taller.
+ */
+internal fun reportRangeRowHeight(fontScale: Float = 1f): Dp = maxOf(32.dp, 10.dp + 19.dp * fontScale.coerceAtLeast(1f))
+
+/**
  * The height of the car's Excel preview card, folded (spec B; the preview sits in a card since 2.12): the pane's height less
- * the sticky save bar's room and the view tabs and range line above the card, so a scroll to the end shows the tabs, the whole
+ * the sticky save bar's room and the view tabs and range tags above the card, so a scroll to the end shows the tabs, the whole
  * card and the bar together. Never under [EXCEL_PREVIEW_MIN_HEIGHT] (scaled up with a large font, whose taller text the
  * preview's chrome needs) plus 80 dp for the card: its padding (2 × 24 dp from EXPANDED) and the 32 dp more that the ⓘ row's
  * 56-dp toggle takes than 2.11's one-line note. So a short pane still leaves the table about 2.11's room, a row with the pager
- * and the hint under it, and scrolls further instead of squeezing them. An unbounded pane gets the minimum.
+ * and the hint under it, and scrolls further instead of squeezing them. An unbounded pane gets the minimum. 2.13: the range
+ * is a row of tags ([reportRangeRowHeight]) where 2.12 had a 16-dp text line, so the card is 16 dp shorter at 1×.
  */
 internal fun excelPreviewHeight(pane: Dp, fontScale: Float = 1f): Dp {
     val scale = fontScale.coerceAtLeast(1f)
     val floor = EXCEL_PREVIEW_MIN_HEIGHT * scale + 80.dp
     if (!pane.value.isFinite()) return floor
-    // The view tabs (56-dp segments in 5 dp of padding), a 16-dp gap, the range line (one labelMedium line) and the gap under it.
-    val viewHeader = 66.dp + 16.dp + 16.dp * scale + 16.dp
+    // The view tabs (56-dp segments in 5 dp of padding), a 16-dp gap, the range tags' row and the gap under it.
+    val viewHeader = 66.dp + 16.dp + reportRangeRowHeight(scale) + 16.dp
     return (pane - SAVE_BAR_RESERVE - viewHeader).coerceAtLeast(floor)
 }
 
@@ -1699,6 +1716,22 @@ internal fun reportRange(period: ReportPeriod, today: LocalDate): Pair<LocalDate
     val start = if (period.yearly) LocalDate.of(month.year, 1, 1) else month.atDay(1)
     val end = if (period.yearly) LocalDate.of(month.year, 12, 31) else month.atEndOfMonth()
     return start to if (end.isAfter(today)) today else end
+}
+
+/**
+ * The range tag over 월간·Excel's views (2.13, pure, unit-tested): the dates [reportRange] gives and the [trips] in them, in
+ * the words the stepper uses, "10월 1일 ~ 31일 · 9건" or "1월 1일 ~ 11월 12일 · 54건"; a range in another year than [today]'s
+ * leads with its year (2025년 10월 1일 ~ 31일), a range of one day names it once. 2.12 printed the raw ISO dates on the page.
+ */
+internal fun reportRangeLabel(from: LocalDate, to: LocalDate, trips: Int, today: LocalDate): String {
+    val start = (if (from.year != today.year) "${from.year}년 " else "") + "${from.monthValue}월 ${from.dayOfMonth}일"
+    val end = when {
+        to == from -> null
+        to.year != from.year -> "${to.year}년 ${to.monthValue}월 ${to.dayOfMonth}일"
+        to.monthValue != from.monthValue -> "${to.monthValue}월 ${to.dayOfMonth}일"
+        else -> "${to.dayOfMonth}일"
+    }
+    return listOfNotNull(start, end).joinToString(" ~ ") + " · ${trips}건"
 }
 
 /** Whether › is live: a month before this one ([canGoForward], the phone's rule) under 월간, a year before this one under 연간. */
@@ -1830,16 +1863,16 @@ internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = Se
  * like 운행기록 and never past this month. From EXPANDED up the stepper, 월간 · 연간 (320 wide) and Excel 저장 share one
  * row; below that the stepper has its own row over the other two (480 wide). Then the month-close card of the month on
  * screen ([reportCloseStatus], [ReportCloseCard]) across the page, the four views as 56-dp tabs across the page (2.12, as
- * the mock's sub-tabs), the range line and the view. The label, the card, the views, the preview, every Excel 저장 and its
+ * the mock's sub-tabs), the range as a tag ([reportRangeLabel]) and the view. The label, the card, the views, the preview, every Excel 저장 and its
  * file name, and 정리하러 가기 all read the one range [reportRange] gives. The pane opens on [initialMonth] when a button
  * hands it one, else where the home card, the banner and the tab badge point ([reportLandingMonth]); after that only the
  * driver moves it. The Excel view fills the page like the month-close card: the preview in a card of its own, folded at
  * [excelPreviewHeight] (560 at least), with its lighter sheet tabs, its table paging to the rows that fit and its caveat as an
  * ⓘ row under it, which lengthens the card when opened instead of squeezing the table; and the save bar (72 dp) pinned to
  * the bottom of the pane while the rest scrolls under it; [onSaveBar] tells the shell while the bar is pinned, so
- * its follow-up bar rides above it. The two cards of the other views (검토's too) sit side by side from EXPANDED up and stack
- * below it. Every Excel 저장 follows one rule ([excelSaveAvailable]); before one with untidy trips the dialog lists what the
- * file will miss ([exportConfirmLines]).
+ * its follow-up bar rides above it. The two cards of the other views (검토's too) sit side by side from EXPANDED up, ending on
+ * one line (2.13), and stack below it. Every Excel 저장 follows one rule ([excelSaveAvailable]); before one with untidy trips
+ * the car's dialog lists what the file will miss ([exportConfirmLines]).
  */
 @Composable private fun ReportPane(state: TripLogState, now: Long, exporting: Boolean, saveFile: (String, String, ByteArray) -> Unit,
     act: Act, repository: TripLogRepository, goSettings: () -> Unit, goHome: () -> Unit, initialMonth: String? = null, onSaveBar: (Boolean) -> Unit = {},
@@ -1928,7 +1961,13 @@ internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = Se
             }
             // The views fill the page, as the mock's sub-tabs do.
             Segmented(listOf("운행 현황", "경비·정산", "Excel", "검토"), view, Modifier.fillMaxWidth()) { view = it }
-            Text("${if (data.profile.demoMode) "시연 데이터 · " else ""}${from} ~ ${to} · ${totals.trips}건", style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary)
+            // The range on screen as a tag in the stepper's words (2.13; 2.12 printed the raw ISO dates on the bare page), and
+            // 시연 데이터 beside it in demo mode. One row, as tall as excelPreviewHeight counts it.
+            Row(Modifier.heightIn(min = reportRangeRowHeight(fontScale)), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CarTag(reportRangeLabel(from, to, totals.trips, today))
+                if (data.profile.demoMode) CarTag(ReportCopy.RANGE_DEMO, tone = PillTone.DEMO)
+            }
             Crossfade(view, Modifier.fillMaxWidth(), animationSpec = pageFade(), label = "report-section") { page ->
                 // The preview has a height of its own in the scroll: folded, its card is that tall, the preview takes what the
                 // card's padding and the ⓘ row leave, and its table pages to the rows that fit. Opened, the ⓘ lengthens the card
@@ -1939,13 +1978,17 @@ internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = Se
                     CarInfoRow(ReportCopy.PREVIEW_NOTE, more = ReportCopy.PREVIEW_NOTE_MORE)
                 }
                 else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(layout.cardGap)) {
+                    // Side by side, each pair ends on one line (2.13). None of these cards holds a BoxWithConstraints, a
+                    // SubcomposeLayout or a lazy list, so the row may ask them for their intrinsic height.
                     when (page) {
-                        0 -> SideBySide(wide, layout.cardGap, ratio) { modifier -> EmployeeUsageCard(trips, data, modifier) }
-                        1 -> SideBySide(wide, layout.cardGap, { modifier -> ExpenseOverview(trips, modifier) }, settle)
+                        0 -> SideBySide(wide, layout.cardGap, equalHeight = true, first = ratio) { modifier -> EmployeeUsageCard(trips, data, modifier) }
+                        1 -> SideBySide(wide, layout.cardGap, equalHeight = true, first = { modifier -> ExpenseOverview(trips, modifier) }, second = settle)
                         else -> {
                             // The two cards share the page from EXPANDED up; stacked, each keeps to a 760-dp measure.
                             val measure = if (wide) Modifier else Modifier.widthIn(max = 760.dp)
-                            SideBySide(wide, layout.cardGap, { modifier -> AuditCard(trips, modifier.then(measure)) }) { modifier -> tax(modifier.then(measure)) }
+                            SideBySide(wide, layout.cardGap, equalHeight = true, first = { modifier -> AuditCard(trips, modifier.then(measure)) }) { modifier ->
+                                tax(modifier.then(measure))
+                            }
                         }
                     }
                 }
@@ -1964,10 +2007,13 @@ internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = Se
             }
         }
     }
-    if (confirmExport) AlertDialog(onDismissRequest = { confirmExport = false }, title = { Text(ReportCopy.CONFIRM_TITLE) },
-        text = { Text(exportConfirmLines(totals.unclassifiedKm, trips.count { it.driverId == null }).joinToString("\n")) },
-        confirmButton = { DialogButton(ReportCopy.CONFIRM_SAVE) { confirmExport = false; export() } },
-        dismissButton = { DialogButton(ReportCopy.CONFIRM_TIDY) { confirmExport = false; goReview(tidyMonth(trips, shown.month, zone)) } })
+    // The car's own dialog (2.13): one line per thing the file will miss, then decide, the way to tidy first and the save
+    // last, at the right. Back and a tap beside the card leave without either.
+    if (confirmExport) CarDialog(ReportCopy.CONFIRM_TITLE, onDismiss = { confirmExport = false }, icon = painterResource(R.drawable.ic_export),
+        lines = exportConfirmLines(totals.unclassifiedKm, trips.count { it.driverId == null })) {
+        QuietAction(ReportCopy.CONFIRM_TIDY) { confirmExport = false; goReview(tidyMonth(trips, shown.month, zone)) }
+        PrimaryAction(ReportCopy.CONFIRM_SAVE) { confirmExport = false; export() }
+    }
 }
 
 /**
@@ -1985,7 +2031,8 @@ internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = Se
 
 /**
  * 운행 현황's second card (2.12): each employee's trips in the period as rows (the count and the business distance under the
- * name, the total at the end), unassigned trips as 직원 미지정; where a past trip's employee is fixed sits behind ⓘ.
+ * name, the total at the end), unassigned trips as 사용자 미지정 (2.13: the one word for a trip without its person, the issue's
+ * own label, where 2.12 said 직원 미지정 here); where a past trip's employee is fixed sits behind ⓘ.
  */
 @Composable private fun EmployeeUsageCard(trips: List<Trip>, data: TripLogData, modifier: Modifier) {
     CarCard(modifier, title = { CarSectionTitle(ReportCopy.USAGE_TITLE, icon = rememberVectorPainter(Icons.Outlined.Person)) }) {
@@ -1994,7 +2041,7 @@ internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = Se
         else Column {
             rows.forEachIndexed { index, row ->
                 if (index > 0) CarDivider()
-                CarRow(row.driver?.label ?: "직원 미지정", line = "${row.totals.trips}건 · 업무 ${kmText(row.totals.businessKm)}", trailing = {
+                CarRow(row.driver?.label ?: IssueType.NO_DRIVER.label, line = "${row.totals.trips}건 · 업무 ${kmText(row.totals.businessKm)}", trailing = {
                     Text(kmText(row.totals.totalKm), style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"), color = Scene.text, maxLines = 1)
                 })
             }
@@ -2003,15 +2050,29 @@ internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = Se
     }
 }
 
-/** 경비·정산's first card (2.12): the registered expenses of the period, the total and one row per type; what they are not sits behind ⓘ. */
+/**
+ * The registered expenses of [trips] by type, in [ExpenseType]'s order, without the types that have none (pure, unit-tested):
+ * a list of money leaves its zero rows out (DESIGN_2_13_SPEC §5).
+ */
+internal fun expenseTypeSums(trips: List<Trip>): List<Pair<ExpenseType, Long>> {
+    val expenses = trips.flatMap { it.expenses }
+    return ExpenseType.entries.map { type -> type to expenses.filter { it.type == type }.sumOf { it.amountWon } }.filter { it.second > 0 }
+}
+
+/**
+ * 경비·정산's first card (2.12): the registered expenses of the period; what they are not sits behind ⓘ. 2.13 sets it as a
+ * list of money in the one style: a row per type that has any ([expenseTypeSums]), a hairline, then the total row (경비 합계,
+ * TOTAL size on the same right edge). 2.12 led with the total and listed all five types, zeros in full ink and digits
+ * proportional; a period without expenses now says so in one line and draws no 0원 total.
+ */
 @Composable private fun ExpenseOverview(trips: List<Trip>, modifier: Modifier) {
     CarCard(modifier, title = { CarSectionTitle(ReportCopy.EXPENSE_TITLE, icon = painterResource(R.drawable.ic_receipt)) }) {
-        Stat("경비 합계", formatWon(trips.sumOf { it.expenseWon }), large = true)
-        ExpenseType.entries.forEach { type ->
-            Row {
-                Text(type.label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                Text(formatWon(trips.flatMap { it.expenses }.filter { it.type == type }.sumOf { it.amountWon }), style = MaterialTheme.typography.titleSmall)
-            }
+        val sums = remember(trips) { expenseTypeSums(trips) }
+        if (sums.isEmpty()) CarLine(ReportCopy.EXPENSE_EMPTY)
+        else Column {
+            sums.forEach { (type, won) -> CarMoneyRow(type.label, won) }
+            CarDivider()
+            CarMoneyRow(ReportCopy.EXPENSE_TOTAL, sums.sumOf { it.second }, total = true)
         }
         CarInfoRow(ReportCopy.EXPENSE_NOTE, more = ReportCopy.EXPENSE_NOTE_MORE)
     }
@@ -2053,13 +2114,14 @@ internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = Se
 /**
  * The annual cost reference at the business ratio of [year], the totals of the year on screen, whose year the [basis] tag
  * names ([taxBasis]). While it cannot compute, [blocker] ([taxCardBlocker]) says why in one line: a missing cost comes with
- * why it matters (behind ⓘ) and the way to enter it; a year without trips sits above the cost already entered, with no 설정
- * action, since the form already holds the value. Computed, the ratio-applied amount leads, the cost and the no-logbook
- * comparison sit under it as two small figures, and [taxDifferenceLine] says how the two compare.
+ * why it matters (behind ⓘ) and the way to enter it; a year without trips sits above the cost already entered (a money row),
+ * with no 설정 action, since the form already holds the value. Computed (2.13, a list of money in the one style): the cost and
+ * the no-logbook comparison as rows, a hairline, then the ratio-applied amount as the total row with [taxDifferenceLine]
+ * under its label. That amount is the card's one tone: positive while it exceeds the no-logbook figure, the case the logbook
+ * pays for. The card's ₩ mark is its title's alone (2.12 drew three, and the result in Material's onTertiaryContainer).
  */
 @Composable private fun TaxCard(profile: FleetProfile, year: LogbookTotals, basis: String, blocker: String?, modifier: Modifier, goSettings: () -> Unit) {
-    val won = painterResource(R.drawable.ic_won)
-    CarCard(modifier.fillMaxHeight(), title = { CarSectionTitle(ReportCopy.TAX_TITLE, icon = won, trailing = { CarTag(basis) }) }) {
+    CarCard(modifier.fillMaxHeight(), title = { CarSectionTitle(ReportCopy.TAX_TITLE, icon = painterResource(R.drawable.ic_won), trailing = { CarTag(basis) }) }) {
         val cost = profile.annualCostWon
         val ratio = year.ratio
         if (blocker != null) {
@@ -2067,16 +2129,16 @@ internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = Se
             if (cost == null) {
                 CarInfoRow(ReportCopy.TAX_CAP_NOTE, more = ReportCopy.TAX_CAP_MORE)
                 QuietAction("설정에서 입력", onClick = goSettings)
-            } else CarMiniStat(won, ReportCopy.TAX_COST, formatWon(cost))
+            } else CarMoneyRow(ReportCopy.TAX_COST, cost)
         } else if (cost != null && ratio != null) {
             val effect = taxEffect(cost, ratio)
-            Stat(ReportCopy.TAX_WITH_LOG, formatWon(effect.withLogWon), valueColor = MaterialTheme.colorScheme.onTertiaryContainer, large = true)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                CarMiniStat(won, ReportCopy.TAX_COST, formatWon(cost), Modifier.weight(1f))
-                CarMiniStat(won, ReportCopy.TAX_WITHOUT_LOG, formatWon(effect.withoutLogWon), Modifier.weight(1f))
+            Column {
+                CarMoneyRow(ReportCopy.TAX_COST, cost)
+                CarMoneyRow(ReportCopy.TAX_WITHOUT_LOG, effect.withoutLogWon)
+                CarDivider()
+                CarMoneyRow(ReportCopy.TAX_WITH_LOG, effect.withLogWon, line = taxDifferenceLine(effect.differenceWon, ratio), total = true,
+                    tone = if (effect.differenceWon > 0) MoneyTone.POSITIVE else MoneyTone.NEUTRAL)
             }
-            CarDivider()
-            Text(taxDifferenceLine(effect.differenceWon, ratio), style = MaterialTheme.typography.titleSmall, color = Scene.text)
         }
         CarInfoRow(ReportCopy.TAX_NOTE, more = ReportCopy.TAX_NOTE_MORE)
     }
@@ -2087,7 +2149,9 @@ internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = Se
  * employee with business trips (the business distance under the name, the amount at the end), then the total. Without a rate
  * it asks for one, with 설정에서 입력 where [goSettings] is given; 설정 › 정산·세무 shows it beside the form that sets the
  * rate and passes none. [period] names the span the totals cover where the page around the card does not (설정 passes
- * "이번 달"); the words come from [settlementCopy].
+ * "이번 달"); the words come from [settlementCopy]. 2.13 sets it as a list of money in the one style: the rows, then a
+ * hairline and the total row only while there are rows, so a period without business trips says so in one line where 2.12
+ * drew a 30-sp 0원 under it (v13).
  */
 @Composable private fun SettlementCard(trips: List<Trip>, data: TripLogData, modifier: Modifier, goSettings: (() -> Unit)? = null, period: String? = null) {
     val rate = data.profile.reimbursePerKmWon
@@ -2103,15 +2167,10 @@ internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = Se
             val list = employeeUsage(trips, data.drivers, rate).filter { it.driver != null && it.totals.businessKm > 0 }
             if (list.isEmpty()) CarLine(copy.empty)
             else Column {
-                list.take(6).forEachIndexed { index, item ->
-                    if (index > 0) CarDivider()
-                    CarRow(item.driver!!.label, line = kmText(item.totals.businessKm), trailing = {
-                        Text(formatWon(item.reimbursementWon), style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"), color = Scene.text, maxLines = 1)
-                    })
-                }
+                list.take(6).forEach { item -> CarMoneyRow(item.driver!!.label, item.reimbursementWon, line = kmText(item.totals.businessKm)) }
+                CarDivider()
+                CarMoneyRow(copy.total, list.sumOf { it.reimbursementWon }, total = true)
             }
-            CarDivider()
-            Stat(copy.total, formatWon(list.sumOf { it.reimbursementWon }), large = true)
             CarInfoRow(ReportCopy.SETTLEMENT_NOTE, more = ReportCopy.SETTLEMENT_NOTE_MORE)
         }
     }
@@ -2135,8 +2194,9 @@ internal fun settingsCardColumns(layout: LayoutTokens, page: Dp, fontScale: Floa
 /**
  * 설정 (2.12): the four sub-tabs as the car's segmented bar across the whole page, as in the mock, over the section, which
  * scrolls under them. Every card is a [CarCard]. Where the page has room ([settingsCardColumns]) a section's cards sit two
- * up, each with its fields in one column: the profile beside 차량 관리 기한, 정산·세무 beside this month's settlement at the
- * saved rate, 화면 밝기 above 기록 및 개인정보 beside 자동 완성 above 운행 비서; 직원 takes the whole page. Otherwise one form
+ * up, each with its fields in one column and each pair ending on one line (2.13): the profile beside 차량 관리 기한, 정산·세무
+ * beside this month's settlement at the saved rate, 화면 밝기 above 기록 및 개인정보 beside 자동 완성 above 운행 비서; 직원
+ * takes the whole page. Cards stand 16 dp apart in either arrangement (2.13). Otherwise one form
  * column at the start of the page (max 720), in the same order, with fields paired from EXPANDED at the normal font
  * ([settingsFieldColumns]). The PLEOS SDK card of 2.11 is gone: its facts are an ⓘ row of 기록 및 개인정보. The shell holds the
  * [section], so a button that opens 설정 on one lands there and the header's tab returns to the last one.
@@ -2154,29 +2214,35 @@ internal fun settingsCardColumns(layout: LayoutTokens, page: Dp, fontScale: Floa
         // Beside another card a form keeps one field column; alone in the form column it pairs its fields where it can.
         val pairFields = settingsFieldColumns(layout, fontScale) == 2
         val twoColumns = !twoUp && pairFields
-        val gap = if (twoUp) layout.cardGap else 20.dp
+        // One card rhythm (2.13): 16 between cards, two up or one up (2.12 set 20 in the form column).
+        val gap = if (twoUp) layout.cardGap else 16.dp
+        // Two up, every pair ends on one line (2.13, [SideBySide]'s equalHeight). The cards hold text fields, switches, flow rows
+        // and ⓘ rows, none of them a BoxWithConstraints, a SubcomposeLayout or a lazy list, so the row may ask their intrinsic
+        // height. Where a side is two cards, the lower one takes what the row leaves, so both sides end together.
         val profile: @Composable () -> Unit = {
-            SideBySide(twoUp, gap, { modifier -> ProfileCard(state, act, repository, showInfo, modifier, twoColumns) }) { modifier ->
+            SideBySide(twoUp, gap, equalHeight = true, first = { modifier -> ProfileCard(state, act, repository, showInfo, modifier, twoColumns) }) { modifier ->
                 CareSettingsCard(state, act, repository, modifier = modifier, columns = if (twoColumns) 2 else 1)
             }
         }
         val drivers: @Composable () -> Unit = { DriversCard(state.data, act, repository, pairFields) }
         val costs: @Composable () -> Unit = {
-            SideBySide(twoUp, gap, { modifier -> CostCard(state.data.profile, act, repository, showInfo, modifier, twoColumns) }) { modifier ->
+            SideBySide(twoUp, gap, equalHeight = true, first = { modifier -> CostCard(state.data.profile, act, repository, showInfo, modifier, twoColumns) }) { modifier ->
                 SettlementCard(monthTrips, state.data, modifier, period = SettingsCopy.SETTLEMENT_PERIOD)
             }
         }
+        // Stacked (one up), a Column gives no height to share, so the lower card simply wraps its content.
+        val fill: ColumnScope.() -> Modifier = { if (twoUp) Modifier.weight(1f) else Modifier }
         val privacy: @Composable () -> Unit = {
-            SideBySide(twoUp, gap, { modifier ->
+            SideBySide(twoUp, gap, equalHeight = true, first = { modifier ->
                 Column(modifier, verticalArrangement = Arrangement.spacedBy(gap)) {
                     // The scene choice leads the section: it is the one setting a driver changes on the spot.
                     CarSceneCard()
-                    PrivacyCard(state.data.profile, act, repository, onTutorial)
+                    PrivacyCard(state.data.profile, act, repository, fill(), onTutorial)
                 }
             }) { modifier ->
                 Column(modifier, verticalArrangement = Arrangement.spacedBy(gap)) {
                     AutopilotSettings(state.data.profile, act, repository) { value, change -> Field("법인카드 끝 4자리 (쉼표로 구분)", value, change, number = true, done = true, hint = "예: 1234, 5678") }
-                    AssistantPreviewCard(compact = !layout.expanded, onOpen = { onAssistant(null) }, onOpenWith = { phrase -> onAssistant(phrase) })
+                    AssistantPreviewCard(compact = !layout.expanded, onOpen = { onAssistant(null) }, modifier = fill(), onOpenWith = { phrase -> onAssistant(phrase) })
                 }
             }
         }
@@ -2240,23 +2306,25 @@ internal fun settingsCardColumns(layout: LayoutTokens, page: Dp, fontScale: Floa
 
 /**
  * 정산·세무 기준 (2.12): the km rate the settlement applies and the car's yearly cost the tax note compares. The yearly cost's
- * hint says what the sum covers while the field is empty, where 2.11 had a paragraph under the form.
+ * hint says what the sum covers while the field is empty, where 2.11 had a paragraph under the form. 2.13: both are money
+ * fields ([CarMoneyField]): the digits grouped as typed with 원 straight after them, the range said in the field's own
+ * error ([moneyInput]: 10만 원 and 100억 원 at most) and the yearly cost read back from 1만 up ("3,200만 원"), where 2.12
+ * echoed "32,000,000원" under "32000000" and put a loose red sentence under the form. 기준 저장 needs both fields in range;
+ * the repository's own check stays as the backstop.
  */
 @Composable private fun CostCard(saved: FleetProfile, act: Act, repository: TripLogRepository, showInfo: (String) -> Unit, modifier: Modifier = Modifier,
     twoColumns: Boolean = false) {
     var rate by rememberSaveable(saved.reimbursePerKmWon) { mutableStateOf(saved.reimbursePerKmWon.takeIf { it > 0 }?.toString().orEmpty()) }
     var cost by rememberSaveable(saved.annualCostWon) { mutableStateOf(saved.annualCostWon?.toString().orEmpty()) }
-    val updated = saved.copy(reimbursePerKmWon = rate.toLongOrNull() ?: 0, annualCostWon = cost.toLongOrNull())
-    val validation = runCatching { validateProfile(updated) }.exceptionOrNull()?.message
+    val rateInput = moneyInput(rate, min = 0, max = 100_000, hint = "회사에서 정한 km당 단가")
+    val costInput = moneyInput(cost, min = 0, max = 10_000_000_000, hint = SettingsCopy.COST_HINT, reading = true)
+    val updated = saved.copy(reimbursePerKmWon = rateInput.won ?: 0, annualCostWon = costInput.won)
     CarCard(modifier, title = { CarSectionTitle(SettingsCopy.COST_TITLE, icon = painterResource(R.drawable.ic_tune)) }) {
-        SideBySide(twoColumns, 16.dp, { field -> Field("유류비 정산 단가 (km당)", rate, { if (it.length <= 6 && it.all(Char::isDigit)) rate = it }, field, number = true, suffix = "원",
-            hint = rate.toLongOrNull()?.let(::formatWon) ?: "회사에서 정한 km당 단가") }) { field ->
-            Field("연간 차량 관련 비용", cost, { if (it.length <= 11 && it.all(Char::isDigit)) cost = it }, field, number = true, suffix = "원", done = true,
-                hint = cost.toLongOrNull()?.let(::formatWon) ?: SettingsCopy.COST_HINT)
+        SideBySide(twoColumns, 16.dp, first = { field -> CarMoneyField("유류비 정산 단가 (km당)", rate, { rate = it }, rateInput, field, maxDigits = 6) }) { field ->
+            CarMoneyField("연간 차량 관련 비용", cost, { cost = it }, costInput, field, maxDigits = 11, done = true)
         }
-        validation?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
-        val changed = (rate.toLongOrNull() ?: 0) != saved.reimbursePerKmWon || cost.toLongOrNull() != saved.annualCostWon
-        PrimaryAction(if (changed) SettingsCopy.COST_SAVE else SettingsCopy.COST_SAVED, Modifier.fillMaxWidth(), enabled = changed && validation == null) {
+        val changed = updated.reimbursePerKmWon != saved.reimbursePerKmWon || updated.annualCostWon != saved.annualCostWon
+        PrimaryAction(if (changed) SettingsCopy.COST_SAVE else SettingsCopy.COST_SAVED, Modifier.fillMaxWidth(), enabled = changed && rateInput.ok && costInput.ok) {
             act {
                 repository.updateProfile(updated)
                 showInfo(SettingsCopy.COST_DONE)
@@ -2268,11 +2336,12 @@ internal fun settingsCardColumns(layout: LayoutTokens, page: Dp, fontScale: Floa
 /**
  * 기록 및 개인정보 (2.12, as in the mock): 시연 체험 다시보기 as a link in the title row, then the four switches, each on its icon
  * disc with one line (TalkBack hears the long form) and a hairline above it, and two ⓘ rows: where the records live, and which
- * car signals are read (the facts of 2.11's PLEOS SDK card). Turning 시연 모드 off also stops the demo drive.
+ * car signals are read (the facts of 2.11's PLEOS SDK card). Turning 시연 모드 off also stops the demo drive. [modifier]
+ * (2.13) lets 설정 stretch the card to end on one line with the cards beside it.
  */
-@Composable private fun PrivacyCard(saved: FleetProfile, act: Act, repository: TripLogRepository, onTutorial: () -> Unit = {}) {
+@Composable private fun PrivacyCard(saved: FleetProfile, act: Act, repository: TripLogRepository, modifier: Modifier = Modifier, onTutorial: () -> Unit = {}) {
     // The rows carry their own 8-dp padding and a hairline between them, so the card's blocks sit closer than its default 16.
-    CarCard(gap = 4.dp, title = {
+    CarCard(modifier, gap = 4.dp, title = {
         CarSectionTitle(SettingsCopy.PRIVACY_TITLE, icon = painterResource(R.drawable.ic_journal)) { CarLink(SettingsCopy.TUTORIAL_LINK, onClick = onTutorial) }
     }) {
         CarDivider()

@@ -434,9 +434,13 @@ internal fun monthWidgetInfo(data: TripLogData, today: LocalDate, zone: ZoneId):
     }
 }
 
-/** What the 지금 column's 오늘 운행 tile shows and what TalkBack hears for it ([todayTileInfo]). */
+/**
+ * What the 지금 column's 오늘 운행 tile shows and what TalkBack hears for it ([todayTileInfo]). [expenseWon] (2.13) is the
+ * registered expenses as a sum, which the tile draws in the one money style ([CarMiniStat]'s `won`); [expenses] is the same
+ * sum in words, for what TalkBack hears.
+ */
 @Immutable
-internal data class TodayTileInfo(val km: String, val trips: String, val expenses: String, val odometer: String, val spoken: String)
+internal data class TodayTileInfo(val km: String, val trips: String, val expenses: String, val odometer: String, val spoken: String, val expenseWon: Long = 0)
 
 /**
  * The 오늘 운행 tile's figures (2.12, pure, unit-tested): today's distance with a trip still recording counted in ("—" while
@@ -450,10 +454,11 @@ internal fun todayTileInfo(state: TripLogState, now: Long, zone: ZoneId): TodayT
     val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
     val finished = tripsIn(data.trips.filter { it.demo == data.profile.demoMode }, today, today, zone)
     val km = overview.todayKm
-    val expenses = formatWon(finished.sumOf { it.expenseWon })
+    val expenseWon = finished.sumOf { it.expenseWon }
+    val expenses = formatWon(expenseWon)
     val odometer = state.live?.odometerKm?.takeIf { overview.fresh }?.let(::kmText) ?: "확인 필요"
     val spoken = "오늘 운행 ${km?.let(::kmText) ?: "정보 없음"}, 완료 ${finished.size}건, 등록 경비 $expenses, 계기판 $odometer"
-    return TodayTileInfo(km?.let { String.format(Locale.KOREA, "%,.1f", it) } ?: "—", "${finished.size}건", expenses, odometer, spoken)
+    return TodayTileInfo(km?.let { String.format(Locale.KOREA, "%,.1f", it) } ?: "—", "${finished.size}건", expenses, odometer, spoken, expenseWon)
 }
 
 // ───────────────────────── hero ─────────────────────────
@@ -825,15 +830,20 @@ internal val NOW_TILE_PADDING = 20.dp
  * the modifier that places it), 예약, 오늘 운행 and 이달 운행일지, each an opaque [CarCard] (2.12; by night too, where the
  * 2.11 tiles were glass at .78). The three under 사용자 open the page they sum up: 차량 ([openVehicle]), 운행기록 on this
  * month ([openToday]) and 월간·Excel ([openMonth]). The column stands outside the page change like the header, so it never
- * slides, and it appears with the shell (no stagger). It scrolls on its own under the same top edge as the pages, and
- * TalkBack reaches it after the page. The booking line is kept on the minute and the month's words on the day, because the
- * clock recomposes the column every second.
+ * slides, and it appears with the shell (no stagger). TalkBack reaches it after the page. The booking line is kept on the
+ * minute and the month's words on the day, because the clock recomposes the column every second.
+ *
+ * 2.13 (DESIGN_2_13_SPEC §4): the column never scrolls in the FULL window at 1×. Its tallest state (사용자 with a two-line
+ * question, 323, then 84 + 199 + 172, three 16-dp gaps and the 8-dp foot: 834 dp) fits the 1097-dp page with room to spare,
+ * so scrolling is off while the content fits ([ScrollState.maxValue] is 0) and a fling or a drag never nudges it. A larger
+ * font or a shorter window that overflows turns it back on, so nothing is ever cut.
  */
 @Composable internal fun NowColumn(state: TripLogState, now: Long, driverCard: @Composable (Modifier) -> Unit, openVehicle: () -> Unit, openToday: () -> Unit,
     openMonth: () -> Unit, modifier: Modifier = Modifier) {
     val scroll = rememberScrollState()
     // The bottom padding keeps the last tile's day shadow inside the scroll.
-    Column(modifier.semantics { isTraversalGroup = true; traversalIndex = 1f }.fadingTopEdge(scroll).verticalScroll(scroll).padding(bottom = 8.dp)) {
+    Column(modifier.semantics { isTraversalGroup = true; traversalIndex = 1f }.fadingTopEdge(scroll).verticalScroll(scroll, enabled = scroll.maxValue > 0)
+        .padding(bottom = 8.dp)) {
         // The driver slot carries its own gap, so a card that folds away takes the gap with it.
         driverCard(Modifier.fillMaxWidth().padding(bottom = NOW_TILE_GAP))
         Column(verticalArrangement = Arrangement.spacedBy(NOW_TILE_GAP)) {
@@ -876,7 +886,8 @@ internal val NOW_TILE_PADDING = 20.dp
  * 오늘 운행 (2.12): the distance large, then 완료 운행 · 등록 경비 · 계기판 as three mini stats ([todayTileInfo]). The distance
  * updates in place while a trip records ([homeShowsLiveTrip]) and cross-fades between trips; the odometer is live telemetry
  * and simply updates. A tap opens 운행기록 on this month, as the chevron in its title promises. Shared since 2.13 with 홈
- * without the 지금 column.
+ * without the 지금 column. 등록 경비 is money in the one style since 2.13 (the `won` mini stat): tabular digits with 원 in the
+ * quieter ink, and a day without expenses shows 0원 muted instead of a full-ink zero; the tile's one ₩ mark is its label's.
  */
 @Composable internal fun TodayTile(state: TripLogState, now: Long, onOpen: () -> Unit, modifier: Modifier = Modifier) {
     val info = todayTileInfo(state, now, zone)
@@ -891,22 +902,23 @@ internal val NOW_TILE_PADDING = 20.dp
         // The tile already says the three figures in its one stop ([TodayTileInfo.spoken]); the stats' own stops would repeat them.
         Row(Modifier.clearAndSetSemantics {}, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             CarMiniStat(painterResource(R.drawable.ic_vehicle), "완료 운행", info.trips, Modifier.weight(1f))
-            CarMiniStat(painterResource(R.drawable.ic_won), "등록 경비", info.expenses, Modifier.weight(1f))
+            CarMiniStat(painterResource(R.drawable.ic_won), "등록 경비", won = info.expenseWon, modifier = Modifier.weight(1f))
             CarMiniStat(painterResource(R.drawable.ic_gauge), "계기판", info.odometer, Modifier.weight(1f), live = true)
         }
     }
 }
 
 /**
- * 이달 운행일지 (2.12): the month's one word in its tone ([monthWidgetInfo]; on the card glow 6.14 / 10.32 and warn 6.80 /
- * 9.09) over one line of where it stands ([MonthWidgetInfo.line]), the completion ring at the end. What the car filled in
- * by itself left the view for the one-line rule; TalkBack still hears it after the detail. A tap opens 월간·Excel on this month.
- * Shared since 2.13 with 홈 without the 지금 column.
+ * 이달 운행일지 (2.12): the month's one word in its tone ([monthWidgetInfo]) over one line of where it stands
+ * ([MonthWidgetInfo.line]), the completion ring at the end. What the car filled in by itself left the view for the one-line
+ * rule; TalkBack still hears it after the detail. A tap opens 월간·Excel on this month. Shared since 2.13 with 홈 without the
+ * 지금 column. 2.13: 완성 and 마감됨 (and their ring) take the scene's positive (6.21 / 9.08 on the card), as 월간's close card
+ * draws a finished month, where 2.12's glow was the ready dot's teal; 확인 N건 keeps warn (6.80 / 9.09), the tone of what waits.
  */
 @Composable internal fun MonthTile(data: TripLogData, now: Long, onOpen: () -> Unit, modifier: Modifier = Modifier) {
     val today = localDate(now)
     val info = remember(data, today) { monthWidgetInfo(data, today, zone) }
-    val color = when (info.tone) { 1 -> Scene.glow; 2 -> Scene.warn; else -> Scene.text }
+    val color = when (info.tone) { 1 -> Scene.positive; 2 -> Scene.warn; else -> Scene.text }
     val fontScale = LocalDensity.current.fontScale
     CarCard(modifier, onClick = onOpen, onClickLabel = "월간 현황 열기", description = "${info.title} ${info.headline}, ${info.detail}${info.auto?.let { ", $it" }.orEmpty()}",
         padding = NOW_TILE_PADDING, title = { CarSectionTitle(info.title, chevron = true) }) {

@@ -81,11 +81,14 @@ class MonthCloseUiTest {
         assertEquals("마감할 수 있는 달도 같은 말", folded, monthCloseNote(MonthStatus(YearMonth.of(2026, 10), 10, 0, 0, null), today, edited = 0))
         assertEquals("운행이 없는 지난달", "운행이 없는 달은 마감하지 않아도 돼요" to emptyList<String>(),
             monthCloseNote(MonthStatus(YearMonth.of(2026, 8), 0, 0, 0, null), today, edited = 0))
-        // ④ already says what the close waits for ("운행이 없어요" / "①·②를 끝내면 열려요"), and TalkBack hears it on the button.
-        assertNull("운행이 없는 이번 달", monthCloseNote(MonthStatus(YearMonth.of(2026, 11), 0, 0, 0, null), today, edited = 0))
+        // 2.13: a month without trips shows no steps and no close button, so its note says what the close waits for.
+        assertEquals("운행이 없는 이번 달", "운행이 기록되면 여기서 마감해요" to emptyList<String>(),
+            monthCloseNote(MonthStatus(YearMonth.of(2026, 11), 0, 0, 0, null), today, edited = 0))
+        // ④ already says what the close waits for ("①·②를 끝내면 열려요"), and TalkBack hears it on the button.
         assertNull("남은 확인이 있는 달", monthCloseNote(MonthStatus(YearMonth.of(2026, 10), 10, 2, 1, null), today, edited = 0))
         // Every note is one card line; its folded form may wrap.
-        listOf(monthCloseNote(closed, today, 12)!!, folded, monthCloseNote(MonthStatus(YearMonth.of(2026, 8), 0, 0, 0, null), today, 0)!!).forEach { (line, more) ->
+        listOf(monthCloseNote(closed, today, 12)!!, folded, monthCloseNote(MonthStatus(YearMonth.of(2026, 8), 0, 0, 0, null), today, 0)!!,
+            monthCloseNote(MonthStatus(YearMonth.of(2026, 11), 0, 0, 0, null), today, 0)!!).forEach { (line, more) ->
             assertOneLine(line, CARD_LINE_UNITS)
             more.forEach { assertFalse(it, it.endsWith(".")) }
         }

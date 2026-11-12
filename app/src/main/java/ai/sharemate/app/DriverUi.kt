@@ -407,9 +407,10 @@ private val DRIVER_MANAGER_SIDE_BY_SIDE = 960.dp
 /**
  * 설정 › 직원 (2.11; 2.12 one [CarCard] across the page): the list of 직원 and its editor, side by side with a hairline between
  * them when the card is 960 dp or wider, the editor under the list after a divider otherwise. The list's title counts the
- * 직원 beside the cap of 50; a row (avatar 48 · name over [driverListLine] on one line · the 지금 운전 tag on the person
- * driving) opens that person in the editor and brings it into view. Under the rows: 새 직원 (off at 50, saying why) and the
- * daily driver check, moved here from 기록. The editor sits on the card itself, never on a fill, since its accent button
+ * 직원 beside the cap of 50 (a tag) and 추가 (a pill that opens an empty editor; off at 50, the line under the rows saying
+ * why); a row (avatar 48 · name over [driverListLine] on one line · the 지금 운전 tag on the person driving) opens that person
+ * in the editor and brings it into view. Under the rows the daily driver check, moved here from 기록. The editor sits on the
+ * card itself, never on a fill, since its accent button
  * would read weaker there; it adds a person (a same-name warning never blocks), fixes one, makes them the driver, or deletes
  * one without trips; every change answers on the follow-up bar with its way back. [data] is the shell's, its trips those of
  * the data set on screen; whether a person can be deleted is read from the repository's unfiltered data, the data
@@ -474,8 +475,11 @@ private val DRIVER_MANAGER_SIDE_BY_SIDE = 960.dp
         val wide = maxWidth >= DRIVER_MANAGER_SIDE_BY_SIDE
         val list: @Composable (Modifier) -> Unit = { place ->
             Column(place, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                // The cap is a tag and 추가 a pill at the title's end (2.13, as 정비 기록), where 2.12 left the cap as bare text and
+                // 새 직원 as an orphan button under the rows. At 50 the pill is off and the line under the rows says why.
                 CarSectionTitle(SettingsCopy.driversTitle(rows.size), icon = rememberVectorPainter(Icons.Outlined.Person)) {
-                    Text(SettingsCopy.DRIVERS_CAP, style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, maxLines = 1)
+                    CarTag(SettingsCopy.DRIVERS_CAP)
+                    CarPillButton(SettingsCopy.ADD_DRIVER, startNew, enabled = !full, description = SettingsCopy.SPOKEN_ADD_DRIVER)
                 }
                 if (rows.isEmpty()) CarLine(SettingsCopy.DRIVERS_EMPTY)
                 else {
@@ -488,7 +492,6 @@ private val DRIVER_MANAGER_SIDE_BY_SIDE = 960.dp
                             }
                         }
                     }
-                    QuietAction("새 직원", enabled = !full, onClick = startNew)
                     if (full) CarLine(SettingsCopy.DRIVERS_FULL)
                 }
                 CarDivider()
@@ -563,17 +566,17 @@ private val DRIVER_MANAGER_SIDE_BY_SIDE = 960.dp
 
 /**
  * One person in 설정 › 직원: a 72-dp row that settles to .98 with the press fill and opens the person in the editor. The name
- * over one line ([driverListLine]) in textSecondary, which keeps AA on the selection fill (6.77 / 7.07; textMuted would fall
- * to 4.48 by night). The one being edited sits on the selection fill inside its ring ("수정 중" for TalkBack); the person
- * driving now carries the 지금 운전 tag, which TalkBack hears as the row's state, so each person stays one stop.
+ * over one line ([driverListLine]) in textSecondary, which keeps AA on the chip fill (7.19 / 9.27). The one being edited is
+ * the list's current row (2.13, [carSelection]: the chip fill under the 2-dp accentInk ring, the car's one selection paint,
+ * where 2.12 drew the teal selection fill and ring beside the blue accent); TalkBack hears "수정 중". The person driving now
+ * carries the 지금 운전 tag, which TalkBack hears as the row's state, so each person stays one stop.
  */
 @Composable private fun DriverListRow(row: DriverRowInfo, editing: Boolean, line: String, onEdit: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val shape = RoundedCornerShape(18.dp)
     val state = listOfNotNull(SettingsCopy.NOW_DRIVING.takeIf { row.selected }, "수정 중".takeIf { editing }).joinToString(", ")
     Row(Modifier.fillMaxWidth().heightIn(min = 72.dp).pressable(interaction, .98f).clip(shape)
-        .background(if (editing) Scene.selectionFill else Color.Transparent)
-        .then(if (editing) Modifier.border(1.5.dp, Scene.selectionRing, shape) else Modifier)
+        .carSelection(editing, shape)
         .clickable(interactionSource = interaction, indication = null, onClickLabel = "수정", role = Role.Button, onClick = onEdit)
         .semantics { if (state.isNotEmpty()) stateDescription = state }
         .pressFill(interaction).padding(horizontal = 12.dp, vertical = 10.dp),
@@ -590,6 +593,6 @@ private val DRIVER_MANAGER_SIDE_BY_SIDE = 960.dp
 
 /**
  * The 지금 운전 tag (2.12): the ready dot in glow on the tag fill, the mark 자동 기록 대기 also carries. On its own fill, it reads
- * the same on the selection fill of the row being edited.
+ * the same on the chip fill of the row being edited (2.13, [carSelection]) as on the card.
  */
 @Composable private fun NowChip(modifier: Modifier = Modifier) = CarTag(SettingsCopy.NOW_DRIVING, modifier, tone = PillTone.READY)

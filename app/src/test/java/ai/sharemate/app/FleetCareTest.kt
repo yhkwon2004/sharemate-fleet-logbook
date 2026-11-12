@@ -100,6 +100,23 @@ class FleetCareTest {
         assertThrows(Exception::class.java) { parseSyncCommand(JSONObject().put("type", "updateCare").put("care", JSONObject().put("inspectionDue", "next week"))) }
     }
 
+    @Test fun undoingADeletedMaintenanceRecordBringsTheRecordItselfBack() {
+        val care = VehicleCare(serviceIntervalKm = 10_000, lastServiceKm = 51_300.0, lastServiceAt = at(20, 10))
+        val oil = MaintenanceRecord(id("oil"), at(20, 10), MaintenanceKind.OIL, 51_300.0, 89_000, "블루핸즈 판교점", "", EditSource.CARD, cardChargeId = id("charge"))
+        val wash = MaintenanceRecord(id("wash"), at(10, 9), MaintenanceKind.WASH, 50_100.0, 12_000)
+        val tire = MaintenanceRecord(id("tire"), at(25, 9), MaintenanceKind.TIRE, 51_800.0, 320_000)
+        val deleted = TripLogData(care = care, maintenance = listOf(wash, tire))
+        val restored = restoredMaintenance(deleted, oil)
+        assertEquals("같은 기록이 날짜 순 자리에", listOf(wash, oil, tire), restored.maintenance)
+        val back = restored.maintenance[1]
+        assertEquals(oil.id, back.id); assertEquals(oil.at, back.at); assertEquals(EditSource.CARD, back.source); assertEquals(id("charge"), back.cardChargeId)
+        assertEquals("두 번 눌러도 한 번", restored, restoredMaintenance(restored, oil))
+        assertEquals("정비 기한은 그대로", care, restored.care)
+        assertEquals("가장 최근이면 끝에", listOf(wash, tire, oil.copy(at = at(28, 9))), restoredMaintenance(deleted, oil.copy(at = at(28, 9))).maintenance)
+        val full = TripLogData(maintenance = List(MAX_MAINTENANCE) { wash.copy(id = id("w$it")) })
+        assertThrows(IllegalArgumentException::class.java) { restoredMaintenance(full, oil) }
+    }
+
     @Test fun everythingRoundTripsThroughTheFileAndOldFilesStillLoad() {
         val record = MaintenanceRecord(id("m"), at(20, 10), MaintenanceKind.TIRE, 51_300.0, 320_000, "타이어뱅크", "앞 2본", EditSource.PHONE)
         val data = TripLogData(care = VehicleCare("2026-11-20", "2027-01-01", null, 10_000, 42_000.0, at(1, 9)), maintenance = listOf(record),

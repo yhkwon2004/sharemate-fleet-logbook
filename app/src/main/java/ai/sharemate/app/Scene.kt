@@ -397,6 +397,7 @@ internal fun sceneStateLine(mode: SceneMode, phase: ScenePhase, morning: Boolean
  * ([sceneStateLine]; TalkBack reads the full [sceneModeHint], which also says what comes next), and 자동 · 낮 · 밤 as three
  * separate pills with their icons, radio buttons in one group. The chosen pill swaps at once: the scene's fade-through that
  * follows a choice is the motion. Replaces [SceneModeCard] on the car, whose hint line under the control leaves the view.
+ * 2.13: the state is a [CarTag], as every fact beside a card title is (2.12 left it bare text, the one title that ended so).
  */
 @Composable internal fun CarSceneCard(modifier: Modifier = Modifier) {
     val context = LocalContext.current
@@ -409,10 +410,7 @@ internal fun sceneStateLine(mode: SceneMode, phase: ScenePhase, morning: Boolean
     val hint = sceneModeHint(mode, phase, morning, vetoed)
     val icons = listOf(painterResource(R.drawable.ic_bolt), painterResource(R.drawable.ic_sun), painterResource(R.drawable.ic_moon))
     CarCard(modifier, title = {
-        CarSectionTitle(SettingsCopy.SCENE_TITLE, icon = painterResource(R.drawable.ic_sun)) {
-            Text(state, style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.semantics { contentDescription = hint })
-        }
+        CarSectionTitle(SettingsCopy.SCENE_TITLE, icon = painterResource(R.drawable.ic_sun)) { CarTag(state, description = hint) }
     }) {
         Segmented(SceneMode.entries.map { it.label }, SceneMode.entries.indexOf(mode), icons = icons, separated = true) {
             ScenePrefs.set(context, SceneMode.entries[it])

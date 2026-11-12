@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -153,13 +154,16 @@ internal fun monthCloseFootnote(status: MonthStatus, today: LocalDate): String =
 /**
  * The one note of 월간·Excel's close card (2.12, pure, unit-tested), as a line and what an ⓘ row folds under it: with
  * nothing to fold it is a plain line. A closed month counts its edits after the close; a closed month without edits, and a
- * month ready to close, say once that a close locks nothing. A past month without trips needs no close. Otherwise null:
- * step ④ already says what the close waits for, and TalkBack hears it on the button ([monthCloseFootnote]).
+ * month ready to close, say once that a close locks nothing. A month without trips has no steps and no close button since
+ * 2.13 ([ReportCloseCard]), so its note says it all: a past one needs no close, this one waits for its first trip
+ * ([ReportCopy.CLOSE_WAITING]). Otherwise null: step ④ already says what the close waits for, and TalkBack hears it on the
+ * button ([monthCloseFootnote]).
  */
 internal fun monthCloseNote(status: MonthStatus, today: LocalDate, edited: Int): Pair<String, List<String>>? = when {
     status.closed != null && edited > 0 -> "마감 후 수정 ${edited}건 · 운행기록에 표시돼요" to emptyList()
     status.closed != null || status.ready -> ReportCopy.CLOSE_NOTE to listOf(ReportCopy.CLOSE_NOTE_MORE)
     status.trips == 0 && status.month < YearMonth.from(today) -> ReportCopy.CLOSE_NOTHING to emptyList()
+    status.trips == 0 -> ReportCopy.CLOSE_WAITING to emptyList()
     else -> null
 }
 
@@ -332,13 +336,16 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
 // ───────────────────────── 월간·Excel 마감 카드 (2.12) ─────────────────────────
 
 /**
- * 월간·Excel's month card (2.12) in the car's one-line look; the home keeps [MonthClosePanel]. The title counts the month's
- * trips and, once it is closed, carries a 마감됨 tag; then the headline and the completion bar (keyed for this card alone, so
- * the home card's sweep never carries over). A closed month shows its three figures, the note and 마감 해제 · Excel 저장. An
- * open one shows the four steps ([monthCloseSteps]): across where the card has the room ([closeStepsAcross]), as rows
- * otherwise; under them the note and the close button, which is solid only when the month is ready and tells TalkBack what
- * it waits for while it is not ([monthCloseFootnote]). One note at most ([monthCloseNote]): what the old paragraphs added sits
- * behind its ⓘ. A past month without trips offers 이전 달 보기 where [onPrevious] is given.
+ * 월간·Excel's month card (2.12) in the car's one-line look; the home keeps [MonthClosePanel]. The title is 월 마감 with the
+ * month's trips as a tag (2.13: a count is a tag, never part of a title) and, once it is closed, a 마감됨 tag; then the
+ * headline and the completion bar (keyed for this card alone, so the home card's sweep never carries over). A closed month
+ * shows its three figures (경비 in the one money style) and one row: the note, 마감 해제 as a pill and Excel 저장 (2.12 had two
+ * 520-dp outlined buttons there, v6). A month without trips (2.13, v5) shows no steps and no close button that could never
+ * enable: the headline, then the note of what the close waits for ([monthCloseNote]) beside 이전 달 보기 where [onPrevious] is
+ * given. Any other open month shows the four steps ([monthCloseSteps]): across where the card has the room
+ * ([closeStepsAcross]), as rows otherwise; under them the note and the close button, which is solid only when the month is
+ * ready and tells TalkBack what it waits for while it is not ([monthCloseFootnote]). One note at most: what the old
+ * paragraphs added sits behind its ⓘ. A row of note and buttons stacks under 560 dp of card ([CloseNoteRow]).
  */
 @Composable internal fun ReportCloseCard(status: MonthStatus, onIssues: () -> Unit, onReviews: () -> Unit, onExport: () -> Unit, exporting: Boolean,
     act: Act, repository: TripLogRepository, modifier: Modifier = Modifier, editedAfterClose: Int = 0, today: LocalDate = LocalDate.now(zone),
@@ -351,9 +358,13 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
     // The bar sweeps from the previous value to the new one (spec C); TalkBack hears the real figure.
     val progress = sweepProgress((percent ?: 0) / 100f, key = "report-close-bar")
     val note = monthCloseNote(status, today, editedAfterClose)
+    // Nothing to close yet: no trips and no card question waiting in the month (one still waiting keeps its step and its way).
+    val empty = closed == null && status.trips == 0 && status.reviews == 0
     CarCard(modifier, title = {
-        CarSectionTitle("월 마감 · ${status.trips}건", icon = rememberVectorPainter(Icons.Outlined.CheckCircle),
-            trailing = if (closed != null) { { CarTag("마감됨 · ${closedDay(closed.closedAt)}", tone = PillTone.POSITIVE) } } else null)
+        CarSectionTitle("월 마감", icon = rememberVectorPainter(Icons.Outlined.CheckCircle), trailing = if (status.trips > 0 || closed != null) { {
+            if (status.trips > 0) CarTag("${status.trips}건", description = "운행 ${status.trips}건")
+            if (closed != null) CarTag("마감됨 · ${closedDay(closed.closedAt)}", tone = PillTone.POSITIVE)
+        } } else null)
     }) {
         Text(monthCloseHeadline(status, today), style = MaterialTheme.typography.headlineMedium, color = Scene.text, modifier = Modifier.semantics { heading() })
         if (percent != null) LinearProgressIndicator(progress = { progress.value }, modifier = Modifier.fillMaxWidth().height(10.dp)
@@ -362,18 +373,19 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 CarMiniStat(painterResource(R.drawable.ic_vehicle), "운행", "${closed.trips}건", Modifier.weight(1f))
                 CarMiniStat(painterResource(R.drawable.ic_gauge), "총주행", kmText(closed.totalKm), Modifier.weight(1f))
-                CarMiniStat(painterResource(R.drawable.ic_won), "경비", formatWon(closed.expenseWon), Modifier.weight(1f))
+                CarMiniStat(painterResource(R.drawable.ic_won), "경비", won = closed.expenseWon, modifier = Modifier.weight(1f))
             }
-            note?.let { CloseNote(it) }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                QuietAction("마감 해제", Modifier.weight(1f)) {
+            CloseNoteRow(note) {
+                CarPillButton("마감 해제", {
                     act {
                         repository.reopenMonth(key)
                         followUp(FollowUp("$name 마감을 해제했어요", "다시 마감") { repository.closeMonth(key) })
                     }
-                }
-                QuietAction(if (exporting) "저장 중…" else "Excel 저장", Modifier.weight(1f), enabled = !exporting && excelSaveAvailable(status.trips), onClick = onExport)
+                }, description = "$name 마감 해제")
+                QuietAction(if (exporting) "저장 중…" else "Excel 저장", enabled = !exporting && excelSaveAvailable(status.trips), onClick = onExport)
             }
+        } else if (empty) {
+            CloseNoteRow(note) { onPrevious?.let { CarPillButton("이전 달 보기", it) } }
         } else {
             val steps = monthCloseSteps(status)
             val actions = listOf(onIssues, onReviews, onExport, null)
@@ -407,8 +419,8 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
                     close(Modifier.fillMaxWidth())
                 }
             }
-            // A month without trips has nothing to finish here; the way on is the month before it.
-            if (status.trips == 0) onPrevious?.let { QuietAction("이전 달 보기", onClick = it) }
+            // A month without trips but with a card question still has nothing to close; the way on is the month before it.
+            if (status.trips == 0) onPrevious?.let { CarPillButton("이전 달 보기", it) }
         }
     }
 }
@@ -417,6 +429,22 @@ internal fun closedMonthFor(data: TripLogData, from: LocalDate, to: LocalDate): 
 @Composable private fun CloseNote(note: Pair<String, List<String>>) {
     val (line, more) = note
     if (more.isEmpty()) CarLine(line) else CarInfoRow(line, more = more)
+}
+
+/**
+ * The close card's last row for a closed or an empty month (2.13): the [note] takes the room and the [actions] sit at the
+ * end, 12 dp apart, each at its own width; under 560 dp of card (the home's daily question) the note sits over them.
+ */
+@Composable private fun CloseNoteRow(note: Pair<String, List<String>>?, actions: @Composable RowScope.() -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (maxWidth >= 560.dp) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Box(Modifier.weight(1f).heightIn(min = 56.dp), contentAlignment = Alignment.CenterStart) { note?.let { CloseNote(it) } }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp), content = actions)
+        } else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            note?.let { CloseNote(it) }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp), content = actions)
+        }
+    }
 }
 
 /** What TalkBack says of a step's state, as on the home card: 완료, 대기 (nothing to act on yet), 선택 (Excel) or 남음. */
@@ -431,7 +459,8 @@ private fun closeStepSpoken(number: Int, step: CloseStep): String = "${number}�
 
 /**
  * One step of four across ([closeStepsAcross]): the disc beside the label, the detail under the label ([CarLine]) and the
- * step's action as a pill under that. The words are one node with the step's state; the pill keeps its own.
+ * step's action as a pill under that. The words are one node with the step's state; the pill keeps its own. The label starts
+ * 12 dp after the disc (2.13, the 8-12-16-24 scale), where a [StepLine]'s does.
  */
 @Composable private fun StepCell(number: Int, step: CloseStep, busy: Boolean, onAction: (() -> Unit)?, modifier: Modifier = Modifier) {
     val action = step.action
@@ -440,13 +469,13 @@ private fun closeStepSpoken(number: Int, step: CloseStep): String = "${number}�
             verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 CarStepDisc(number, step.done, step.idle)
-                Spacer(Modifier.width(10.dp))
+                Spacer(Modifier.width(12.dp))
                 Text(step.label, style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            // Under the label, not the disc: 32 dp of disc and 10 of gap.
-            CarLine(step.detail, Modifier.padding(start = 42.dp), color = closeStepDetailColor(step))
+            // Under the label, not the disc: 32 dp of disc and 12 of gap.
+            CarLine(step.detail, Modifier.padding(start = 44.dp), color = closeStepDetailColor(step))
         }
-        if (action != null && onAction != null) CarPillButton(if (busy) "저장 중…" else action, onAction, Modifier.padding(start = 42.dp), enabled = !busy)
+        if (action != null && onAction != null) CarPillButton(if (busy) "저장 중…" else action, onAction, Modifier.padding(start = 44.dp), enabled = !busy)
     }
 }
 

@@ -23,9 +23,13 @@ import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -325,7 +329,9 @@ private fun careOdometerTag(odometer: Double?, fresh: Boolean): String = when {
 /**
  * The maintenance records (2.12, split from 차량 관리): the count as a tag and 추가 / 닫기 beside the title, the form inline while
  * it is open, then the five latest records, each removable with undo in the bar. Card payments at a garage arrive by
- * themselves; the rest is in the Excel 차량관리 sheet.
+ * themselves; the rest is in the Excel 차량관리 sheet. 2.13: 추가 brings the form into view (it opens at the top of a card
+ * that may sit below the fold), and 실행 취소 after a delete puts the record itself back ([TripLogRepository.restoreMaintenance]:
+ * its id, date and card link), where 2.12 added a new record dated now.
  */
 @Composable internal fun MaintenanceCard(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, modifier: Modifier = Modifier) {
     val data = state.data
@@ -334,14 +340,19 @@ private fun careOdometerTag(odometer: Double?, fresh: Boolean): String = when {
     val all = data.maintenance.filter { it.demo == data.profile.demoMode }
     val records = all.sortedByDescending { it.at }.take(5)
     var adding by rememberSaveable { mutableStateOf(false) }
+    val form = remember { BringIntoViewRequester() }
+    // Bumped by 추가 only, so a return to the tab with the form still open does not scroll the page by itself.
+    var reveal by remember { mutableIntStateOf(0) }
+    LaunchedEffect(reveal) { if (reveal > 0) form.bringIntoView() }
     CarCard(modifier, title = {
         CarSectionTitle(VehicleCopy.MAINTENANCE_TITLE, icon = rememberVectorPainter(Icons.Outlined.Build), trailing = {
             CarTag("${all.size}건")
-            CarPillButton(if (adding) "닫기" else "추가", { adding = !adding }, description = if (adding) "정비 기록 입력 닫기" else "정비 기록 추가")
+            CarPillButton(if (adding) "닫기" else "추가", { adding = !adding; if (adding) reveal++ },
+                description = if (adding) "정비 기록 입력 닫기" else "정비 기록 추가")
         })
     }) {
         if (adding) {
-            MaintenanceForm(odometer, act, repository) { adding = false }
+            MaintenanceForm(odometer, act, repository, Modifier.bringIntoViewRequester(form)) { adding = false }
             CarDivider()
         }
         if (records.isEmpty()) CarLine(VehicleCopy.MAINTENANCE_EMPTY)
@@ -351,9 +362,7 @@ private fun careOdometerTag(odometer: Double?, fresh: Boolean): String = when {
                 MaintenanceRow(record) {
                     act {
                         repository.removeMaintenance(record.id)
-                        followUp(FollowUp("${record.kind.label} 기록을 삭제했어요", "실행 취소") {
-                            repository.addMaintenance(record.kind, record.amountWon, record.merchant, record.note, record.odometerKm, record.source)
-                        })
+                        followUp(FollowUp("${record.kind.label} 기록을 삭제했어요", "실행 취소") { repository.restoreMaintenance(record) })
                     }
                 }
             }
@@ -362,39 +371,41 @@ private fun careOdometerTag(odometer: Double?, fresh: Boolean): String = when {
     }
 }
 
-/** One record as a [CarRow]: date · kind · amount over its details, and 삭제 in the negative, which names the record for TalkBack. */
+/**
+ * One record as a money row (2.13, [CarMoneyRow]): date · kind as its label over its details, the amount at the end in the one
+ * money style (금액 없음, muted, for a warranty or free job), and 삭제 in the negative, which names the record for TalkBack.
+ * 2.12 ended the title with the amount, the first thing an ellipsis cut.
+ */
 @Composable private fun MaintenanceRow(record: MaintenanceRecord, onDelete: () -> Unit) {
     val detail = listOfNotNull(record.odometerKm?.let(::kmLabel), record.merchant, record.note.ifBlank { null },
         if (record.source == EditSource.CARD) "카드 자동 매칭" else if (record.source == EditSource.PHONE) "휴대폰" else null).joinToString(" · ")
-    CarRow("${shortDate(record.at)} · ${record.kind.label} · ${if (record.amountWon == 0L) "금액 없음" else formatWon(record.amountWon)}",
-        line = detail.ifBlank { null }, trailing = {
-            CarPillButton("삭제", onDelete, color = Scene.negative, description = "${shortDate(record.at)} ${record.kind.label} 기록 삭제")
-        })
+    CarMoneyRow("${shortDate(record.at)} · ${record.kind.label}", record.amountWon.takeIf { it > 0 }, line = detail.ifBlank { null }, missing = "금액 없음",
+        action = { CarPillButton("삭제", onDelete, color = Scene.negative, description = "${shortDate(record.at)} ${record.kind.label} 기록 삭제") })
 }
 
 /**
  * The record form, inline in [MaintenanceCard] (2.12): the kind first (seven radio chips, one row or two), then amount and
  * odometer (prefilled from the car), merchant and note. While 엔진오일·소모품 is chosen one line says that it also moves the
- * last service.
+ * last service. 2.13: the amount is a money field ([CarMoneyField]: grouped digits, 원 after them, 1,000만 원 at most in the
+ * field's own error), and the form's blocks stand 16 dp apart.
  */
 @OptIn(ExperimentalLayoutApi::class)
-@Composable private fun MaintenanceForm(odometer: Double?, act: Act, repository: TripLogRepository, done: () -> Unit) {
+@Composable private fun MaintenanceForm(odometer: Double?, act: Act, repository: TripLogRepository, modifier: Modifier = Modifier, done: () -> Unit) {
     val followUp = LocalFollowUp.current
     var kind by rememberSaveable { mutableStateOf(MaintenanceKind.OIL) }
     var amount by rememberSaveable { mutableStateOf("") }
     var merchant by rememberSaveable { mutableStateOf("") }
     var note by rememberSaveable { mutableStateOf("") }
     var km by rememberSaveable(odometer) { mutableStateOf(odometer?.let { String.format(Locale.US, "%.0f", it) }.orEmpty()) }
-    val amountError = amount.toLongOrNull()?.takeIf { it > 10_000_000 }?.let { "1,000만 원까지 입력할 수 있어요" }
+    val amountInput = moneyInput(amount, min = 0, max = 10_000_000, hint = "보증·무상이면 비워 두세요")
     val kmError = careKmError(km)
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(VehicleCopy.MAINTENANCE_KIND, style = MaterialTheme.typography.titleSmall, color = Scene.text)
         FlowRow(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             MaintenanceKind.entries.forEach { option -> CarChoiceChip(option.label, option == kind) { kind = option } }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Field("금액", amount, { if (it.length <= 8 && it.all(Char::isDigit)) amount = it }, Modifier.weight(1f), number = true, suffix = "원",
-                hint = amount.toLongOrNull()?.let(::formatWon) ?: "보증·무상이면 비워 두세요", error = amountError)
+            CarMoneyField("금액", amount, { amount = it }, amountInput, Modifier.weight(1f))
             Field("계기판", km, { if (it.length <= 9 && it.all { c -> c.isDigit() || c == '.' }) km = it }, Modifier.weight(1f), number = true, suffix = "km",
                 hint = if (odometer != null) "차량 수신값" else "선택", error = kmError)
         }
@@ -402,8 +413,8 @@ private fun careOdometerTag(odometer: Double?, fresh: Boolean): String = when {
         Field("메모 (선택)", note, { if (it.length <= 300) note = it }, done = true, hint = "예: 앞 타이어 2본 교체")
         if (kind == MaintenanceKind.OIL) CarLine(VehicleCopy.MAINTENANCE_OIL)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            PrimaryAction("기록 추가", Modifier.weight(1f), enabled = amountError == null && kmError == null) {
-                val won = amount.toLongOrNull() ?: 0L
+            PrimaryAction("기록 추가", Modifier.weight(1f), enabled = amountInput.ok && kmError == null) {
+                val won = amountInput.won ?: 0L
                 val chosen = kind; val shop = merchant; val memo = note; val odo = km.toDoubleOrNull()
                 act {
                     val previousCare = repository.state.value.data.care

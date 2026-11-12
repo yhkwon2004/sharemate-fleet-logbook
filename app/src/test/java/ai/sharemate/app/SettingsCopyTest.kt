@@ -54,9 +54,11 @@ class SettingsCopyTest {
             SettingsCopy.AUTOPILOT_TITLE, SettingsCopy.PHONE_SYNC_TITLE, SettingsCopy.DEMO_TITLE, SettingsCopy.AUTOFILL_TITLE, ASSISTANT_TITLE)
         titles.forEach { assertTrue("$it: 8음절 이하", syllables(it) <= 8) }
         // Tags, the link and button labels share a row with a title or another control.
-        listOf(SettingsCopy.DRIVERS_CAP, SettingsCopy.NOW_DRIVING, SettingsCopy.TUTORIAL_LINK, SettingsCopy.MAKE_DRIVER, SettingsCopy.DELETE_DRIVER,
+        listOf(SettingsCopy.DRIVERS_CAP, SettingsCopy.ADD_DRIVER, SettingsCopy.NOW_DRIVING, SettingsCopy.TUTORIAL_LINK, SettingsCopy.MAKE_DRIVER, SettingsCopy.DELETE_DRIVER,
             SettingsCopy.PROFILE_SAVE, SettingsCopy.PROFILE_SAVED, SettingsCopy.COST_SAVE, SettingsCopy.COST_SAVED)
             .forEach { assertTrue("$it: 8음절 이하", syllables(it) <= 8) }
+        // The 추가 pill in the 직원 title row says what it adds for TalkBack, and says the label too.
+        assertTrue(SettingsCopy.SPOKEN_ADD_DRIVER.endsWith(SettingsCopy.ADD_DRIVER))
     }
 
     @Test fun nothingEndsInAPeriodAndTheLongFormsSayMore() {

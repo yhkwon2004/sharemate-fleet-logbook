@@ -22,9 +22,11 @@ class VehiclePaneTest {
     }
 
     @Test fun theVehiclePaneFollowsTheWindowClassAndItsOwnWidth() {
-        val twoUp = VehiclePaneLayout(twoColumn = true, drawingHeight = 420.dp, twoUp = true)
+        // 2.13: the drawing is 260 in both arrangements, the bitmap's own height at the card's width (2.12 boxed it in 420).
+        val twoUp = VehiclePaneLayout(twoColumn = true, drawingHeight = 260.dp, twoUp = true)
         val stacked = VehiclePaneLayout(twoColumn = false, drawingHeight = 260.dp, twoUp = false)
-        // FULL and EXPANDED: the car card beside the info column with the 420 drawing, the four cards two up.
+        assertEquals(260f, VEHICLE_DRAWING_HEIGHT.value, .01f)
+        // FULL and EXPANDED: the car card beside the info column, the four cards two up.
         assertEquals(twoUp, vehiclePaneLayout(carLayout(1680.dp, 1200.dp), 1200.dp))
         assertEquals(twoUp, vehiclePaneLayout(carLayout(1200.dp, 800.dp), 1104.dp))
         // Beside the 지금 column the pane is the 1112-dp page; a 1.3x font's 1046-dp page is 805 dp of effective width, so it stacks.
