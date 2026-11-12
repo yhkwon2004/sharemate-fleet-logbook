@@ -23,10 +23,11 @@ $env:ANDROID_HOME = $AndroidSdk
 $env:PATH = (Join-Path $JavaHome 'bin') + ';' + $env:PATH
 Push-Location $PSScriptRoot
 try {
-    & .\gradlew.bat --no-daemon testDebugUnitTest lintDebug assembleDebug
+    # Two APKs from one code base: car (Pleos Connect) and phone. -Install puts the car build on the selected emulator.
+    & .\gradlew.bat --no-daemon testCarDebugUnitTest testPhoneDebugUnitTest lintCarDebug lintPhoneDebug assembleDebug
     if ($LASTEXITCODE -ne 0) { throw 'Build or verification failed.' }
     if ($Install) {
-        & (Join-Path $AndroidSdk 'platform-tools\adb.exe') install -r 'app\build\outputs\apk\debug\app-debug.apk'
+        & (Join-Path $AndroidSdk 'platform-tools\adb.exe') install -r 'app\build\outputs\apk\car\debug\app-car-debug.apk'
         if ($LASTEXITCODE -ne 0) { throw 'APK installation failed; select a single emulator or set ANDROID_SERIAL.' }
     }
 } finally {

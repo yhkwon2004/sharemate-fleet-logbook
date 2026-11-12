@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The car APK (Pleos Connect / Android Automotive): the vehicle is required, and the phone's screens and its card-alert
+     listener are left out. Everything else comes from src/main. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-feature android:name="android.hardware.type.automotive" android:required="true" tools:replace="android:required" />
+    <application>
+        <activity android:name=".PhoneActivity" tools:node="remove" />
+        <activity android:name=".PhoneLogbookActivity" tools:node="remove" />
+        <service android:name=".CardNotificationService" tools:node="remove" />
+    </application>
+</manifest>

@@ -62,7 +62,8 @@ import java.time.ZoneId
 class PhoneLogbookActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_AUTOMOTIVE)) { finish(); return }
+        // Only the phone APK has this screen (the car APK leaves it out of its manifest); the guard stays for the shared code.
+        if (BuildConfig.CAR) { finish(); return }
         // The backdrop runs under both system bars; their icons follow the scene (light on the night scrim, dark by day).
         enableEdgeToEdge(SystemBarStyle.dark(android.graphics.Color.TRANSPARENT), SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         setContent { SceneTheme(compact = true) { SceneSystemBars(this@PhoneLogbookActivity); PhoneLogbookApp(intent?.data) } }

@@ -3,7 +3,6 @@ package ai.sharemate.app
 import android.Manifest
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
@@ -59,7 +58,8 @@ class PhoneActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE)) {
+        // Only the phone APK has this screen (the car APK leaves it out of its manifest); the guard stays for the shared code.
+        if (BuildConfig.CAR) {
             Toast.makeText(this, "외관 촬영은 휴대폰 앱에서 이용해 주세요.", Toast.LENGTH_LONG).show()
             finish()
             return

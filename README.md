@@ -12,20 +12,21 @@ SHAREMATE는 법인 차량을 쓰는 회사의 운전자와 관리자를 위한 
 |---|---|
 | 앱 이름 | SHAREMATE |
 | 한 줄 소개 | 차량이 스스로 쓰는 법인차 운행일지 |
-| APK | [apk/SHAREMATE-v2.14.0-release.apk](apk/SHAREMATE-v2.14.0-release.apk) · Pleos Connect 에뮬레이터에 그대로 설치하는 파일 · release 빌드 · 서명됨 · 약 33.9 MB |
-| 버전 | 2.14.0 (versionCode 24) · 패키지 `ai.sharemate.app` |
+| 차량용 APK | [apk/SHAREMATE-car-v2.14.1-release.apk](apk/SHAREMATE-car-v2.14.1-release.apk) · Pleos Connect 에뮬레이터와 차량에 설치 · 약 33.8 MB |
+| 휴대폰용 APK | [apk/SHAREMATE-phone-v2.14.1-release.apk](apk/SHAREMATE-phone-v2.14.1-release.apk) · Android 9 이상 휴대폰에 설치 · 약 33.8 MB |
+| 버전 | 2.14.1 (versionCode 25) · 패키지 `ai.sharemate.app` · 두 파일 모두 release 빌드 · 서명됨 |
 | 에뮬레이터 | Pleos Connect 에뮬레이터 `release_connect_v2.1.0` (Android 14 · API 34 · Automotive · x86_64, 기기 프로필 `Pleos_Connect_v2_0`) |
 | 화면 규격 | 2560 × 1440 px · 160 dpi. 앱 창은 화면 오른쪽 영역 1680 × 1209 dp |
 
-APK는 이 파일 하나입니다. 에뮬레이터용(x86_64)과 기기용(arm64) 라이브러리를 함께 담고 있어, Pleos Connect 에뮬레이터와 휴대폰에 같은 파일을 설치합니다.
+APK는 두 개입니다. **차량용**은 차량 화면을, **휴대폰용**은 휴대폰 화면을 엽니다. 두 파일 모두 에뮬레이터(x86_64)와 실제 기기(arm64)에 설치됩니다.
 
 ### 실행 방법
 
 1. Pleos Connect 에뮬레이터를 켭니다.
-2. APK를 설치합니다.
+2. 차량용 APK를 설치합니다.
 
 ```bash
-adb install apk/SHAREMATE-v2.14.0-release.apk
+adb install apk/SHAREMATE-car-v2.14.1-release.apk
 ```
 
 3. 하단 막대의 앱 목록(격자 아이콘)을 열고 **앱** 탭에서 **SHAREMATE**를 누릅니다. 처음에는 아래 화면이 열립니다. **시작 설정** 카드의 세 단계(법인·차량 정보 → 직원 등록 → 운전자 선택)를 누르면 해당 설정으로 가고, 직원을 등록하면 운전자 선택이 켜집니다.
@@ -38,14 +39,14 @@ adb install apk/SHAREMATE-v2.14.0-release.apk
 
 ### 테스트 환경 및 필요한 설정
 
-- **확인한 환경:** SHAREMATE가 설치되지 않은 Pleos Connect 에뮬레이터에 release APK를 설치해 첫 실행, 시연 체험, 시연 모드 운행 기록까지 확인했습니다. 호스트는 Windows 11, Android Emulator 37.2.12(`-gpu host`)입니다.
+- **확인한 환경:** SHAREMATE가 설치되지 않은 Pleos Connect 에뮬레이터에 차량용 APK를 설치해 첫 실행을 확인했습니다(시연 체험과 시연 모드 운행 기록은 같은 코드의 2.14.0에서 확인). 휴대폰용 APK는 SHAREMATE가 없는 Android 휴대폰 에뮬레이터(API 37)에 설치해 로그인과 처음 설정까지 확인했습니다. 호스트는 Windows 11, Android Emulator 37.2.12(`-gpu host`)입니다.
 - **권한:** 따로 설정할 것이 없습니다. 차량 신호 권한은 설치할 때 함께 허용됩니다. 알림과 충전 상태 권한까지 미리 허용하려면 `adb install -g`로 설치합니다.
 - **계정·서버:** 필요 없습니다. 기록은 차량 안에만 저장됩니다.
-- **휴대폰 앱:** 같은 APK를 Android 9 이상 휴대폰에 설치하면 휴대폰 화면이 열립니다. 로그인 화면의 **시연 계정으로 둘러보기**로 Google 계정 없이 들어갑니다. 이 버튼은 디버그 빌드와, 제출한 APK처럼 Google 로그인 설정이 없는 빌드에 나옵니다.
+- **휴대폰 앱:** 휴대폰용 APK(`adb install apk/SHAREMATE-phone-v2.14.1-release.apk`)를 Android 9 이상 휴대폰에 설치합니다. 로그인 화면의 **시연 계정으로 둘러보기**로 Google 계정 없이 들어갑니다. 이 버튼은 디버그 빌드와, 제출한 APK처럼 Google 로그인 설정이 없는 빌드에 나옵니다.
 
 ### 더 해 보기
 
-- **소스에서 빌드:** JDK 17로 `gradlew assembleDebug`나 `gradlew assembleRelease`를 실행합니다. Android Studio에서 열어도 됩니다. release는 서명 키를 지정하지 않으면 서명되지 않은 APK가 됩니다.
+- **소스에서 빌드:** JDK 17로 `gradlew assembleCarRelease assemblePhoneRelease`를 실행하면 차량용과 휴대폰용 APK가 따로 나옵니다(디버그는 `assembleCarDebug` · `assemblePhoneDebug`). Android Studio에서 열어도 됩니다. release는 서명 키를 지정하지 않으면 서명되지 않은 APK가 됩니다.
 - **차량에 다시 설치:** 차량 앱은 차량 사용자(Android user 10)로 실행됩니다. 덮어쓸 때는 `adb install -r --user 10 <APK 파일>`로 설치합니다.
 - **Google 로그인:** Google Cloud에서 OAuth 클라이언트(Android, 웹)를 만들고, 웹 클라이언트 ID를 `local.properties`의 `sharemate.googleWebClientId`에 넣어 빌드합니다. ID가 없으면 Google 버튼이 꺼지고 이유가 화면에 나옵니다.
 - **차량과 휴대폰 연결:** 차량의 설정 › 기록에서 **휴대폰 실시간 연동**을 켜면, 차량 탭의 휴대폰 연결 카드에 주소와 6자리 연결 번호, 인증키가 나옵니다. 같은 Wi-Fi나 핫스팟에서 휴대폰 앱에 세 값을 넣으면 연결됩니다.

@@ -25,8 +25,8 @@ android {
         applicationId = "ai.sharemate.app"
         minSdk = 28
         targetSdk = 34
-        versionCode = 24
-        versionName = "2.14.0"
+        versionCode = 25
+        versionName = "2.14.1"
         // Google sign-in (phone): the OAuth Web client ID of the company's Google Cloud project, from local.properties
         // (sharemate.googleWebClientId=...apps.googleusercontent.com) or -Psharemate.googleWebClientId. Empty = sign-in disabled.
         val googleClientId = (project.findProperty("sharemate.googleWebClientId") as String?) ?: localProps.getProperty("sharemate.googleWebClientId", "")
@@ -41,6 +41,20 @@ android {
                 keyAlias = signing.getProperty("keyAlias")
                 keyPassword = signing.getProperty("keyPassword")
             }
+        }
+    }
+    // One code base, two APKs. The car build opens the car screens and asks for the vehicle permissions; the phone build opens
+    // the companion and asks for none of them (src/car and src/phone hold only the manifest differences). Both keep the same
+    // package and signature: a car and a phone are never the same device.
+    flavorDimensions += "device"
+    productFlavors {
+        create("car") {
+            dimension = "device"
+            buildConfigField("boolean", "CAR", "true")
+        }
+        create("phone") {
+            dimension = "device"
+            buildConfigField("boolean", "CAR", "false")
         }
     }
     buildTypes {

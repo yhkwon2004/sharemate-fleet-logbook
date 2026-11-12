@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The phone APK (the companion): no vehicle feature, none of the vehicle permissions, and none of the car's components
+     (its screen, the trip recorder with its boot receiver, the voice receiver). Everything else comes from src/main. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-feature android:name="android.hardware.type.automotive" tools:node="remove" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" tools:node="remove" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" tools:node="remove" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" tools:node="remove" />
+    <uses-permission android:name="pleos.car.permission.CAR_DRIVE" tools:node="remove" />
+    <uses-permission android:name="pleos.car.permission.CAR_ENERGY" tools:node="remove" />
+    <uses-permission android:name="pleos.car.permission.CAR_DOORS" tools:node="remove" />
+    <uses-permission android:name="pleos.car.permission.CAR_WINDOWS" tools:node="remove" />
+    <uses-permission android:name="pleos.car.permission.CAR_SEATS" tools:node="remove" />
+    <uses-permission android:name="pleos.car.permission.CAR_CLIMATE" tools:node="remove" />
+    <uses-permission android:name="pleos.car.permission.CAR_SAFETY" tools:node="remove" />
+    <uses-permission android:name="pleos.car.permission.NAVI_ROUTE" tools:node="remove" />
+    <uses-permission android:name="pleos.car.permission.CAR_INFO" tools:node="remove" />
+    <uses-permission android:name="android.car.permission.CAR_POWERTRAIN" tools:node="remove" />
+    <uses-permission android:name="android.car.permission.CAR_ENERGY" tools:node="remove" />
+    <uses-permission android:name="android.car.permission.CAR_INFO" tools:node="remove" />
+    <!-- Merged in by the Pleos Vehicle SDK; the phone never binds the vehicle service. -->
+    <uses-permission android:name="ai.pleos.playground.service.vehicle.VEHICLE_BINDING" tools:node="remove" />
+    <application>
+        <uses-library android:name="android.car" tools:node="remove" />
+        <activity android:name=".MainActivity" tools:node="remove" />
+        <service android:name=".TripLogService" tools:node="remove" />
+        <receiver android:name=".TripLogBootReceiver" tools:node="remove" />
+        <receiver android:name=".GleoActionReceiver" tools:node="remove" />
+    </application>
+</manifest>

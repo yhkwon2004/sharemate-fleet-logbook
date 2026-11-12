@@ -27,7 +27,7 @@
 
 `gleoDataSummaryReply(data, period, today, zone)`는 저장·방송 없이 전달한 운행 사본의 요약을 생성합니다. 튜토리얼은 이 함수를 가상 데이터에 적용할 수 있습니다. 음성 명령 버튼은 “명령 동작 시연”으로 표시하며 실제 Gleo 연결 성공으로 표시하지 않습니다.
 
-JUnit의 `GleoIntegrationTest`는 정수 금액, 손상 입력, 개인정보 없는 실제/시연 분리 요약, 읽기 전용 동작, 공식 3개 제한과 버전 일치를 검사합니다. `gradlew.bat testDebugUnitTest --tests ai.sharemate.app.GleoIntegrationTest`로 실행합니다.
+JUnit의 `GleoIntegrationTest`는 정수 금액, 손상 입력, 개인정보 없는 실제/시연 분리 요약, 읽기 전용 동작, 공식 3개 제한과 버전 일치를 검사합니다. `gradlew.bat testCarDebugUnitTest --tests ai.sharemate.app.GleoIntegrationTest`로 실행합니다.
 
 ## 공식 근거
 

@@ -13,6 +13,7 @@ import ai.pleos.playground.vehicle.Vehicle
 import ai.pleos.playground.vehicle.listener.DistanceDrivenListener
 import ai.pleos.playground.vehicle.listener.EvBatteryStateOfChargeListener
 import ai.pleos.playground.vehicle.listener.FuelPercentListener
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -533,6 +534,9 @@ class TripLogService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
+    // The service's type (specialUse) is declared in the manifest of the car APK, the only one that has this service. The phone
+    // APK leaves the service out (src/phone), so lint, reading that manifest, would report the type as missing.
+    @SuppressLint("ForegroundServiceType")
     override fun onCreate() {
         super.onCreate()
         val manager = getSystemService(NotificationManager::class.java)
