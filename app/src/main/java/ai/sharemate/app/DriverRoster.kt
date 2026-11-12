@@ -1,7 +1,6 @@
 package ai.sharemate.app
 
 import androidx.compose.runtime.Immutable
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.coerceIn
 import androidx.compose.ui.unit.dp
@@ -158,25 +157,19 @@ internal fun pickerColumns(contentWidth: Dp, fontScale: Float): Int = if (conten
 internal fun changeButtonWidth(space: Dp, nameWidth: Dp, labelWidth: Dp): Dp =
     (space - nameWidth).coerceIn(max(112.dp, labelWidth + 48.dp), max(151.dp, labelWidth + 48.dp))
 
-/** How a picker card is painted: its fill and the colour of its status line ([pickerCardStyle]). */
-@Immutable
-internal data class PickerCardStyle(val fill: Color, val status: Color)
-
 /**
- * A picker card's paint from the scene's [colors], with every status line at AA (4.5:1) on the dialog's container, the
- * scheme's surfaceContainerHigh (#E9EFF7 by day, #1D2738 by night). The chosen card takes the selection fill. By day the
- * others are white glass: the faint fill over the dialog left textMuted at 4.47:1, white gives it 5.8:1. By night they keep
- * the faint fill (5.06:1), and the chosen card's status steps up to textSecondary (6.6:1), since textMuted reads 4.17:1 on the
- * night selection.
+ * The picker's one line under its title (2.13, pure, unit-tested), or null: nothing with nobody registered ([noDrivers], the
+ * empty state says it all); for a trip, the trip itself ([tripLine], from [pickerTripLine]), or nothing when the trip is not
+ * found ([forTrip] without a line); for the person driving now, where the pick lands, the recording trip too while one
+ * [recording]. One line each without a final period, the car's one-line rule (2.12 wrote them as sentences).
  */
-internal fun pickerCardStyle(colors: SceneColors, chosen: Boolean): PickerCardStyle = PickerCardStyle(
-    fill = when {
-        chosen -> colors.selectionFill
-        colors.isDay -> colors.glass
-        else -> colors.fill
-    },
-    status = if (chosen && !colors.isDay) colors.textSecondary else colors.textMuted,
-)
+internal fun pickerLead(noDrivers: Boolean, tripLine: String?, forTrip: Boolean, recording: Boolean): String? = when {
+    noDrivers -> null
+    tripLine != null -> tripLine
+    forTrip -> null
+    recording -> OverlayCopy.PICKER_RECORDING
+    else -> OverlayCopy.PICKER_NEXT
+}
 
 /** The trip the picker sets the driver of: "11월 9일 (월) 08:12–08:47 · 12.4 km", or "08:12 출발 · 기록 중" while it records. */
 internal fun pickerTripLine(trip: Trip, zone: ZoneId): String {

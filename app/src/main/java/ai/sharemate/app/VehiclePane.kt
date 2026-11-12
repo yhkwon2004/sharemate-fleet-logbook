@@ -1,7 +1,6 @@
 package ai.sharemate.app
 
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -14,19 +13,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -144,21 +139,6 @@ internal fun VehiclePane(state: TripLogState, now: Long, act: Act, repository: T
                 record()
             }
         }
-    }
-}
-
-/**
- * The car card's surface (2.10): the scene's glass with a low-alpha wash of the accent from the top left, so it reads as
- * a bright key card by day and as the navy card of the night scene without a fixed palette. The tutorial's story panel
- * uses it too.
- */
-@Composable internal fun KeyCard(modifier: Modifier = Modifier, padding: Dp = 24.dp, content: @Composable ColumnScope.() -> Unit) {
-    val accent = Scene.accent
-    val glow = Scene.glow
-    // Hoisted out of the draw: the brush is built in composition from the scene in effect.
-    val wash = Brush.linearGradient(listOf(accent.copy(alpha = .18f), Color.Transparent, glow.copy(alpha = .08f)))
-    Surface(modifier, shape = RoundedCornerShape(24.dp), color = Scene.glass, contentColor = Scene.text, border = Scene.edge) {
-        Column(Modifier.fillMaxSize().background(wash).padding(padding), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
     }
 }
 

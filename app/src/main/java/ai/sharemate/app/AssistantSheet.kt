@@ -9,12 +9,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -128,11 +130,25 @@ private sealed interface TurnState {
 private data class AssistantTurn(val id: Long, val text: String, val state: TurnState)
 
 /**
+ * What the follow-up bar says when the sheet closes on a change not taken back (pure, unit-tested): the answer's first
+ * sentence after "운행 비서: ". On the car (2.13, [car]) without its final period, the car's one-line rule, and where that
+ * would not fit the bar's line beside its 실행 취소 ([followUpFits]) the plain 운행 비서가 기록을 바꿨어요 instead of a cut
+ * sentence. The phone keeps 2.12's words, up to 60 characters of the sentence.
+ */
+internal fun assistantFollowUp(text: String, car: Boolean): String {
+    val first = Regex("^.*?요\\.").find(text)?.value ?: text
+    if (!car) return "운행 비서: ${first.take(60)}"
+    val line = "운행 비서: ${first.trim().removeSuffix(".")}"
+    return if (followUpFits(line, actions = 1)) line else OverlayCopy.ASSISTANT_CHANGED
+}
+
+/**
  * Bottom sheet for the parked car and the phone. [compact] is the window (the phone, or a car window narrower than the
  * roomy sheet): it sets the padding, the sheet's width and the type. The touch targets and the press come from the device
  * ([LocalLayout]'s startAnchored, true on the car), so a split car window keeps 56-dp targets and the car's press. The host
  * decides when it may be open; passing `open = false` composes nothing, so flipping it when the car starts moving removes
- * the sheet at once. [initialText] pre-fills the field when the sheet is opened from an example phrase.
+ * the sheet at once. [initialText] pre-fills the field when the sheet is opened from an example phrase. On the car (2.13,
+ * [isCar]) the sheet is the car's card colour; its width, scrim and handle are the same on both.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -149,9 +165,10 @@ internal fun AssistantSheet(
     initialText: String? = null,
 ) {
     if (!open) return
+    val car = isCar()
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = MaterialTheme.colorScheme.surface,
-        contentColor = MaterialTheme.colorScheme.onSurface, sheetMaxWidth = if (compact) BottomSheetDefaults.SheetMaxWidth else 960.dp,
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = if (car) Car.skin.card else MaterialTheme.colorScheme.surface,
+        contentColor = if (car) Scene.text else MaterialTheme.colorScheme.onSurface, sheetMaxWidth = if (compact) BottomSheetDefaults.SheetMaxWidth else 960.dp,
         scrimColor = MaterialTheme.colorScheme.scrim.copy(alpha = SHEET_SCRIM_ALPHA),
         dragHandle = { BottomSheetDefaults.DragHandle(color = Scene.outline) }) {
         AssistantBody(data, now, writer, act, followUp, onOpenTrip, onDismiss, compact,
@@ -177,6 +194,8 @@ internal fun AssistantBody(
     val colors = MaterialTheme.colorScheme
     val haptic = LocalHapticFeedback.current
     val reduce = LocalReduceMotion.current
+    // The car's look (2.13): every difference below is `if (car) … else` the phone's 2.12 code, which stays as it was.
+    val car = isCar()
     val pad = if (compact) 16.dp else 28.dp
     // The device, not the window, sets the targets: a car window split narrower than the roomy sheet is still the car.
     val tap = assistantTapTarget(car = LocalLayout.current.startAnchored, compact = compact)
@@ -246,8 +265,7 @@ internal fun AssistantBody(
     DisposableEffect(Unit) {
         onDispose {
             val change = latestChange ?: return@onDispose
-            val first = Regex("^.*?요\\.").find(change.text)?.value ?: change.text
-            latestFollowUp(FollowUp("운행 비서: ${first.take(60)}", "실행 취소") { writer.undo(change) })
+            latestFollowUp(FollowUp(assistantFollowUp(change.text, car), "실행 취소") { writer.undo(change) })
         }
     }
 
@@ -257,27 +275,32 @@ internal fun AssistantBody(
     }
 
     Column(modifier.fillMaxWidth().imePadding().padding(horizontal = pad).padding(bottom = pad), verticalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 16.dp)) {
-        AssistantHeader(compact, tap, writer.sourceNote, onClose)
+        AssistantHeader(compact, tap, writer.sourceNote, onClose, car)
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll), verticalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 16.dp)) {
-            if (turns.isEmpty()) AssistantIntro(compact, writer.canWrite)
+            if (turns.isEmpty()) AssistantIntro(compact, writer.canWrite, car)
             turns.forEachIndexed { index, turn ->
-                UserBubble(turn.text, compact, tap, enabled = !busy) { input = turn.text }
+                UserBubble(turn.text, compact, tap, enabled = !busy, car = car) { input = turn.text }
                 when (val state = turn.state) {
-                    TurnState.Thinking -> ThinkingBubble(compact)
-                    is TurnState.Confirm -> ConfirmBubble(state.preview, compact, tap, busy, onOpenTrip,
+                    TurnState.Thinking -> ThinkingBubble(compact, car)
+                    is TurnState.Confirm -> ConfirmBubble(state.preview, compact, tap, busy, onOpenTrip, car,
                         confirm = { execute(turn.id, turn.text) }, revise = { input = turn.text; turns.removeAt(index) })
-                    is TurnState.Done -> AnswerBubble(state.answer, state.undone, compact, tap, busy, writer.sourceNote, onOpenTrip,
+                    // The car never shows the source note: its writer is the car's own log.
+                    is TurnState.Done -> AnswerBubble(state.answer, state.undone, compact, tap, busy, if (car) null else writer.sourceNote, onOpenTrip, car,
                         again = { execute(turn.id, turn.text) }, revise = { input = turn.text }, undo = { undo(turn.id, state.answer) },
                         send = { submit(it) })
-                    is TurnState.Failed -> FailedBubble(state.message, compact, tap, busy) { execute(turn.id, turn.text) }
+                    is TurnState.Failed -> FailedBubble(state.message, compact, tap, busy, car) { execute(turn.id, turn.text) }
                 }
             }
         }
-        if (!writer.canWrite) Muted("차량과 연결되면 기록할 수 있어요. 지금은 요약과 확인만 돼요.", Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+        if (!writer.canWrite && !car) Muted("차량과 연결되면 기록할 수 있어요. 지금은 요약과 확인만 돼요.", Modifier.semantics { liveRegion = LiveRegionMode.Polite })
         FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             chips.forEach { prompt ->
-                val writes = writesLog(parseIntent(prompt, today))
-                PromptChip(prompt, tap, enabled = !busy && (writer.canWrite || !writes)) { submit(prompt) }
+                // The car's writer can always write, so its chips have no disabled state but the one while a turn runs.
+                if (car) CarExampleChip(prompt, onClick = { submit(prompt) }, enabled = !busy, actionLabel = OverlayCopy.ASSISTANT_CHIP_ACTION)
+                else {
+                    val writes = writesLog(parseIntent(prompt, today))
+                    PromptChip(prompt, tap, enabled = !busy && (writer.canWrite || !writes)) { submit(prompt) }
+                }
             }
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -285,10 +308,12 @@ internal fun AssistantBody(
                 textStyle = MaterialTheme.typography.bodyLarge, shape = RoundedCornerShape(18.dp), isError = tooLong,
                 placeholder = { Text("예: 주차비 4,500원 추가해줘", color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 supportingText = if (tooLong) { { Text("${ASSISTANT_MAX_INPUT}자까지 알아들을 수 있어요 · 지금 ${input.length}자", color = colors.error) } } else null,
+                // The car's focus ring is the accent ink (4.93 / 7.66), as every car field's; the phone keeps the scheme's primary.
                 colors = OutlinedTextFieldDefaults.colors(unfocusedContainerColor = colors.surfaceContainerLow, focusedContainerColor = colors.surface,
-                    unfocusedBorderColor = Scene.outline, focusedBorderColor = colors.primary),
+                    unfocusedBorderColor = Scene.outline, focusedBorderColor = if (car) Car.skin.accentInk else colors.primary),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { submit(input) }))
-            Button(onClick = { submit(input) }, enabled = input.isNotBlank() && !tooLong && !busy, shape = RoundedCornerShape(18.dp),
+            if (car) PrimaryAction("보내기", Modifier.heightIn(min = tap), enabled = input.isNotBlank() && !tooLong && !busy) { submit(input) }
+            else Button(onClick = { submit(input) }, enabled = input.isNotBlank() && !tooLong && !busy, shape = RoundedCornerShape(18.dp),
                 modifier = Modifier.heightIn(min = tap).semantics { contentDescription = "보내기" }) {
                 Text("보내기", style = MaterialTheme.typography.labelLarge, modifier = Modifier.clearAndSetSemantics {})
             }
@@ -310,7 +335,24 @@ internal fun AssistantBody(
         border = border, interactionSource = source, content = content)
 }
 
-@Composable private fun AssistantHeader(compact: Boolean, tap: Dp, sourceNote: String?, onClose: (() -> Unit)?) {
+/**
+ * The sheet's title. On the car (2.13) it is the car's: 운행 비서 with its icon and what it is as a tag (the 설정 card's
+ * title), 닫기 as a pill at the end, and how it works as one ⓘ line; the phone keeps its headline, chip and grey note.
+ */
+@Composable private fun AssistantHeader(compact: Boolean, tap: Dp, sourceNote: String?, onClose: (() -> Unit)?, car: Boolean) {
+    if (car) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                CarSectionTitle(ASSISTANT_TITLE, Modifier.weight(1f), icon = painterResource(R.drawable.ic_assistant)) { CarTag(ASSISTANT_LABEL) }
+                if (onClose != null) {
+                    Spacer(Modifier.width(16.dp))
+                    CarPillButton("닫기", onClick = onClose)
+                }
+            }
+            CarInfoRow(ASSISTANT_NOTE)
+        }
+        return
+    }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -330,7 +372,19 @@ internal fun AssistantBody(
     }
 }
 
-@Composable private fun AssistantIntro(compact: Boolean, canWrite: Boolean) {
+/**
+ * The sheet before the first turn. On the car (2.13) the question over one line, then an ⓘ row that says a change is shown
+ * before it is made and unfolds what the assistant can do; the car's writer can always write, so it has one version.
+ */
+@Composable private fun AssistantIntro(compact: Boolean, canWrite: Boolean, car: Boolean) {
+    if (car) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(OverlayCopy.ASSISTANT_ASK, style = MaterialTheme.typography.titleMedium, color = Scene.text)
+            CarLine(OverlayCopy.ASSISTANT_ASK_LINE)
+            CarInfoRow(OverlayCopy.ASSISTANT_HOW, more = OverlayCopy.ASSISTANT_HOW_MORE)
+        }
+        return
+    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("무엇을 도와드릴까요? 아래 제안을 누르거나 짧게 적어 주세요.", style = if (compact) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.titleMedium)
         Muted(if (canWrite) "할 수 있는 일 · 운행 목적 기록 · 비용 추가 · 요약, 차량 기한, 월 마감 확인. 바꾸는 일은 먼저 어떻게 이해했는지 보여 드리고, 누르신 뒤에만 기록해요."
@@ -338,12 +392,18 @@ internal fun AssistantBody(
     }
 }
 
-/** The sentence the person sent; tapping it puts the words back in the field to adjust and resend. [tap] is the device's target; the bubble stops at 56 dp. */
-@Composable private fun UserBubble(text: String, compact: Boolean, tap: Dp, enabled: Boolean, onRevise: () -> Unit) {
+/**
+ * The sentence the person sent; tapping it puts the words back in the field to adjust and resend. [tap] is the device's target;
+ * the bubble stops at 56 dp. On the car (2.13) it sits on the chip fill inside the chip border (text 15.49 / 15.00), where the
+ * phone's primary container would be a third blue beside the accent.
+ */
+@Composable private fun UserBubble(text: String, compact: Boolean, tap: Dp, enabled: Boolean, car: Boolean, onRevise: () -> Unit) {
     val colors = MaterialTheme.colorScheme
+    val skin = Car.skin
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
         TapSurface(onClick = onRevise, enabled = enabled, shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomStart = 22.dp, bottomEnd = 6.dp),
-            color = colors.primaryContainer, contentColor = colors.onPrimaryContainer,
+            color = if (car) skin.chipFill else colors.primaryContainer, contentColor = if (car) Scene.text else colors.onPrimaryContainer,
+            border = if (car) BorderStroke(1.dp, skin.chipBorder) else null,
             modifier = Modifier.widthIn(max = if (compact) 320.dp else 560.dp).heightIn(min = tap.coerceAtMost(56.dp))
                 .semantics { contentDescription = "보낸 말: $text. 눌러서 고쳐 묻기" }) {
             Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp))
@@ -351,10 +411,16 @@ internal fun AssistantBody(
     }
 }
 
-@Composable private fun AssistantSurface(modifier: Modifier = Modifier, compact: Boolean, content: @Composable () -> Unit) {
+/**
+ * An answer's bubble. On the car (2.13) the tag fill inside the tag border (text 15.36 / 15.00, negative 4.95 / 4.51,
+ * positive 5.49 / 8.51), the car's grey for what the app says; the phone keeps Pleos's surfaceHigh.
+ */
+@Composable private fun AssistantSurface(modifier: Modifier = Modifier, compact: Boolean, car: Boolean, content: @Composable () -> Unit) {
+    val skin = Car.skin
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
         Surface(shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp, bottomEnd = 22.dp, bottomStart = 6.dp),
-            color = LocalPleosColors.current.surfaceHigh, contentColor = MaterialTheme.colorScheme.onSurface,
+            color = if (car) skin.tagFill else LocalPleosColors.current.surfaceHigh, contentColor = if (car) Scene.text else MaterialTheme.colorScheme.onSurface,
+            border = if (car) BorderStroke(1.dp, skin.tagBorder) else null,
             modifier = modifier.widthIn(max = if (compact) 360.dp else 720.dp)) {
             Box(Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) { content() }
         }
@@ -362,10 +428,10 @@ internal fun AssistantBody(
 }
 
 /** Shown only once real work has taken longer than a blink; a rule engine usually answers before this appears. */
-@Composable private fun ThinkingBubble(compact: Boolean) {
+@Composable private fun ThinkingBubble(compact: Boolean, car: Boolean) {
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { delay(THINKING_DELAY_MS); visible = true }
-    AssistantSurface(Modifier.heightIn(min = 48.dp).alpha(if (visible) 1f else 0f), compact) {
+    AssistantSurface(Modifier.heightIn(min = 48.dp).alpha(if (visible) 1f else 0f), compact, car) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             ThinkingDots()
             Text("기록을 읽고 있어요", style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary)
@@ -373,48 +439,74 @@ internal fun AssistantBody(
     }
 }
 
-/** A write waits here: the exact interpretation, the trips it would touch, and one button to let it happen. */
-@Composable private fun ConfirmBubble(preview: AssistantAnswer, compact: Boolean, tap: Dp, busy: Boolean, onOpenTrip: (String) -> Unit, confirm: () -> Unit, revise: () -> Unit) {
-    val verb = if (preview.intent is AssistantIntent.AddExpense) "추가" else "기록"
-    AssistantSurface(Modifier.semantics { liveRegion = LiveRegionMode.Polite }, compact) {
+/**
+ * A write waits here: the exact interpretation, the trips it would touch, and one button to let it happen. On the car (2.13)
+ * the line under it is one line with the particle right (추가를, 기록을; 2.12 wrote 추가을), the long form for TalkBack, and
+ * the buttons are the car's: the accent [PrimaryAction] (Material's Button was white by night) beside [QuietAction] 고치기.
+ */
+@Composable private fun ConfirmBubble(preview: AssistantAnswer, compact: Boolean, tap: Dp, busy: Boolean, onOpenTrip: (String) -> Unit, car: Boolean,
+    confirm: () -> Unit, revise: () -> Unit) {
+    val cost = preview.intent is AssistantIntent.AddExpense
+    val verb = if (cost) "추가" else "기록"
+    AssistantSurface(Modifier.semantics { liveRegion = LiveRegionMode.Polite }, compact, car) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(preview.text, style = MaterialTheme.typography.bodyLarge)
-            if (preview.citations.isNotEmpty()) CitationRow(preview.citations, compact, tap, onOpenTrip)
-            Muted("이렇게 이해했어요. 맞으면 ${verb}을 눌러 주세요. 기록 뒤에도 바로 되돌릴 수 있어요.")
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = confirm, enabled = !busy, shape = RoundedCornerShape(18.dp), modifier = Modifier.heightIn(min = tap)) { Text(verb, style = MaterialTheme.typography.labelLarge) }
-                FilledTonalButton(onClick = revise, enabled = !busy, shape = RoundedCornerShape(18.dp), modifier = Modifier.heightIn(min = tap),
-                    colors = ButtonDefaults.filledTonalButtonColors(containerColor = MaterialTheme.colorScheme.surface)) { Text("고치기", style = MaterialTheme.typography.labelLarge) }
+            if (preview.citations.isNotEmpty()) CitationRow(preview.citations, compact, tap, onOpenTrip, car)
+            if (car) {
+                CarLine(OverlayCopy.assistantConfirm(cost), spoken = OverlayCopy.spokenAssistantConfirm(cost))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    PrimaryAction(verb, enabled = !busy, onClick = confirm)
+                    QuietAction("고치기", enabled = !busy, onClick = revise)
+                }
+            } else {
+                Muted("이렇게 이해했어요. 맞으면 ${verb}을 눌러 주세요. 기록 뒤에도 바로 되돌릴 수 있어요.")
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = confirm, enabled = !busy, shape = RoundedCornerShape(18.dp), modifier = Modifier.heightIn(min = tap)) { Text(verb, style = MaterialTheme.typography.labelLarge) }
+                    FilledTonalButton(onClick = revise, enabled = !busy, shape = RoundedCornerShape(18.dp), modifier = Modifier.heightIn(min = tap),
+                        colors = ButtonDefaults.filledTonalButtonColors(containerColor = MaterialTheme.colorScheme.surface)) { Text("고치기", style = MaterialTheme.typography.labelLarge) }
+                }
             }
         }
     }
 }
 
+/**
+ * An answer: its text as it streams in, then the steps, the trips it cites, the usual amounts when a cost came without a sum,
+ * and the way on (실행 취소 while the change stands, 다시 생성, 고쳐 묻기). On the car (2.13) the amounts are [CarExampleChip]s,
+ * the source note never shows, the undone line is one line, and the actions are [CarPillButton]s with the same words.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable private fun AnswerBubble(answer: AssistantAnswer, undone: Boolean, compact: Boolean, tap: Dp, busy: Boolean, sourceNote: String?,
-    onOpenTrip: (String) -> Unit, again: () -> Unit, revise: () -> Unit, undo: () -> Unit, send: (String) -> Unit) {
+    onOpenTrip: (String) -> Unit, car: Boolean, again: () -> Unit, revise: () -> Unit, undo: () -> Unit, send: (String) -> Unit) {
     val colors = MaterialTheme.colorScheme
     var streamed by remember(answer.text) { mutableStateOf(false) }
     val askAmount = answer.intent as? AssistantIntent.AskAmount
-    AssistantSurface(Modifier.semantics { liveRegion = LiveRegionMode.Polite }, compact) {
+    AssistantSurface(Modifier.semantics { liveRegion = LiveRegionMode.Polite }, compact, car) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             StreamingText(answer.text, onDone = { streamed = true })
             if (answer.steps.isNotEmpty() && streamed) StepList(answer.steps, undone)
-            if (answer.citations.isNotEmpty() && streamed) CitationRow(answer.citations, compact, tap, onOpenTrip)
+            if (answer.citations.isNotEmpty() && streamed) CitationRow(answer.citations, compact, tap, onOpenTrip, car)
             // A cost named without a sum: the usual amounts are one tap away, the field stays open for any other.
             if (askAmount != null && streamed) Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 // A caption over the chips inside the bubble, not a section label: grey rather than the brand eyebrow.
                 Eyebrow("금액 선택 · ${askAmount.type.label}", Scene.textSecondary)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     quickAmounts(askAmount.type).forEach { amount ->
-                        PromptChip(formatWon(amount), tap, enabled = !busy, description = "${askAmount.type.label} ${formatWon(amount)} 추가") { send(expensePhrase(askAmount.type, amount)) }
+                        val description = "${askAmount.type.label} ${formatWon(amount)} 추가"
+                        if (car) CarExampleChip(formatWon(amount), onClick = { send(expensePhrase(askAmount.type, amount)) },
+                            Modifier.semantics { contentDescription = description }, enabled = !busy, actionLabel = OverlayCopy.ASSISTANT_CHIP_ACTION)
+                        else PromptChip(formatWon(amount), tap, enabled = !busy, description = description) { send(expensePhrase(askAmount.type, amount)) }
                     }
                 }
             }
             if (sourceNote != null && !answer.changed && answer.intent !is AssistantIntent.Unknown) Muted(sourceNote)
-            if (undone) Text("되돌렸어요. 기록은 이전 상태예요.", style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary,
-                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (undone) Text(if (car) OverlayCopy.ASSISTANT_UNDONE else "되돌렸어요. 기록은 이전 상태예요.", style = MaterialTheme.typography.bodyMedium,
+                color = Scene.textSecondary, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+            if (car) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (answer.changed && !undone) CarPillButton(OverlayCopy.UNDO, onClick = undo, enabled = !busy)
+                if (!answer.changed || undone) CarPillButton("다시 생성", onClick = again, enabled = !busy)
+                CarPillButton("고쳐 묻기", onClick = revise, enabled = !busy)
+            } else Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (answer.changed && !undone) TextButton(onClick = undo, enabled = !busy, modifier = Modifier.heightIn(min = tap)) { Text("실행 취소", style = MaterialTheme.typography.labelLarge) }
                 if (!answer.changed || undone) TextButton(onClick = again, enabled = !busy, modifier = Modifier.heightIn(min = tap),
                     colors = ButtonDefaults.textButtonColors(contentColor = colors.onSurfaceVariant)) { Text("다시 생성", style = MaterialTheme.typography.labelLarge) }
@@ -425,11 +517,16 @@ internal fun AssistantBody(
     }
 }
 
-@Composable private fun FailedBubble(message: String, compact: Boolean, tap: Dp, busy: Boolean, retry: () -> Unit) {
-    AssistantSurface(Modifier.semantics { liveRegion = LiveRegionMode.Polite }, compact) {
+/**
+ * A turn that could not be done, with 다시 시도. On the car (2.13) its sentences are one line, without their final periods
+ * ([dialogLines], joined with " · "), and 다시 시도 is a [CarPillButton].
+ */
+@Composable private fun FailedBubble(message: String, compact: Boolean, tap: Dp, busy: Boolean, car: Boolean, retry: () -> Unit) {
+    AssistantSurface(Modifier.semantics { liveRegion = LiveRegionMode.Polite }, compact, car) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(message, style = MaterialTheme.typography.bodyLarge, color = Scene.negative)
-            TextButton(onClick = retry, enabled = !busy, modifier = Modifier.heightIn(min = tap)) { Text("다시 시도", style = MaterialTheme.typography.labelLarge) }
+            Text(if (car) dialogLines(message).joinToString(" · ") else message, style = MaterialTheme.typography.bodyLarge, color = Scene.negative)
+            if (car) CarPillButton("다시 시도", onClick = retry, enabled = !busy)
+            else TextButton(onClick = retry, enabled = !busy, modifier = Modifier.heightIn(min = tap)) { Text("다시 시도", style = MaterialTheme.typography.labelLarge) }
         }
     }
 }
@@ -455,16 +552,21 @@ internal fun AssistantBody(
     }
 }
 
-/** Trips the answer read or changed, as chips that open the trip itself: the source is always one tap away. [tap] is the device's target; the chips stop at 56 dp. */
+/**
+ * Trips the answer read or changed, as chips that open the trip itself: the source is always one tap away. [tap] is the
+ * device's target; the chips stop at 56 dp. On the car (2.13) a chip is the card colour inside the chip border, as the car's
+ * outlined controls are.
+ */
 @OptIn(ExperimentalLayoutApi::class)
-@Composable private fun CitationRow(citations: List<AssistantCitation>, compact: Boolean, tap: Dp, onOpenTrip: (String) -> Unit) {
+@Composable private fun CitationRow(citations: List<AssistantCitation>, compact: Boolean, tap: Dp, onOpenTrip: (String) -> Unit, car: Boolean) {
     val colors = MaterialTheme.colorScheme
+    val skin = Car.skin
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Eyebrow("출처 · 운행 ${citations.size}건", Scene.textSecondary)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             citations.forEach { citation ->
-                TapSurface(onClick = { onOpenTrip(citation.tripId) }, shape = RoundedCornerShape(14.dp), color = colors.surface, contentColor = Scene.text,
-                    border = BorderStroke(1.dp, Scene.outline),
+                TapSurface(onClick = { onOpenTrip(citation.tripId) }, shape = RoundedCornerShape(14.dp), color = if (car) skin.card else colors.surface, contentColor = Scene.text,
+                    border = BorderStroke(1.dp, if (car) skin.chipBorder else Scene.outline),
                     modifier = Modifier.heightIn(min = tap.coerceAtMost(56.dp)).semantics { contentDescription = "운행 상세 보기: ${citation.label}" }) {
                     Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(citation.label, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = if (compact) 260.dp else 420.dp))

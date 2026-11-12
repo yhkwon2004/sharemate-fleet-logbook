@@ -27,13 +27,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -44,10 +44,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material3.AlertDialogDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -75,9 +73,6 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.semantics.paneTitle
-import androidx.compose.ui.semantics.role
-import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -89,8 +84,6 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isFinite
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -106,10 +99,11 @@ import java.util.UUID
 
 /**
  * A person's avatar (2.12): their [driverMonogram] in bold [Scene.text] on the car's disc (14.80 / 13.26), with no edge, or
- * with [ring] the 1.5-dp selection ring. The letters take titleMedium from 48 dp up and labelLarge below, and step down only
- * where they would not fit the disc (two Hangul syllables at a 1.3× font are wider than 40 dp). Nobody (a null [driver], or
- * a person without a name) is the person glyph at 45 % of the disc in the icon ink, where 2.11 showed a dash: initials always
- * mean someone. Decorative: the card or row around it names the person.
+ * with [ring] (2.13) a 2-dp accentInk ring, the one selection paint's (4.20 / 6.35 against the disc; the 1.5-dp teal ring of
+ * 2.12 was the second selection colour beside the blue accent). The letters take titleMedium from 48 dp up and labelLarge
+ * below, and step down only where they would not fit the disc (two Hangul syllables at a 1.3× font are wider than 40 dp).
+ * Nobody (a null [driver], or a person without a name) is the person glyph at 45 % of the disc in the icon ink, where 2.11
+ * showed a dash: initials always mean someone. Decorative: the card or row around it names the person.
  */
 @Composable internal fun DriverAvatar(driver: Driver?, size: Dp, modifier: Modifier = Modifier, ring: Boolean = false) {
     val style = if (size >= 48.dp) MaterialTheme.typography.titleMedium else MaterialTheme.typography.labelLarge
@@ -117,7 +111,7 @@ import java.util.UUID
     val skin = Car.skin
     val monogram = driver?.name?.takeIf { it.isNotBlank() }?.let(::driverMonogram)
     Box(modifier.size(size).clip(CircleShape).background(skin.disc)
-        .then(if (ring) Modifier.border(BorderStroke(1.5.dp, Scene.selectionRing), CircleShape) else Modifier)
+        .then(if (ring) Modifier.border(BorderStroke(2.dp, skin.accentInk), CircleShape) else Modifier)
         .padding(horizontal = size * .14f).clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
         if (monogram == null) Icon(Icons.Outlined.Person, contentDescription = null, Modifier.size(size * .45f), tint = skin.icon)
         else BasicText(monogram, style = style.copy(fontWeight = FontWeight.Bold, lineHeight = TextUnit.Unspecified, textAlign = TextAlign.Center),
@@ -266,12 +260,14 @@ internal const val NOW_CARD_NO_DRIVERS_SPOKEN = "운행기록부 ④ 사용자 �
 /**
  * The driver picker's dialog ([DriverPicker] in the shell), for the person driving now ([tripId] null) or for one trip. Cards
  * in [pickerColumns] columns in the stable order of [driverRows]: avatar 56, name, department and what is next for that
- * person; the chosen one on the selection fill with its ring, the name in glow and a ✓. One tap commits and closes (the same
- * person just closes) and the follow-up bar says what changed, with undo where there was someone before
- * ([driverPickMessage]). Over eight 직원 bring a search field. The list takes what the title, the search field, the footnote
- * and the footer leave, at most 60 % of the window, so the footer's buttons stay whole on a short window; it opens scrolled to
- * the chosen card. 720 dp at most in the AlertDialog colour, and it fades in and out: car dialogs fade only (spec C), so the
- * window's own fade-and-slide gives way to [R.style.CarDialogFade] (160 / 120 ms), and to nothing under reduced motion.
+ * person; the chosen one in the one selection paint ([carSelection]: the chip fill inside a 2-dp accentInk ring) with a ✓
+ * beside the name. One tap commits and closes (the same person just closes) and the follow-up bar says what changed, with
+ * undo where there was someone before ([driverPickMessage]). Over eight 직원 bring a search field. The list takes what the
+ * title, the search field, the footnote and the footer leave, at most 60 % of the window, so the footer's buttons stay whole
+ * on a short window; it opens scrolled to the chosen card. Since 2.13 it is the car's dialog ([CarDialogFrame], 720 dp at
+ * most): the card colour with its hairline, where Material's AlertDialog colour left the accent ink at 4.26 by day, and the
+ * window fades only (spec C). Its lines are one each ([pickerLead]; the trip note an ⓘ row), and its footer is pill buttons,
+ * or, with nobody registered, 닫기 beside the one way on, 직원 추가.
  */
 @Composable internal fun DriverPickerDialog(data: TripLogData, tripId: String?, act: Act, repository: TripLogRepository, dismiss: () -> Unit, now: Long,
     goSettings: () -> Unit) {
@@ -279,7 +275,7 @@ internal const val NOW_CARD_NO_DRIVERS_SPOKEN = "운행기록부 ④ 사용자 �
     val forTrip = tripId != null
     val trip = tripId?.let { id -> data.trips.firstOrNull { it.id == id } ?: data.open?.takeIf { it.id == id } }
     val chosenId = if (forTrip) trip?.driverId else data.currentDriverId
-    val title = if (forTrip) "이 운행을 운전한 직원" else "지금 운전하는 직원"
+    val title = if (forTrip) OverlayCopy.PICKER_TRIP_TITLE else OverlayCopy.PICKER_NOW_TITLE
     val searchable = data.drivers.size >= PICKER_SEARCH_FROM
     var query by rememberSaveable { mutableStateOf("") }
     val shownQuery = if (searchable) query else ""
@@ -297,15 +293,15 @@ internal const val NOW_CARD_NO_DRIVERS_SPOKEN = "운행기록부 ④ 사용자 �
             }
         }
     }
-    Dialog(onDismissRequest = dismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        CarDialogFade()
-        // The content wraps the card (the window spans the screen's width), so a tap beside the card still dismisses it.
-        BoxWithConstraints(Modifier.padding(24.dp)) {
-            val columns = pickerColumns(minOf(maxWidth, 720.dp) - 56.dp, LocalDensity.current.fontScale)
+    CarDialogFrame(title, dismiss, maxWidth = 720.dp) {
+        // The frame's content: the card less its 28-dp padding, inside the window less the frame's 24-dp margins.
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val columns = pickerColumns(maxWidth, LocalDensity.current.fontScale)
             // A dialog's window always bounds the card. Unbounded (a preview), a weighted list would get no height at all, so
-            // there it is a plain child capped at 480 dp.
+            // there it is a plain child capped at 480 dp. Bounded, the list keeps 2.11's rule: at most 60 % of the room around
+            // the card (the window less its margins), which is this content's room plus the card's padding.
             val bounded = maxHeight.isFinite
-            val listMax = if (bounded) maxHeight * .6f else 480.dp
+            val listMax = if (bounded) (maxHeight + 56.dp) * .6f else 480.dp
             // Opens with the chosen card's row second from the top (first when it is in the first row), clamped at the end.
             val chosenIndex = rows.indexOfFirst { it.selected }
             val grid = rememberLazyGridState(initialFirstVisibleItemIndex = if (chosenIndex < 0) 0 else ((chosenIndex / columns - 1).coerceAtLeast(0)) * columns)
@@ -318,45 +314,42 @@ internal const val NOW_CARD_NO_DRIVERS_SPOKEN = "운행기록부 ④ 사용자 �
                 if (card == null || card.offset.y + card.size.height > laidOut.viewportEndOffset) grid.scrollToItem(chosenIndex)
             }
             val scope = rememberCoroutineScope()
-            Surface(Modifier.widthIn(max = 720.dp).fillMaxWidth().semantics { paneTitle = title }, shape = RoundedCornerShape(28.dp),
-                color = AlertDialogDefaults.containerColor, contentColor = MaterialTheme.colorScheme.onSurface, tonalElevation = AlertDialogDefaults.TonalElevation) {
-                Column(Modifier.padding(28.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(title, style = MaterialTheme.typography.headlineSmall, color = Scene.text, modifier = Modifier.semantics { heading() })
-                        // With nobody to pick, the empty state below says everything there is to say.
-                        val lead = when {
-                            data.drivers.isEmpty() -> null
-                            trip != null -> pickerTripLine(trip, zone)
-                            forTrip -> null
-                            data.open != null -> "새 운행과 기록 중인 운행에 바로 반영돼요."
-                            else -> "새 운행부터 적용돼요."
-                        }
-                        lead?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary) }
+            Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    CarSectionTitle(title, icon = rememberVectorPainter(Icons.Outlined.Person))
+                    // With nobody to pick, the empty state below says everything there is to say.
+                    pickerLead(data.drivers.isEmpty(), trip?.let { pickerTripLine(it, zone) }, forTrip, recording = data.open != null)?.let { CarLine(it) }
+                }
+                if (data.drivers.isEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
+                    DriverAvatar(null, 56.dp)
+                    Spacer(Modifier.width(16.dp))
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(OverlayCopy.PICKER_EMPTY, style = MaterialTheme.typography.titleSmall, color = Scene.text)
+                        CarLine(NOW_CARD_NO_DRIVERS_LINE, spoken = NOW_CARD_NO_DRIVERS_SPOKEN)
                     }
-                    if (data.drivers.isEmpty()) Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("등록된 직원이 없어요", style = MaterialTheme.typography.titleMedium, color = Scene.text)
-                        Text("부서와 성명을 등록하면 운행마다 운전한 직원이 운행기록부 ④ 사용자 칸에 들어가요.", style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary)
-                    } else {
-                        if (searchable) Field("이름이나 부서로 찾기", query, { value ->
-                            if (value.length <= 30) { query = value; scope.launch { grid.scrollToItem(0) } }
-                        }, done = true)
-                        // The grid is the card's weighted child, so the column measures it last: the title, the search field, the
-                        // footnote and the footer keep their height on a short window, and the list scrolls in what they leave. It
-                        // does not fill, so a short list still wraps the card.
-                        if (rows.isEmpty()) Text("맞는 직원이 없어요", style = MaterialTheme.typography.bodyLarge, color = Scene.textSecondary,
-                            modifier = Modifier.padding(vertical = 12.dp).semantics { liveRegion = LiveRegionMode.Polite })
-                        else LazyVerticalGrid(GridCells.Fixed(columns), Modifier.then(if (bounded) Modifier.weight(1f, fill = false) else Modifier).fillMaxWidth()
-                            .heightIn(max = listMax).selectableGroup(), state = grid,
-                            verticalArrangement = Arrangement.spacedBy(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            items(rows, key = { it.driver.id }) { row -> DriverPickCard(row, forTrip) { pick(row.driver) } }
-                        }
+                } else {
+                    if (searchable) Field(OverlayCopy.PICKER_SEARCH, query, { value ->
+                        if (value.length <= 30) { query = value; scope.launch { grid.scrollToItem(0) } }
+                    }, done = true)
+                    // The grid is the column's weighted child, so the column measures it last: the title, the search field, the
+                    // footnote and the footer keep their height on a short window, and the list scrolls in what they leave. It
+                    // does not fill, so a short list still wraps the card.
+                    if (rows.isEmpty()) Text(OverlayCopy.PICKER_NO_MATCH, style = MaterialTheme.typography.bodyLarge, color = Scene.textSecondary,
+                        modifier = Modifier.padding(vertical = 12.dp).semantics { liveRegion = LiveRegionMode.Polite })
+                    else LazyVerticalGrid(GridCells.Fixed(columns), Modifier.then(if (bounded) Modifier.weight(1f, fill = false) else Modifier).fillMaxWidth()
+                        .heightIn(max = listMax).selectableGroup(), state = grid,
+                        verticalArrangement = Arrangement.spacedBy(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(rows, key = { it.driver.id }) { row -> DriverPickCard(row, forTrip) { pick(row.driver) } }
                     }
-                    if (forTrip && data.drivers.isNotEmpty()) Text("운행기록부 ④ 사용자 칸이 바뀌고 수정 이력에 남아요.", style = MaterialTheme.typography.bodySmall,
-                        color = Scene.textMuted)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
-                        DialogButton(if (data.drivers.isEmpty()) "직원 추가" else "직원 추가·관리", onClick = goSettings)
-                        DialogButton("닫기", onClick = dismiss)
-                    }
+                }
+                if (forTrip && data.drivers.isNotEmpty()) CarInfoRow(OverlayCopy.PICKER_TRIP_NOTE, spoken = OverlayCopy.SPOKEN_PICKER_TRIP_NOTE)
+                // Nobody registered: closing and the one way on, as halves (the way on at the right). Otherwise two pills at the end.
+                if (data.drivers.isEmpty()) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    QuietAction("닫기", Modifier.weight(1f), onClick = dismiss)
+                    PrimaryAction(OverlayCopy.PICKER_ADD, Modifier.weight(1f), onClick = goSettings)
+                } else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+                    CarPillButton(OverlayCopy.PICKER_MANAGE, onClick = goSettings)
+                    CarPillButton("닫기", onClick = dismiss)
                 }
             }
         }
@@ -364,33 +357,39 @@ internal const val NOW_CARD_NO_DRIVERS_SPOKEN = "운행기록부 ④ 사용자 �
 }
 
 /**
- * One person in the picker: a card of at least 88 dp that settles to .98 and lights with the press fill. The chosen one sits
- * on the selection fill inside its 1.5-dp ring, with the name in glow and a trailing ✓; by day the others are white glass
- * ([pickerCardStyle] keeps every status line at AA on the dialog). TalkBack hears a radio button "Kim Jiwoo, Sales, 마지막
- * 운행 어제 18:47" and, when chosen, "지금 운전 중" (for a trip, "이 운행의 운전자").
+ * One person in the picker: a card of at least 88 dp, corner 20, that settles to .98 and lights with the press fill. The others
+ * are outlined with the chip border; the chosen one takes the one selection paint ([carSelection]: the chip fill inside a 2-dp
+ * accentInk ring), its name stays [Scene.text] (2.12's glow name was the teal second selection colour) and the accentInk ✓
+ * sits in the name's row, so the status line keeps its width ("마지막 운행 2025년 12월 30일" was cut on the chosen card).
+ * The status is textMuted in both states (5.82 / 6.27 on the card, 5.19 / 5.88 on the chip fill). TalkBack hears a radio
+ * button "Kim Jiwoo, Sales, 마지막 운행 어제 18:47" and, when chosen, "지금 운전 중" (for a trip, "이 운행의 운전자").
  */
 @Composable private fun DriverPickCard(row: DriverRowInfo, forTrip: Boolean, onPick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val chosen = row.selected
     val description = driverRowDescription(row)
-    val paint = pickerCardStyle(Scene.colors, chosen)
-    Surface(onClick = onPick, shape = RoundedCornerShape(20.dp), color = paint.fill, contentColor = Scene.text,
-        border = if (chosen) BorderStroke(1.5.dp, Scene.selectionRing) else null, interactionSource = interaction,
-        modifier = Modifier.fillMaxWidth().heightIn(min = 88.dp).pressable(interaction, .98f).semantics {
-            selected = chosen; role = Role.RadioButton; contentDescription = description
+    val shape = RoundedCornerShape(20.dp)
+    Row(Modifier.fillMaxWidth().heightIn(min = 88.dp).pressable(interaction, .98f).carSelection(chosen, shape, outlined = true).clip(shape)
+        .selectable(selected = chosen, interactionSource = interaction, indication = null, role = Role.RadioButton, onClick = onPick)
+        .semantics {
+            contentDescription = description
             if (chosen) stateDescription = if (forTrip) "이 운행의 운전자" else "지금 운전 중"
-        }) {
-        Row(Modifier.pressFill(interaction).heightIn(min = 88.dp).padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            DriverAvatar(row.driver, 56.dp)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(driverName(row.driver), style = MaterialTheme.typography.titleMedium, color = if (chosen) Scene.glow else Scene.text,
+        }
+        .pressFill(interaction).padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        DriverAvatar(row.driver, 56.dp)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(driverName(row.driver), Modifier.weight(1f, fill = false), style = MaterialTheme.typography.titleMedium, color = Scene.text,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (row.driver.department.isNotBlank()) Text(row.driver.department, style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(row.status, style = MaterialTheme.typography.labelMedium, color = paint.status, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (chosen) {
+                    Spacer(Modifier.width(8.dp))
+                    Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(20.dp), tint = Car.skin.accentInk)
+                }
             }
-            if (chosen) Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(24.dp), tint = Scene.glow)
+            if (row.driver.department.isNotBlank()) Text(row.driver.department, style = MaterialTheme.typography.bodyMedium, color = Scene.textSecondary,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(row.status, style = MaterialTheme.typography.labelMedium, color = Scene.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
