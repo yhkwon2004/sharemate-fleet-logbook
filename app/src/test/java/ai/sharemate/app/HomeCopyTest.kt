@@ -36,6 +36,9 @@ class HomeCopyTest {
         assertOneLine(HomeCopy.DOCK_LINE_OFF, DOCK_LINE_UNITS)
         // The tall dock's header (2.12's words): the title, the caption and 휴대폰에도 공유 on one line; TalkBack hears the first two.
         assertOneLine("${HomeCopy.DOCK_TITLE} ${HomeCopy.DOCK_CAPTION} ${HomeCopy.DOCK_SHARED}", DOCK_CAPTION_UNITS)
+        // Under 560 dp of dock ([dockHeaderOneRow]) the title row holds 휴대폰에도 공유 and the caption is a line of its own.
+        assertOneLine("${HomeCopy.DOCK_TITLE} ${HomeCopy.DOCK_SHARED}", DOCK_NARROW_UNITS)
+        assertOneLine(HomeCopy.DOCK_CAPTION, DOCK_NARROW_UNITS)
         assertEquals("사고·특이사항, 한 번 누르면 차량 정보가 바로 기록돼요", HomeCopy.SPOKEN_DOCK)
         val today = LocalDate.of(2026, 11, 20)
         val driver = Driver(id("d"), "영업", "권")
@@ -180,31 +183,35 @@ class HomeCopyTest {
         fun on(day: Int, hour: Int, minute: Int) = LocalDateTime.of(2026, 10, day, hour, minute).atZone(local).toInstant().toEpochMilli()
         val kim = Driver(id("k"), "Sales", "Kim Jiwoo")
         val none = homeIdle(TripLogData())
-        assertEquals(HomeIdle("아직 운행이 없어요", null, HomeLine("P에서 D로 바꾸면 기록이 시작돼요", HomeCopy.SPOKEN_IDLE_EMPTY_LINE), null), none)
+        assertEquals(HomeIdle(HomeLine("아직 운행이 없어요"), null, HomeLine("P에서 D로 바꾸면 기록이 시작돼요", HomeCopy.SPOKEN_IDLE_EMPTY_LINE), null), none)
         val older = Trip(id("a"), on(28, 9, 0), on(28, 9, 30), 12_000.0, 12_012.0, startAddress = "본사", destination = "강남 오피스", driverId = kim.id,
             purpose = TripPurpose.BUSINESS, updatedAt = on(28, 9, 30))
         val newest = Trip(id("b"), on(29, 2, 26), on(29, 2, 27), 12_337.0, 12_345.0, startAddress = "수정구 시흥동", destination = "판교", driverId = kim.id,
             purpose = TripPurpose.BUSINESS, updatedAt = on(29, 2, 27))
         val recording = Trip(id("r"), on(30, 8, 0), null, 12_345.0, 12_350.0, driverId = kim.id)
         val classified = homeIdle(TripLogData(drivers = listOf(kim), trips = listOf(older, newest, recording)))
-        assertEquals("운행기록 행의 제목 그대로", tripRowTitle(newest), classified.headline)
-        assertEquals("수정구 시흥동 → 판교", classified.headline)
+        assertEquals("운행기록 행의 제목 그대로", tripRowTitle(newest), classified.headline.text)
+        assertEquals("수정구 시흥동 → 판교", classified.headline.text)
+        assertEquals("장소는 하나씩 읽음", "수정구 시흥동, 판교", classified.headline.spoken)
+        assertFalse("화살표는 읽지 않음", classified.headline.spoken.contains('→'))
         assertEquals(8.0, classified.km!!, 1e-9)
         assertEquals("10월 29일 (목) 02:26 · 일반 업무 · Kim Jiwoo", classified.line.text)
         assertEquals("10월 29일 (목) 02:26 출발, 일반 업무, Kim Jiwoo", classified.line.spoken)
         assertEquals("그 운행의 달로 열림", YearMonth.of(2026, 10), classified.month)
-        // An unclassified trip without a driver or an address: the row title is its distance and time.
+        // An unclassified trip without a driver or an address: the row title is its distance and time, so no figure repeats it.
         val bare = newest.copy(id = id("c"), startAddress = null, destination = null, driverId = null, purpose = TripPurpose.UNCLASSIFIED)
         val unclassified = homeIdle(TripLogData(drivers = listOf(kim), trips = listOf(older, bare)))
-        assertEquals("8.0 km · 1분", unclassified.headline)
+        assertEquals("8.0 km · 1분", unclassified.headline.text)
+        assertEquals("8.0 km, 1분", unclassified.headline.spoken)
+        assertNull("주소 없는 운행은 제목이 이미 거리", unclassified.km)
         assertEquals("10월 29일 (목) 02:26 · 미분류 · 사용자 미지정", unclassified.line.text)
         assertEquals("10월 29일 (목) 02:26 출발, 목적 미분류, 사용자 미지정", unclassified.line.spoken)
         // Demo trips only in demo mode, real ones only outside it.
         val demoTrip = older.copy(id = id("d"), startAt = on(30, 10, 0), endAt = on(30, 10, 20), updatedAt = on(30, 10, 20), demo = true)
         val mixed = TripLogData(drivers = listOf(kim), trips = listOf(newest, demoTrip))
-        assertEquals("실제 모드는 시연 운행을 건너뜀", tripRowTitle(newest), homeIdle(mixed).headline)
+        assertEquals("실제 모드는 시연 운행을 건너뜀", tripRowTitle(newest), homeIdle(mixed).headline.text)
         val demo = homeIdle(mixed.copy(profile = FleetProfile(demoMode = true)))
-        assertEquals("시연 모드는 시연 운행만", tripRowTitle(demoTrip), demo.headline)
+        assertEquals("시연 모드는 시연 운행만", tripRowTitle(demoTrip), demo.headline.text)
         assertEquals("10월 30일 (금) 10:00 · 일반 업무 · Kim Jiwoo", demo.line.text)
         assertEquals("시연 모드에 시연 운행이 없으면 아직 없음", none, homeIdle(TripLogData(trips = listOf(newest), profile = FleetProfile(demoMode = true))))
         listOf(classified, unclassified, demo).forEach { assertOneLine(it.line.text, HOME_CARD_LINE_UNITS) }

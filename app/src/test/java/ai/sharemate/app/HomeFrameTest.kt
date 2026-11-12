@@ -69,6 +69,10 @@ class HomeFrameTest {
         assertEquals(28.dp, homeFrameFor(listOf(incident, care), demo = true).skyLeft)
         assertEquals(64.dp, homeFrameFor(listOf(incident, care), demo = false).skyLeft)
         assertEquals("빈 홈의 하늘", 301.dp, homeFrameFor(emptyList(), demo = false).skyLeft)
+        // On a page of another height the same blocks leave that much more or less (a FULL window under 1209 dp keeps the frame).
+        val idle = homeFrameFor(emptyList(), demo = false)
+        assertEquals(idle.skyLeft, idle.skyOn(HOME_PAGE_FULL))
+        assertEquals("1680 × 1100 창의 988 dp 페이지", 192.dp, idle.skyOn(988.dp))
     }
 
     @Test fun theFormsAreTheirAnatomy() {
@@ -182,6 +186,16 @@ class HomeFrameTest {
         assertTrue("작은 글꼴은 1배로 셈", incidentCaptionBeside(196.dp, .85f))
     }
 
+    /** The tall dock's header keeps 2.12's one row from 560 dp of dock (1,080 beside the 지금 column); narrower, the caption goes under the title. */
+    @Test fun theTallDocksHeaderKeepsOneRowFrom560Dp() {
+        assertTrue("지금 열 옆의 1,080 dp", dockHeaderOneRow(1080.dp, 1f))
+        assertTrue(dockHeaderOneRow(560.dp, 1f))
+        assertFalse("나눈 창의 좁은 독", dockHeaderOneRow(559.dp, 1f))
+        assertFalse("1.3배 글꼴은 728 dp부터", dockHeaderOneRow(727.dp, 1.3f))
+        assertTrue(dockHeaderOneRow(728.dp, 1.3f))
+        assertTrue("작은 글꼴은 1배로 셈", dockHeaderOneRow(560.dp, .85f))
+    }
+
     @Test fun theFollowUpBarRidesOverTheFootAndNeverOverTheButtons() {
         val dock = HOME_DOCK_TALL
         val foot = HOME_DEMO_STRIP + HOME_BAND_GAP + dock
@@ -201,6 +215,34 @@ class HomeFrameTest {
                 val cardFoot = HOME_PAGE_FULL - demo.dock - demo.demo - demo.skyLeft
                 val barTop = HOME_PAGE_FULL - lift - FOLLOW_UP_ROOM
                 assertTrue("${kind ?: "IDLE"} pager=$pager demo: bar $barTop, card $cardFoot", barTop >= cardFoot)
+            }
+        }
+    }
+
+    /**
+     * A FULL window shorter than 1209 dp keeps the 지금 column and the frame, but not its 1097-dp page: the bar decides by the
+     * sky the state leaves on the page it really has ([HomeFrame.skyOn]). Where the page rests (nothing scrolls), the bar in
+     * demo mode never reaches the card, whatever the page's height.
+     */
+    @Test fun inAShorterFullWindowTheBarDecidesByThePageItHas() {
+        // 1680 × 1100: a 988-dp page. The card question with the pager in demo mode is 963 dp and rests, with 49 dp of sky.
+        val review = homeFrameFor(listOf(AttentionItem(AttentionKind.CARD_REVIEW), AttentionItem(AttentionKind.FINISHED)), demo = true)
+        assertEquals(963.dp, review.total)
+        assertEquals("1,097 dp 페이지라면 158", 158.dp, review.skyLeft)
+        assertEquals(49.dp, review.skyOn(988.dp))
+        assertEquals("하늘이 49 dp면 시연 띠를 덮고 독 위로", review.dock, homeBarLift(review.demo + review.dock, review.dock, review.skyOn(988.dp)))
+        listOf(1180.dp, HOME_PAGE_FULL, 1040.dp, 988.dp, 900.dp, 800.dp).forEach { page ->
+            kinds.forEach { kind ->
+                listOf(false, true).forEach { pager ->
+                    val frame = homeFrame(kind, pager, demo = true, homeForms(kind, pager, demo = true))
+                    if (frame.total <= page) {
+                        val sky = frame.skyOn(page)
+                        val lift = homeBarLift(frame.demo + frame.dock, frame.dock, sky)
+                        val cardFoot = page - frame.dock - frame.demo - sky
+                        val barTop = page - lift - FOLLOW_UP_ROOM
+                        assertTrue("${kind ?: "IDLE"} pager=$pager page=$page: bar $barTop, card $cardFoot", barTop >= cardFoot)
+                    }
+                }
             }
         }
     }

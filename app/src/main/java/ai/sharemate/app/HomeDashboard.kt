@@ -554,9 +554,10 @@ private val GREETING_MIN_SIZE = 30.sp
 /**
  * One destination, a tappable [CarCard] that settles to .98 with the press fill. TALL (2.14, 2.12's look, [HOME_DESTINATION_TALL]
  * at least): its content centred, the icon on a 56-dp accent tile (corner 16, the glyph onAccent, 4.93), 16 dp, the title
- * in titleLarge, 6 dp, one line ([homeCardLines]) in bodyMedium textMuted, ellipsised, ending in a chevron; the count badge
- * at the top right. COMPACT (2.13, [HOME_DESTINATION_COMPACT] at least): 20 dp of padding, the title row (the icon, the
- * title, the count badge and the chevron) over one [CarLine]. TalkBack hears either as "차량 정보, 정기검사 D-9 · 배터리
+ * in titleLarge, 6 dp, one line ([homeCardLines]) in bodyMedium textMuted, ellipsised, ending in a chevron (two centred lines
+ * above 1.05×, [carLineMaxLines], so a large font outside the frame loses no words); the count badge at the top right.
+ * COMPACT (2.13, [HOME_DESTINATION_COMPACT] at least): 20 dp of padding, the title row (the icon, the title, the count
+ * badge and the chevron) over one [CarLine]. TalkBack hears either as "차량 정보, 정기검사 D-9 · 배터리
  * 100%, 확인 필요 2건" with the click label 열기.
  */
 @Composable internal fun DestinationCard(spec: HomeCardSpec, form: HomeForm, modifier: Modifier = Modifier) {
@@ -571,6 +572,7 @@ private val GREETING_MIN_SIZE = 30.sp
         return
     }
     val skin = Car.skin
+    val fontScale = LocalDensity.current.fontScale
     CarCard(modifier, onClick = spec.onClick, onClickLabel = HomeCopy.DESTINATION_CLICK, description = description, padding = 0.dp) {
         Box(Modifier.fillMaxWidth().heightIn(min = HOME_DESTINATION_TALL)) {
             Column(Modifier.align(Alignment.Center).fillMaxWidth().padding(horizontal = 16.dp, vertical = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -582,8 +584,8 @@ private val GREETING_MIN_SIZE = 30.sp
                     overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(spec.subtitle, Modifier.weight(1f, fill = false), style = MaterialTheme.typography.bodyMedium, color = Scene.textMuted, maxLines = 1,
-                        overflow = TextOverflow.Ellipsis)
+                    Text(spec.subtitle, Modifier.weight(1f, fill = false), style = MaterialTheme.typography.bodyMedium, color = Scene.textMuted,
+                        maxLines = carLineMaxLines(fontScale), overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
                     Spacer(Modifier.width(4.dp))
                     Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, Modifier.size(20.dp), tint = Scene.textSecondary)
                 }

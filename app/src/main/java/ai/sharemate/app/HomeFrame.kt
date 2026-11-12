@@ -280,8 +280,15 @@ internal fun dockHeight(form: HomeForm): Dp = if (form == HomeForm.TALL) HOME_DO
     val dock: Dp) {
     val total: Dp get() = greeting + HOME_BLOCK_GAP + destinations + HOME_BLOCK_GAP + card + sky + demo + dock
 
-    /** The sky this frame leaves at the least on the 1097-dp page: its fixed 24 dp and what the blocks do not take. */
-    val skyLeft: Dp get() = HOME_PAGE_FULL - total + sky
+    /**
+     * The sky this frame leaves at the least on a [page] of that height: its fixed 24 dp and what the blocks do not take. The
+     * frame is chosen for the 1097-dp page, but a FULL window a little shorter still has the 지금 column and this frame, so the
+     * follow-up bar decides by the page the window really gives ([homeBarLift]); there 1097 would promise sky that is not there.
+     */
+    fun skyOn(page: Dp): Dp = page - total + sky
+
+    /** The sky this frame leaves at the least on the 1097-dp page ([skyOn]). */
+    val skyLeft: Dp get() = skyOn(HOME_PAGE_FULL)
 }
 
 /**
@@ -310,8 +317,9 @@ internal fun homeForms(kind: AttentionKind?, pager: Boolean, demo: Boolean): Hom
 /**
  * The frame for 홈 as it stands (pure, unit-tested): [homeFrame] for the tallest card in [queue], with the pager from two
  * items, in the forms [homeForms] picks for it, so paging through the queue never changes a form under the driver's finger;
- * the idle card's while the queue is empty. Its [HomeFrame.forms] are what the page draws, and its [HomeFrame.skyLeft] is
- * what the follow-up bar decides by ([homeBarLift]), from the state at once rather than from a sky still animating.
+ * the idle card's while the queue is empty. Its [HomeFrame.forms] are what the page draws, and its [HomeFrame.skyOn] the
+ * page's height is what the follow-up bar decides by ([homeBarLift]), from the state at once rather than from a sky still
+ * animating.
  */
 internal fun homeFrameFor(queue: List<AttentionItem>, demo: Boolean): HomeFrame {
     val pager = queue.size >= 2
@@ -335,7 +343,8 @@ internal val FOLLOW_UP_ROOM = 88.dp
  * dock) while the [sky] above it holds the bar, else over the [dock] alone, across the demo strip: a full page in demo mode
  * leaves 28 dp of sky, and the bar would cover the attention card's buttons. The incident buttons are never covered.
  * Without the demo strip the band is the dock, and the fullest page (the incident card with the pager, 64 dp of sky) lets
- * the bar reach at most the card's 24-dp bottom padding.
+ * the bar reach at most the card's 24-dp bottom padding. [sky] must be the least the page really leaves: the frame's
+ * [HomeFrame.skyOn] the page's own height, or the sky measured.
  */
 internal fun homeBarLift(band: Dp, dock: Dp, sky: Dp): Dp = if (sky >= FOLLOW_UP_ROOM) band else dock
 
@@ -345,6 +354,16 @@ internal fun homeBarLift(band: Dp, dock: Dp, sky: Dp): Dp = if (sky >= FOLLOW_UP
  * way it stays on screen: it is the safety hint.
  */
 internal fun incidentCaptionBeside(button: Dp, fontScale: Float): Boolean = button >= 196.dp * fontScale.coerceAtLeast(1f)
+
+/** The tall dock's header line needs about 540 dp at 1× with 휴대폰에도 공유: the title, the caption and the phone note in one row. */
+internal val DOCK_HEADER_ONE_ROW = 560.dp
+
+/**
+ * Whether the tall dock's header keeps to one row (pure, unit-tested): from 560 dp of the dock's [width], more with a larger
+ * font (one below 1× counts as 1×). Narrower, the caption takes its own line under the title, so the one-line copy is never
+ * cut in a split window or at 1.3×; the frame never sees that form (beside the 지금 column the dock is 1,080 dp at 1×).
+ */
+internal fun dockHeaderOneRow(width: Dp, fontScale: Float): Boolean = width >= DOCK_HEADER_ONE_ROW * fontScale.coerceAtLeast(1f)
 
 // ───────────────────────── words of the cards (pure, unit-tested) ─────────────────────────
 
@@ -478,26 +497,28 @@ internal fun setupSteps(data: TripLogData): List<SetupStep> {
 }
 
 /**
- * What the idle card says (2.14, [homeIdle]): the [headline] (a trip's row title, or that there is none yet), the trip's
- * distance at its end ([km]), the one [line] with its spoken form, and the [month] 운행기록 보기 opens on (none without a trip,
- * and then no action either).
+ * What the idle card says (2.14, [homeIdle]): the [headline] (a trip's row title, or that there is none yet) with its spoken
+ * form, the trip's distance at its end ([km]; none where the title already is the distance), the one [line] with its spoken
+ * form, and the [month] 운행기록 보기 opens on (none without a trip, and then no action either).
  */
-@Immutable internal data class HomeIdle(val headline: String, val km: Double?, val line: HomeLine, val month: YearMonth?)
+@Immutable internal data class HomeIdle(val headline: HomeLine, val km: Double?, val line: HomeLine, val month: YearMonth?)
 
 /**
  * The idle card's words (pure, unit-tested): the newest finished trip of the data set on screen (demo trips only in demo
- * mode, real ones otherwise), titled as 운행기록 titles its row ([tripRowTitle]), with its distance, and one line "10월 29일 (목)
- * 02:26 · 일반 업무 · Kim Jiwoo": the day, the start, the purpose or 미분류, the driver's name or 사용자 미지정. Without any
- * trip: 아직 운행이 없어요, and how a trip starts.
+ * mode, real ones otherwise), titled as 운행기록 titles its row ([tripRowTitle]) and spoken as it reads the places, one by one
+ * ([tripRowTitleSpoken]); its distance at the title's end only under a route, since a trip without an address is titled
+ * "8.0 km · 1분" already ([tripHasRoute], 운행기록's own rule); and one line "10월 29일 (목) 02:26 · 일반 업무 · Kim Jiwoo":
+ * the day, the start, the purpose or 미분류, the driver's name or 사용자 미지정. Without any trip: 아직 운행이 없어요, and how
+ * a trip starts.
  */
 internal fun homeIdle(data: TripLogData): HomeIdle {
     val trip = data.trips.filter { it.demo == data.profile.demoMode && !it.open && it.endAt != null }.maxByOrNull { it.startAt }
-        ?: return HomeIdle(HomeCopy.IDLE_EMPTY, null, HomeLine(HomeCopy.IDLE_EMPTY_LINE, HomeCopy.SPOKEN_IDLE_EMPTY_LINE), null)
+        ?: return HomeIdle(HomeLine(HomeCopy.IDLE_EMPTY), null, HomeLine(HomeCopy.IDLE_EMPTY_LINE, HomeCopy.SPOKEN_IDLE_EMPTY_LINE), null)
     val day = localDate(trip.startAt)
     val who = data.drivers.firstOrNull { it.id == trip.driverId }?.name?.takeIf { it.isNotBlank() } ?: HomeCopy.NO_DRIVER
     val purpose = trip.purpose.label
     val spokenPurpose = if (trip.purpose == TripPurpose.UNCLASSIFIED) IssueType.UNCLASSIFIED.label else purpose
-    return HomeIdle(tripRowTitle(trip), trip.distanceKm,
+    return HomeIdle(HomeLine(tripRowTitle(trip), tripRowTitleSpoken(trip)), trip.distanceKm.takeIf { tripHasRoute(trip) },
         HomeLine("${dayLabel(day)} ${hm(trip.startAt)} · $purpose · $who", "${dayLabel(day)} ${hm(trip.startAt)} 출발, $spokenPurpose, $who"), YearMonth.from(day))
 }
 

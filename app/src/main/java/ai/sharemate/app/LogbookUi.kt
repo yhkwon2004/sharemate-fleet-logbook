@@ -1123,11 +1123,12 @@ private const val HOME_FRAME_SETTLE_MS = 400L
     val framed = nowColumn && layout.full && density.fontScale <= 1f
     val frame = if (framed) homeFrameFor(queue, demo) else null
     val forms = frame?.forms ?: homeFallbackForms(plan.cardColumns, layout.short)
-    // Where the frame holds, the follow-up bar decides by the sky the state leaves, at once; elsewhere by the sky measured.
-    val frameSky = frame?.skyLeft
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val viewport = maxHeight
         val pageWidth = maxWidth
+        // Where the frame holds, the follow-up bar decides by the sky the state leaves on this page, at once (a FULL window
+        // shorter than 1209 dp keeps the frame but not its 1097-dp page); elsewhere by the sky measured.
+        val frameSky = frame?.skyOn(viewport)
         val scroll = rememberScrollState()
         var greetingHeight by remember { mutableIntStateOf(0) }
         var footHeight by remember { mutableIntStateOf(0) }

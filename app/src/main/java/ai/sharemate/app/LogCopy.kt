@@ -103,10 +103,12 @@ internal object LogCopy {
     const val UNDO = "실행 취소"
 }
 
+/** The trip's places in order, the start and the destination (over the end address); none without any address. */
+private fun tripPlaces(trip: Trip): List<String> =
+    listOfNotNull(trip.startAddress, trip.destination?.takeIf { it.isNotBlank() } ?: trip.endAddress).filter { it.isNotBlank() }
+
 /** The trip's places as a route, "수정구 시흥동 → 판교", the destination over the end address; null without any address. */
-private fun tripRoute(trip: Trip): String? =
-    listOfNotNull(trip.startAddress, trip.destination?.takeIf { it.isNotBlank() } ?: trip.endAddress)
-        .filter { it.isNotBlank() }.joinToString(" → ").ifBlank { null }
+private fun tripRoute(trip: Trip): String? = tripPlaces(trip).joinToString(" → ").ifBlank { null }
 
 /** "8.0 km · 1분": what tells two trips without an address apart. */
 private fun distanceAndTime(trip: Trip) = "${kmText(trip.distanceKm)} · ${durationText(trip.durationMillis)}"
@@ -118,13 +120,26 @@ private fun distanceAndTime(trip: Trip) = "${kmText(trip.distanceKm)} · ${durat
 internal fun tripRowTitle(trip: Trip): String = tripRoute(trip) ?: distanceAndTime(trip)
 
 /**
+ * Whether [tripRowTitle] is the trip's route (pure, unit-tested); without one the title is already its distance and time, so
+ * whatever shows the title beside the distance (홈's 최근 운행) leaves the distance out rather than say it twice.
+ */
+internal fun tripHasRoute(trip: Trip): Boolean = tripPlaces(trip).isNotEmpty()
+
+/**
+ * What TalkBack says for [tripRowTitle] (pure, unit-tested): the places one by one, "수정구 시흥동, 판교", as [tripRowSpoken]
+ * reads them (no arrow), or "8.0 km, 1분" without an address.
+ */
+internal fun tripRowTitleSpoken(trip: Trip): String =
+    tripPlaces(trip).ifEmpty { listOf(kmText(trip.distanceKm), durationText(trip.durationMillis)) }.joinToString(", ")
+
+/**
  * The line under a trip row's title (pure): [마감 후 수정 ·] [8.0 km · 1분 ·] the person, or 사용자 미지정 [· 4,500원]. The
  * distance and time only under a route title (a title without an address is already that), [driverName] is the name alone
  * (the department is the detail's), a cost only when the trip has one, and never 시연: the page says that once, in a tag.
  */
 internal fun tripRowLine(trip: Trip, driverName: String?, edited: Boolean): String = listOfNotNull(
     LogCopy.EDITED.takeIf { edited },
-    distanceAndTime(trip).takeIf { tripRoute(trip) != null },
+    distanceAndTime(trip).takeIf { tripHasRoute(trip) },
     driverName?.takeIf { it.isNotBlank() } ?: LogCopy.NO_DRIVER,
     formatWon(trip.expenseWon).takeIf { trip.expenseWon > 0 },
 ).joinToString(" · ")
@@ -136,7 +151,7 @@ internal fun tripRowLine(trip: Trip, driverName: String?, edited: Boolean): Stri
  */
 internal fun tripRowSpoken(trip: Trip, driver: Driver?, edited: Boolean): String = buildList {
     add("${hm(trip.startAt)} 출발")
-    addAll(listOfNotNull(trip.startAddress, trip.destination?.takeIf { it.isNotBlank() } ?: trip.endAddress).filter { it.isNotBlank() })
+    addAll(tripPlaces(trip))
     add(kmText(trip.distanceKm))
     add(durationText(trip.durationMillis))
     add(if (trip.purpose == TripPurpose.UNCLASSIFIED) IssueType.UNCLASSIFIED.label else trip.purpose.label)

@@ -171,7 +171,8 @@ private val AttentionPinSaver = Saver<AttentionPin?, String>(
 /**
  * One attention card (§3.2): `CarCard(padding = 24.dp)` holding, in order, the title row (the [icon], the [title], the
  * card's one heading, its state [tag], and the [pager] at the end, 32 dp or 56 with the pager); 12 dp; the [headline]
- * (headlineSmall, one line, in [headlineColor], a polite live region when [live]) with the [figure] at its end; each of the
+ * (headlineSmall, one line, in [headlineColor], a polite live region when [live]; TalkBack hears [spokenHeadline] where one
+ * is given, as for a route whose arrow is not read) with the [figure] at its end; each of the
  * [lines] 4 dp under it (one [CarLine] each, its spoken form for TalkBack); 16 dp and the [body]; 16 dp and the action row,
  * the [start] slot (a line, a link or a field) and the [actions], at most two buttons, the way on last. Under 560 dp of
  * content the start slot takes its own row above the buttons. A debug build logs (tag HomeFrame) a card taller than
@@ -179,7 +180,7 @@ private val AttentionPinSaver = Saver<AttentionPin?, String>(
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable private fun AttentionCard(kind: AttentionKind?, title: String, icon: Painter, pager: AttentionPager?, headline: String,
-    tag: (@Composable () -> Unit)? = null, headlineColor: Color = Scene.text, live: Boolean = false, figure: (@Composable () -> Unit)? = null,
+    spokenHeadline: String? = null, tag: (@Composable () -> Unit)? = null, headlineColor: Color = Scene.text, live: Boolean = false, figure: (@Composable () -> Unit)? = null,
     under: (@Composable () -> Unit)? = null, lines: List<HomeLine> = emptyList(), body: (@Composable ColumnScope.() -> Unit)? = null,
     start: (@Composable () -> Unit)? = null, actions: (@Composable RowScope.() -> Unit)? = null) {
     val layout = LocalLayout.current
@@ -205,7 +206,8 @@ private val AttentionPinSaver = Saver<AttentionPin?, String>(
         }
         Spacer(Modifier.height(ATTENTION_TITLE_GAP))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-            Text(headline, Modifier.weight(1f).alignByBaseline().then(if (live) Modifier.semantics { liveRegion = LiveRegionMode.Polite } else Modifier),
+            Text(headline, Modifier.weight(1f).alignByBaseline().then(if (live) Modifier.semantics { liveRegion = LiveRegionMode.Polite } else Modifier)
+                .then(if (spokenHeadline != null) Modifier.semantics { contentDescription = spokenHeadline } else Modifier),
                 style = MaterialTheme.typography.headlineSmall, color = headlineColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (figure != null) {
                 Spacer(Modifier.width(16.dp))
@@ -565,9 +567,10 @@ private val SETUP_TILES_STACK_UNDER = 560.dp
 
 /**
  * One setup step as a tile (2.14), [SETUP_TILES] tall at least, corner 16: the [CarStepDisc] (the [number]; a check once
- * done; the solid accent on the current step), 12 dp, the title (titleSmall) over its one line (bodySmall textMuted), and a
- * chevron. An open step sits on the chip fill inside the chip border, a done one is outlined only, and a step that cannot be
- * taken yet (운전자 선택 before any employee) has 2.13's disabled look: no fill, the outline at 38 %, everything muted. It
+ * done; the solid accent on the current step), 12 dp, the title (titleSmall) over its one line (bodySmall textMuted; two
+ * above 1.05× as a [CarLine] takes, so a large font keeps the disabled tile's reason whole), and a chevron. An open step
+ * sits on the chip fill inside the chip border, a done one is outlined only, and a step that cannot be taken yet (운전자
+ * 선택 before any employee) has 2.13's disabled look: no fill, the outline at 38 %, everything muted. It
  * settles to .98 with the press fill, no ripple. TalkBack hears one button, "법인·차량 정보, 운행기록부 머리말에 들어가요",
  * with its state (완료 / 다음 단계 / 직원 등록 뒤), disabled where it cannot act.
  */
@@ -587,7 +590,8 @@ private val SETUP_TILES_STACK_UNDER = 560.dp
         Column(Modifier.weight(1f).clearAndSetSemantics {}, verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(step.label, style = MaterialTheme.typography.titleSmall, color = if (step.enabled) Scene.text else Scene.textMuted, maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
-            Text(step.line, style = MaterialTheme.typography.bodySmall, color = Scene.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(step.line, style = MaterialTheme.typography.bodySmall, color = Scene.textMuted, maxLines = carLineMaxLines(LocalDensity.current.fontScale),
+                overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.width(8.dp))
         Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, Modifier.size(20.dp),
@@ -605,8 +609,8 @@ private val SETUP_TILES_STACK_UNDER = 560.dp
  */
 @Composable private fun IdleBody(data: TripLogData, nav: HomeNav) {
     val idle = remember(data) { homeIdle(data) }
-    AttentionCard(null, HomeCopy.IDLE_TITLE, painterResource(R.drawable.ic_journal), null, idle.headline,
-        tag = { CarTag(HomeCopy.IDLE_TAG, description = HomeCopy.SPOKEN_IDLE_TAG) },
+    AttentionCard(null, HomeCopy.IDLE_TITLE, painterResource(R.drawable.ic_journal), null, idle.headline.text,
+        spokenHeadline = idle.headline.spoken.takeIf { it != idle.headline.text }, tag = { CarTag(HomeCopy.IDLE_TAG, description = HomeCopy.SPOKEN_IDLE_TAG) },
         figure = idle.km?.let { km -> { KmFigure(km) } },
         lines = listOf(idle.line),
         actions = idle.month?.let { month -> { QuietAction(HomeCopy.IDLE_ACTION) { nav.openLog(0, month) } } })

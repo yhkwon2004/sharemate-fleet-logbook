@@ -53,6 +53,12 @@ internal const val SETUP_TILE_LINE_UNITS = 16.0
 /** The tall dock's caption after 사고·특이사항, beside 휴대폰에도 공유 (bodySmall in the 1080-dp header line). */
 internal const val DOCK_CAPTION_UNITS = 40.0
 
+/**
+ * The tall dock's header under 560 dp of dock ([dockHeaderOneRow]): the caption on a line of its own, and the title with 휴대폰에도
+ * 공유, each across a 488-dp dock (a 560-dp window) less the mark and its gap, about 450 dp.
+ */
+internal const val DOCK_NARROW_UNITS = 26.0
+
 /** A line of 홈's attention card, across its whole width. */
 internal const val HOME_CARD_LINE_UNITS = 38.0
 

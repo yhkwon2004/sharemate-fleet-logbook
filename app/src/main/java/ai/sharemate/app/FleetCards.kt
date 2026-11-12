@@ -130,7 +130,8 @@ internal fun incidentTint(day: Boolean): Float = if (day) .10f else .06f
  * - COMPACT (2.13's row, [HOME_DOCK_COMPACT]): the lead (사고·특이사항, and whether the record reaches the phone too), then
  *   four 56-dp outlined stadiums, 사고 in the negative. A caption sits beside its label from 196 dp of button
  *   ([incidentCaptionBeside]) and under it, in a 72-dp button, below that: it is the safety hint, so it stays on screen.
- * Under 560 dp the buttons stand two by two in either form, the header or the lead on its own row above them. TalkBack hears
+ * Under 560 dp the buttons stand two by two in either form, the header or the lead on its own row above them; where the
+ * tall header's one row does not fit ([dockHeaderOneRow]) its caption goes under the title. TalkBack hears
  * the header as one heading, "사고·특이사항, 한 번 누르면 차량 정보가 바로 기록돼요", and each button as "사고 기록, 119 · 112
  * 안내".
  */
@@ -151,32 +152,63 @@ internal fun incidentTint(day: Boolean): Float = if (day) .10f else .06f
     }
 }
 
-/** The tall dock ([IncidentDock]): the header line over four 72-dp buttons, two by two under 560 dp. */
+/**
+ * The tall dock ([IncidentDock]): the header line over four 72-dp buttons, two by two under 560 dp. Where the header's one
+ * row does not fit ([dockHeaderOneRow]: a split window, or a large font) the caption takes its own line under the title, as
+ * the compact dock's lead does there, with 휴대폰에도 공유 at the title row's end.
+ */
 @Composable private fun TallDock(sync: Boolean, report: (IncidentKind) -> Unit) {
-    CarCard(Modifier.heightIn(min = HOME_DOCK_TALL), padding = DOCK_TALL_PADDING, gap = DOCK_HEADER_GAP) {
-        Row(Modifier.fillMaxWidth().heightIn(min = DOCK_HEADER).clearAndSetSemantics { contentDescription = HomeCopy.SPOKEN_DOCK; heading() }.padding(start = 4.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            Icon(painterResource(R.drawable.ic_warning), contentDescription = null, Modifier.size(24.dp), tint = Car.skin.icon)
-            Spacer(Modifier.width(10.dp))
-            Text(HomeCopy.DOCK_TITLE, style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 1)
-            Spacer(Modifier.width(12.dp))
-            Text(HomeCopy.DOCK_CAPTION, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary, maxLines = 1,
-                overflow = TextOverflow.Ellipsis)
-            if (sync) {
-                Spacer(Modifier.width(12.dp))
-                Text(HomeCopy.DOCK_SHARED, style = MaterialTheme.typography.labelMedium, color = Scene.textMuted, maxLines = 1)
-            }
-        }
+    val fontScale = LocalDensity.current.fontScale
+    CarCard(Modifier.heightIn(min = HOME_DOCK_TALL), padding = DOCK_TALL_PADDING) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val gap = 12.dp
             val kinds = IncidentKind.entries
-            if (maxWidth < 560.dp) Column(verticalArrangement = Arrangement.spacedBy(gap)) {
-                kinds.chunked(2).forEach { pair ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(gap)) { pair.forEach { IncidentTile(it, Modifier.weight(1f)) { report(it) } } }
+            val width = maxWidth
+            Column(verticalArrangement = Arrangement.spacedBy(DOCK_HEADER_GAP)) {
+                DockHeader(sync, oneRow = dockHeaderOneRow(width, fontScale))
+                if (width < 560.dp) Column(verticalArrangement = Arrangement.spacedBy(gap)) {
+                    kinds.chunked(2).forEach { pair ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(gap)) { pair.forEach { IncidentTile(it, Modifier.weight(1f)) { report(it) } } }
+                    }
+                } else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                    kinds.forEach { IncidentTile(it, Modifier.weight(1f)) { report(it) } }
                 }
-            } else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
-                kinds.forEach { IncidentTile(it, Modifier.weight(1f)) { report(it) } }
             }
+        }
+    }
+}
+
+/**
+ * The tall dock's header, one heading for TalkBack ([HomeCopy.SPOKEN_DOCK]): the warning mark, 사고·특이사항, the caption and,
+ * while the phone link is on, 휴대폰에도 공유 on the right, muted. In [oneRow] all four stand in one 24-dp row (2.12's line);
+ * otherwise the caption is a [CarLine] under the title, which a large font may wrap rather than cut.
+ */
+@Composable private fun DockHeader(sync: Boolean, oneRow: Boolean) {
+    val title: @Composable (Modifier) -> Unit = { place ->
+        Text(HomeCopy.DOCK_TITLE, place, style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+    val shared: @Composable () -> Unit = {
+        if (sync) {
+            Spacer(Modifier.width(12.dp))
+            Text(HomeCopy.DOCK_SHARED, style = MaterialTheme.typography.labelMedium, color = Scene.textMuted, maxLines = 1)
+        }
+    }
+    Row(Modifier.fillMaxWidth().heightIn(min = DOCK_HEADER).clearAndSetSemantics { contentDescription = HomeCopy.SPOKEN_DOCK; heading() }.padding(start = 4.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Icon(painterResource(R.drawable.ic_warning), contentDescription = null, Modifier.size(24.dp), tint = Car.skin.icon)
+        Spacer(Modifier.width(10.dp))
+        if (oneRow) {
+            title(Modifier)
+            Spacer(Modifier.width(12.dp))
+            Text(HomeCopy.DOCK_CAPTION, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary, maxLines = 1,
+                overflow = TextOverflow.Ellipsis)
+            shared()
+        } else Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                title(Modifier.weight(1f))
+                shared()
+            }
+            CarLine(HomeCopy.DOCK_CAPTION, color = Scene.textSecondary)
         }
     }
 }

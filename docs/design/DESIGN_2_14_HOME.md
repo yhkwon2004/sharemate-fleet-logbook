@@ -61,7 +61,7 @@ Things that need registration may start working once it is registered.
 | | 16 dp |
 | Title | titleLarge (29 dp line), `Scene.text`, one line, a heading |
 | | 6 dp |
-| Line + chevron | `homeCardLines` in bodyMedium (21 dp), `Scene.textMuted`, one line, ellipsis; `KeyboardArrowRight` 20 dp in textSecondary |
+| Line + chevron | `homeCardLines` in bodyMedium (21 dp), `Scene.textMuted`, one line, ellipsis (two centred lines above 1.05x, `carLineMaxLines`, so a 1.3x font outside the frame loses no words); `KeyboardArrowRight` 20 dp in textSecondary |
 | Badge | `CountBadge` at the top right, 16 dp in |
 
 40 + 56 + 16 + 29 + 6 + 21 + 40 = 208. Horizontal padding 16; the line's budget is 18 units (`HOME_TALL_LINE_UNITS`).
@@ -85,7 +85,11 @@ A change of form swaps the row on `cardSwap()` (160 ms, the size following on th
   남기기. 사고 is tinted with the negative (`incidentTint`: 10 % by day, 6 % by night, over the card) inside a negative
   outline, its label in the negative; the others sit on `chipFill` inside `chipBorder`. Pressable .98 + pressFill, no ripple.
   TalkBack "사고 기록, 119 · 112 안내", click label "사고 기록" (as 2.13).
-- Under 560 dp: the header line over 2 x 2 buttons.
+- Under 560 dp: the header over 2 x 2 buttons.
+- The header keeps its one row from 560 dp of dock, times the font scale above 1x (`dockHeaderOneRow`; it needs about 540
+  dp at 1x with 휴대폰에도 공유). Narrower (a split window, or 1.3x below 728 dp) the caption becomes a `CarLine` under the
+  title, as the compact dock's narrow lead does, and 휴대폰에도 공유 stands at the title row's end. Still one heading stop.
+  Beside the 지금 column the dock is 1,080 dp, so the frame never sees this form.
 
 Contrast (CarSkinTest): 사고's label on its tint 4.78 / 4.56, its caption 4.97 / 5.96; 2.12's 16 % night tint left the label
 at 4.09, which is why the night tint is 6 %.
@@ -109,9 +113,11 @@ val HOME_FORM_ORDER = [TALL+TALL, TALL+COMPACT, COMPACT+TALL, COMPACT+COMPACT]
 fun attentionCardMax(kind: AttentionKind?, pager: Boolean): Dp      // null = the idle card (never a pager)
 fun homeFrame(kind: AttentionKind?, pager: Boolean, demo: Boolean, forms: HomeForms): HomeFrame
 fun homeForms(kind: AttentionKind?, pager: Boolean, demo: Boolean): HomeForms   // the first pair that fits 1,097
-fun homeFrameFor(queue: List<AttentionItem>, demo: Boolean): HomeFrame         // the tallest card in the queue; .forms, .skyLeft
+fun homeFrameFor(queue: List<AttentionItem>, demo: Boolean): HomeFrame         // the tallest card in the queue; .forms
+fun HomeFrame.skyOn(page: Dp): Dp                                              // the least sky on a page of that height; .skyLeft = skyOn(1,097)
 fun homeFallbackForms(columns: Int, short: Boolean): HomeForms
 fun homeBarLift(band: Dp, dock: Dp, sky: Dp): Dp
+fun dockHeaderOneRow(width: Dp, fontScale: Float): Boolean                     // the tall dock's header in one row (§3.3)
 ```
 
 - **Order of preference:** TALL cards + TALL dock; TALL cards + COMPACT dock (the dock gives way first: the destinations sit
@@ -179,9 +185,17 @@ strip, gap, dock) while the sky holds the bar (>= 88), else over the dock alone,
 gap hold the 88). It never covers the incident buttons. In demo mode the fullest pages leave 28 to 31 dp of sky, and the bar
 would cover the card's buttons; it covers the presenter's strip instead for its few seconds. Without demo the fullest page
 (the incident with the pager) leaves 64 dp, so the bar reaches at most the card's 24-dp bottom padding. Where the frame holds,
-the decision reads the sky the state leaves (`HomeFrame.skyLeft` of `homeFrameFor`), so it is made at once and the bar never
-jumps while a card is still unfolding; elsewhere it reads the measured sky (`onSizeChanged` on the weighted spacer). The lift
-is read through `derivedStateOf`, so a sky animating does not recompose the page.
+the decision reads the sky the state leaves on the page the window really gives (`homeFrameFor(...).skyOn(viewport)`), so it
+is made at once and the bar never jumps while a card is still unfolding; elsewhere it reads the measured sky (`onSizeChanged`
+on the weighted spacer). The lift is read through `derivedStateOf`, so a sky animating does not recompose the page.
+
+Why the page's own height: a FULL window from 600 to 1,208 dp tall keeps the 지금 column and so the frame, but its page is
+shorter than 1,097. In 1680 x 1100 (a 988-dp page) the demo card question with the pager is 963 dp and rests: by 1,097 it
+would leave 158 dp of sky and the bar would ride over the whole foot, 39 dp into the card (its 24-dp padding and 15 dp of
+its buttons); on 988 it leaves 49, and
+the bar rides over the demo strip instead (HomeFrameTest checks every demo state on pages from 800 to 1,180 dp). Without
+demo there is no lower place for the bar than the dock, so in such a window a page that rests with less than 88 dp of sky
+still lets the bar reach the card's foot; that is as 2.13 was, and never happens in the 1,209-dp window.
 
 ## 5. The idle card (최근 운행)
 
@@ -190,8 +204,8 @@ Shown only while the queue is empty; kind-less (`AttentionCard(kind = null)`). P
 | Part | With a finished trip | Without any trip |
 |---|---|---|
 | Title row | `ic_journal` · "최근 운행" (`IDLE_TITLE`) · quiet tag "확인할 일 없음" (`IDLE_TAG`, spoken `SPOKEN_IDLE_TAG` "지금 확인할 일이 없어요") | same |
-| Headline | the trip's row title as 운행기록 writes it (`tripRowTitle`: "수정구 시흥동 → 판교", or "8.0 km · 1분" without an address) | "아직 운행이 없어요" (`IDLE_EMPTY`) |
-| Figure | the distance at the headline's end (`KmFigure`, as on 목적 확인) | none |
+| Headline | the trip's row title as 운행기록 writes it (`tripRowTitle`: "수정구 시흥동 → 판교", or "8.0 km · 1분" without an address); spoken without the arrow, the places one by one as 운행기록 reads them (`tripRowTitleSpoken`: "수정구 시흥동, 판교", or "8.0 km, 1분") | "아직 운행이 없어요" (`IDLE_EMPTY`) |
+| Figure | the distance at the headline's end (`KmFigure`, as on 목적 확인), only under a route (`tripHasRoute`): without an address the title already is the distance, as 운행기록's own row line rule says | none |
 | Line | "10월 29일 (목) 02:26 · 일반 업무 · Kim Jiwoo": `dayLabel`, `hm`, the purpose label (미분류 when unclassified), the driver's name or 사용자 미지정; spoken "10월 29일 (목) 02:26 출발, 일반 업무, Kim Jiwoo" (목적 미분류 when unclassified) | "P에서 D로 바꾸면 기록이 시작돼요" (`IDLE_EMPTY_LINE`), spoken "기어를 P에서 D로 바꾸면 운행 기록이 자동으로 시작돼요" |
 | Action | one quiet action "운행기록 보기" (`IDLE_ACTION`): 운행기록, 전체, on that trip's month | none |
 
@@ -203,7 +217,8 @@ trip still recording is not finished.
 The headline "운행기록부에 들어갈 정보를 등록해 주세요" and the n/3 tag stay. The steps become three tiles in a row (stacked
 under 560 dp of card width), each at least 96 dp (`SETUP_TILES`), corner 16, padding 16: `CarStepDisc` (the number; a check
 when done; the CURRENT step, the first open one, solid accent with the number in onAccent), 12, the title (titleSmall) over
-one line (bodySmall, textMuted), 8, a chevron. Each tile is the button for its step; 2.13's two buttons at the bottom went.
+one line (bodySmall, textMuted; two above 1.05x, `carLineMaxLines`, so a 1.3x font keeps "직원을 등록하면 고를 수 있어요"
+whole), 8, a chevron. Each tile is the button for its step; 2.13's two buttons at the bottom went.
 
 | Tile | Line while open | Line when done | Opens |
 |---|---|---|---|
@@ -242,10 +257,16 @@ What else derives from the horizon, checked:
   the budget block by block, and keeps the 480 cap; every state is TT but the demo incident (TC); `homeFrameFor` follows the
   tallest card and leaves 28 / 64 / 301 dp of sky (demo incident, incident, idle); the forms' anatomy sums (208, 140, the
   135-dp greeting block); `homeFallbackForms`; the card maxima (SETUP 259, IDLE 240); `homeBarLift`, the bar never past the
-  card's 24-dp padding without demo and never at the card in demo.
-- HomeCopyTest: the tall cards' lines at bodyMedium (18 units), the tall dock's header line, the setup tiles' lines (16 units)
-  and states, the idle strings; `setupSteps` (empty, staffed, almost, complete, a blank plate, a gone driver);
-  `homeIdle` (no trip, a classified trip, an unclassified trip without a driver or an address, demo data only in demo mode).
+  card's 24-dp padding without demo and never at the card in demo; `skyOn` (192 dp for the idle page on a 988-dp page) and,
+  in a shorter FULL window, the demo bar deciding by the page it has (the 963-dp card question: 49 dp, over the strip) on
+  pages from 800 to 1,180 dp; `dockHeaderOneRow` (from 560 dp, 728 at 1.3x).
+- HomeCopyTest: the tall cards' lines at bodyMedium (18 units), the tall dock's header line (40 units) and its narrow form
+  (the title with 휴대폰에도 공유, and the caption alone, 26 units each: `DOCK_NARROW_UNITS`), the setup tiles' lines (16
+  units) and states, the idle strings; `setupSteps` (empty, staffed, almost, complete, a blank plate, a gone driver);
+  `homeIdle` (no trip, a classified trip with its spoken headline, an unclassified trip without a driver or an address and
+  so without the figure, demo data only in demo mode).
+- LogCopyTest: `tripHasRoute` and `tripRowTitleSpoken` (the places one by one, no arrow; the distance and time without an
+  address).
 - SceneTest: `carHorizonAt` (.858 at 1,209, 12 dp over the dock, both clamps, an unmeasured window), the scrim's stops at the
   new horizon, the hero band above the city.
 - CarSkinTest: 사고's tint (label, caption, outline) in both scenes.
@@ -257,7 +278,8 @@ What else derives from the horizon, checked:
    three tiles (1 solid accent, 3 disabled with 직원을 등록하면 고를 수 있어요), the towers standing on the dock, the tall dock.
    Nothing scrolls. Tap each tile: 설정 › 법인·차량, 설정 › 직원; after adding an employee, 운전자 선택 opens the picker.
 2. **Idle by day** (no task): the 최근 운행 card with the newest trip, its distance and line; 운행기록 보기 opens 운행기록 on
-   that month. With no trip at all: 아직 운행이 없어요 and no button.
+   that month. A newest trip without any address shows "8.0 km · 1분" as its headline and no figure beside it. With no trip
+   at all: 아직 운행이 없어요 and no button. TalkBack reads a route's headline as the places, without "화살표".
 3. **Demo mode + 사고** on the dock: the dock swaps to the compact row while the incident card unfolds; nothing scrolls; the
    follow-up bar ("사고 기록됨 · 실행 취소") rides over the demo strip, not over 처리 완료. Close the incident: the dock swaps
    back to the tall form. Check the swap reads well (160 ms) and snaps with animations off.
@@ -272,7 +294,9 @@ What else derives from the horizon, checked:
    the tall card's 16-dp side padding and 24-dp vertical padding, the greeting's 30-sp floor, the setup tiles' fills (open on
    chipFill, done outlined only).
 8. **Other windows:** EXPANDED with the column (TALL cards and dock, may scroll); a 1.3x font in the full window (TALL, may
-   scroll); a narrow window (one compact card per row, the tall dock 2 x 2); a short window (no brand line, compact forms).
+   scroll; a long destination line such as 정보 내보내기's wraps to two centred lines, and a setup tile's line to two lines,
+   rather than cut); a narrow window (one compact card per row, the tall dock 2 x 2 with its caption under 사고·특이사항); a short window
+   (no brand line, compact forms).
 9. **TalkBack:** the brand line is skipped; each destination card and each setup tile is one button with its state; the dock
    header is one heading.
 10. **The phone** home and sign-in: unchanged sky (horizon .40 / .42 / .60).
