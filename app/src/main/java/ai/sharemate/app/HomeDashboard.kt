@@ -529,7 +529,9 @@ private val GREETING_MIN_SIZE = 30.sp
             (fadeOut(tween(120, easing = FastOutSlowInEasing)) + slideOutVertically(tween(160, easing = FastOutSlowInEasing)) { -lift })
         swap using SizeTransform(clip = false) { _, _ -> digitSizeSpec(reduce) }
     }) { value ->
-        BasicText(value, style = style.copy(fontWeight = FontWeight.Bold), color = { ink }, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
+        // No ellipsis here: under TextOverflow.Ellipsis auto-size read every size as overflowing and fell to the minimum
+        // (seen on the Pleos emulator); clipped, as the amounts are ([AmountText]), it takes the largest size that fits.
+        BasicText(value, style = style.copy(fontWeight = FontWeight.Bold), color = { ink }, maxLines = 1, softWrap = false,
             autoSize = TextAutoSize.StepBased(minFontSize = GREETING_MIN_SIZE, maxFontSize = style.fontSize, stepSize = 1.sp))
     }
 }
