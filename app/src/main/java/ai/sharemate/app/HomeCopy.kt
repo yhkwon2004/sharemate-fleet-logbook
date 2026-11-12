@@ -60,14 +60,28 @@ internal object HomeCopy {
     const val DEMO_TAG = "시연 모드"
     const val DESTINATION_CLICK = "열기"
 
-    // ───── 최근 운행 (2.14: the idle card, while nothing waits)
+    // ───── 최근 운행 (2.14: the idle card, while nothing waits; 2.15: three rows, or how a trip is recorded)
     const val IDLE_TITLE = "최근 운행"
     const val IDLE_TAG = "확인할 일 없음"
     const val SPOKEN_IDLE_TAG = "지금 확인할 일이 없어요"
     const val IDLE_ACTION = "운행기록 보기"
     const val IDLE_EMPTY = "아직 운행이 없어요"
-    const val IDLE_EMPTY_LINE = "P에서 D로 바꾸면 기록이 시작돼요"
-    const val SPOKEN_IDLE_EMPTY_LINE = "기어를 P에서 D로 바꾸면 운행 기록이 자동으로 시작돼요"
+    /** Without any trip (2.15 §4): the three steps of 운행기록's first-run hero (§2.2's FIRST case), as tiles, then the walkthrough. */
+    const val IDLE_STEP_DRIVE = "D로 출발"
+    const val IDLE_STEP_DRIVE_LINE = "기록이 시작돼요"
+    const val SPOKEN_IDLE_STEP_DRIVE_LINE = "기어를 P에서 D로 바꾸면 운행 기록이 자동으로 시작돼요"
+    const val IDLE_STEP_PARK = "P로 주차"
+    const val IDLE_STEP_PARK_LINE = "거리와 시간이 저장돼요"
+    const val SPOKEN_IDLE_STEP_PARK_LINE = "P로 주차하면 계기판 거리와 운행 시간이 저장돼요"
+    const val IDLE_STEP_PURPOSE = "목적 확인"
+    const val IDLE_STEP_PURPOSE_LINE = "홈에서 한 번 눌러요"
+    const val SPOKEN_IDLE_STEP_PURPOSE_LINE = "주차하면 홈에 뜨는 운행 목적을 한 번 눌러 확인해요"
+    const val IDLE_DEMO = "시연 체험 보기"
+    val IDLE_STEPS = listOf(IdleStep(IDLE_STEP_DRIVE, IDLE_STEP_DRIVE_LINE, SPOKEN_IDLE_STEP_DRIVE_LINE),
+        IdleStep(IDLE_STEP_PARK, IDLE_STEP_PARK_LINE, SPOKEN_IDLE_STEP_PARK_LINE), IdleStep(IDLE_STEP_PURPOSE, IDLE_STEP_PURPOSE_LINE, SPOKEN_IDLE_STEP_PURPOSE_LINE))
+
+    /** What TalkBack hears for a step tile, its one stop: "1단계 D로 출발, 기어를 P에서 D로 바꾸면 …". */
+    fun spokenIdleStep(number: Int, step: IdleStep) = "${number}단계 ${step.title}, ${step.spokenLine}"
 
     // ───── the pager
     const val PAGER_PREVIOUS = "이전 할 일"
@@ -185,7 +199,8 @@ internal object HomeCopy {
 
     /** Every card title (8 syllables at most), for the copy test. */
     val TITLES = listOf(DOCK_TITLE, PERMISSION_TITLE, PURPOSE_TITLE, RECLASSIFY_TITLE, REVIEW_TITLE, FINISHED_TITLE, MATCHED_TITLE, SETUP_TITLE,
-        CLOSE_TITLE, CARE_TITLE, VehicleCopy.PHONE_TITLE, IDLE_TITLE, SETUP_COMPANY, SETUP_DRIVERS, SETUP_PICK) + IncidentKind.entries.map { it.label }
+        CLOSE_TITLE, CARE_TITLE, VehicleCopy.PHONE_TITLE, IDLE_TITLE, SETUP_COMPANY, SETUP_DRIVERS, SETUP_PICK) + IncidentKind.entries.map { it.label } +
+        IDLE_STEPS.map { it.title }
 
     /** The status lines with what TalkBack says for them. */
     val STATUS_LINES = listOf(STATUS_READY to SPOKEN_STATUS_READY, STATUS_DEMO to SPOKEN_STATUS_DEMO, STATUS_DENIED to SPOKEN_STATUS_DENIED,
@@ -195,9 +210,12 @@ internal object HomeCopy {
     val CARD_LINES = listOf(INCIDENT_PHONE to SPOKEN_INCIDENT_PHONE, INCIDENT_SYNC_OFF to SPOKEN_INCIDENT_SYNC_OFF, PERMISSION_HEADLINE to PERMISSION_HEADLINE,
         PERMISSION_LINE to PERMISSION_LINE, PURPOSE_HEADLINE to PURPOSE_HEADLINE, REVIEW_NEAREST to REVIEW_NEAREST, REVIEW_NO_TRIP to REVIEW_NO_TRIP,
         MATCHED_LINE to MATCHED_LINE, SETUP_HEADLINE to SETUP_HEADLINE, WAITING_HEADLINE to WAITING_HEADLINE, PHOTO_DIALOG_LINE to PHOTO_DIALOG_LINE,
-        DELETE_DIALOG_LINE to DELETE_DIALOG_LINE, IDLE_EMPTY to IDLE_EMPTY, IDLE_EMPTY_LINE to SPOKEN_IDLE_EMPTY_LINE)
+        DELETE_DIALOG_LINE to DELETE_DIALOG_LINE, IDLE_EMPTY to IDLE_EMPTY)
 
-    /** The setup tiles' lines (2.14) with what TalkBack says for them; each fits a third of the card beside its disc. */
+    /**
+     * The setup tiles' lines (2.14) with what TalkBack says for them; each fits a third of the card beside its disc. 2.15's idle
+     * step tiles take the same look and place.
+     */
     val SETUP_LINES = listOf(SETUP_COMPANY_LINE to SETUP_COMPANY_LINE, SETUP_DRIVERS_LINE to SPOKEN_SETUP_DRIVERS_LINE, SETUP_PICK_LINE to SETUP_PICK_LINE,
-        SETUP_PICK_WAITING to SETUP_PICK_WAITING)
+        SETUP_PICK_WAITING to SETUP_PICK_WAITING) + IDLE_STEPS.map { it.line to it.spokenLine }
 }

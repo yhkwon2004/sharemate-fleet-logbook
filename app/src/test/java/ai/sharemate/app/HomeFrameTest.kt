@@ -49,7 +49,8 @@ class HomeFrameTest {
                 }
             }
         }
-        assertEquals("빈 홈도 꽉 참: 최근 운행 카드", 820.dp, homeFrame(null, pager = false, demo = false, tall).total)
+        assertEquals("빈 홈도 꽉 참: 최근 운행 세 줄", 914.dp, homeFrame(null, pager = false, demo = false, tall).total)
+        assertEquals("시연 띠와 함께", 1010.dp, homeFrame(null, pager = false, demo = true, tall).total)
         assertEquals("시연 아닌 가장 긴 화면: 사고 카드와 넘김", 1057.dp, homeFrame(AttentionKind.INCIDENT, pager = true, demo = false, tall).total)
         assertEquals("시연 중 사고는 낮은 독으로", 1093.dp, homeFrame(AttentionKind.INCIDENT, true, true, homeForms(AttentionKind.INCIDENT, true, true)).total)
         assertEquals("시연 중 충전 비용은 키 큰 그대로", 1090.dp, homeFrame(AttentionKind.CHARGE, true, true, tall).total)
@@ -68,11 +69,11 @@ class HomeFrameTest {
         // The sky the frame leaves at the least: 1,097 − the blocks + the fixed 24.
         assertEquals(28.dp, homeFrameFor(listOf(incident, care), demo = true).skyLeft)
         assertEquals(64.dp, homeFrameFor(listOf(incident, care), demo = false).skyLeft)
-        assertEquals("빈 홈의 하늘", 301.dp, homeFrameFor(emptyList(), demo = false).skyLeft)
+        assertEquals("빈 홈의 하늘", 207.dp, homeFrameFor(emptyList(), demo = false).skyLeft)
         // On a page of another height the same blocks leave that much more or less (a FULL window under 1209 dp keeps the frame).
         val idle = homeFrameFor(emptyList(), demo = false)
         assertEquals(idle.skyLeft, idle.skyOn(HOME_PAGE_FULL))
-        assertEquals("1680 × 1100 창의 988 dp 페이지", 192.dp, idle.skyOn(988.dp))
+        assertEquals("1680 × 1100 창의 988 dp 페이지", 98.dp, idle.skyOn(988.dp))
     }
 
     @Test fun theFormsAreTheirAnatomy() {
@@ -108,9 +109,54 @@ class HomeFrameTest {
         assertEquals(390.dp, attentionCardMax(AttentionKind.CHARGE, pager = true) - ATTENTION_FIELD_ERROR)
         // 2.14's setup card: 48 + 56 + 12 + the headline 31 + 16 + the 96-dp tiles, and no action row under them.
         assertEquals(48.dp + 56.dp + 12.dp + 31.dp + 16.dp + SETUP_TILES, attentionCardMax(AttentionKind.SETUP, pager = true))
-        // The idle card: 48 + 32 + 12 + the headline with its distance 53 + one line 23 + 16 + 운행기록 보기 56. It never pages.
-        assertEquals(240.dp, attentionCardMax(null, pager = false))
-        assertEquals("최근 운행 카드는 넘김이 없음", 240.dp, attentionCardMax(null, pager = true))
+        // The idle card (2.15) at its tallest: 48 + 32 + 12 + three 56-dp rows and two hairlines + 16 + 운행기록 보기 56. It never pages.
+        assertEquals(48.dp + 32.dp + 12.dp + 56.dp * 3 + 1.dp * 2 + 16.dp + 56.dp, attentionCardMax(null, pager = false))
+        assertEquals(334.dp, attentionCardMax(null, pager = false))
+        assertEquals("최근 운행 카드는 넘김이 없음", 334.dp, attentionCardMax(null, pager = true))
+    }
+
+    /**
+     * 2.15 (docs/design/DESIGN_2_15.md §4): the idle card lists up to three trips with no headline row, as tall as its rows, and
+     * without any trip shows the headline, the three step tiles and 시연 체험 보기. Every form fits the frame the idle card is
+     * budgeted for, with and without the demo strip.
+     */
+    @Test fun theIdleCardIsAsTallAsItsRowsAndEveryFormFitsTheFrame() {
+        assertEquals(0.dp, idleRowsHeight(0))
+        assertEquals(56.dp, idleRowsHeight(1))
+        assertEquals(113.dp, idleRowsHeight(2))
+        assertEquals(170.dp, idleRowsHeight(3))
+        assertEquals("세 줄이 최대", 170.dp, idleRowsHeight(7))
+        // The rows: no headline row, the rows right under the title row's 12 dp, then the action row.
+        listOf(3, 2, 1).forEach { rows ->
+            val anatomy = idleAnatomy(rows)
+            assertFalse("$rows: 머리말 줄 없음", anatomy.headline)
+            assertEquals("$rows", idleRowsHeight(rows), anatomy.body)
+            assertEquals("$rows", ATTENTION_ROW, anatomy.row)
+            assertEquals("$rows", 48.dp + 32.dp + 12.dp + idleRowsHeight(rows) + 16.dp + 56.dp, idleCardHeight(rows))
+        }
+        assertEquals(334.dp, idleCardHeight(3))
+        assertEquals(277.dp, idleCardHeight(2))
+        assertEquals(220.dp, idleCardHeight(1))
+        // Without any trip: the headline 31 + 16 + the 96-dp step tiles + 16 + 시연 체험 보기 56.
+        val none = idleAnatomy(0)
+        assertTrue(none.headline)
+        assertEquals(SETUP_TILES, none.body)
+        assertEquals(48.dp + 32.dp + 12.dp + 31.dp + 16.dp + 96.dp + 16.dp + 56.dp, idleCardHeight(0))
+        assertEquals(307.dp, idleCardHeight(0))
+        assertEquals("null은 가장 큰 형태", idleAnatomy(IDLE_ROWS_MAX), attentionAnatomy(null))
+        // The frame counts the tallest form, and every form fits it: 914 dp at the most, 1,010 with the demo strip.
+        val expected = mapOf(3 to 914, 2 to 857, 1 to 800, 0 to 887)
+        (0..IDLE_ROWS_MAX).forEach { rows ->
+            assertTrue("$rows: ${idleCardHeight(rows)}", idleCardHeight(rows) <= attentionCardMax(null, pager = false))
+            listOf(false, true).forEach { demo ->
+                val forms = homeForms(null, pager = false, demo = demo)
+                assertEquals("$rows demo=$demo", HomeForms(HomeForm.TALL, HomeForm.TALL), forms)
+                val frame = homeFrame(null, pager = false, demo = demo, forms = forms).copy(card = idleCardHeight(rows))
+                assertEquals("$rows demo=$demo", (expected.getValue(rows) + if (demo) 96 else 0).dp, frame.total)
+                assertTrue("$rows demo=$demo: ${frame.total}", frame.total <= HOME_PAGE_FULL)
+                assertTrue("$rows demo=$demo: ${frame.total}", frame.total <= homeFrame(null, pager = false, demo = demo, forms = forms).total)
+            }
+        }
     }
 
     @Test fun theNowColumnFitsBesideIt() {
