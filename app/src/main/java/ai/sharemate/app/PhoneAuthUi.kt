@@ -295,7 +295,8 @@ internal fun PhoneSignInScreen(
                     modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).pressable(source).semantics { if (demoLoading) stateDescription = "시연 계정으로 들어가는 중" }) {
                     ButtonLabel("시연 계정으로 둘러보기", demoLoading, "들어가는 중…")
                 }
-                Text("시연 빌드 전용이에요. Google 계정 없이 화면을 둘러볼 수 있어요.", style = MaterialTheme.typography.bodySmall, color = Scene.textMuted,
+                // Shown in debug builds and in builds without Google sign-in (demoAccountOffered), so the line does not name a build.
+                Text("Google 계정 없이 시연 계정으로 화면을 둘러볼 수 있어요.", style = MaterialTheme.typography.bodySmall, color = Scene.textMuted,
                     modifier = Modifier.padding(horizontal = 4.dp))
             }
             InlineError(error, Modifier.padding(horizontal = 4.dp))
