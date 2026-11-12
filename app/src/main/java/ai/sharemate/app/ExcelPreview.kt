@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
@@ -78,6 +79,22 @@ internal fun previewRowsPerPage(tableHeight: Dp?, compact: Boolean, fontScale: F
     return ((tableHeight - header) / row).toInt().coerceIn(1, PREVIEW_MAX_ROWS)
 }
 
+/**
+ * How many ruled, empty rows the preview draws under an empty sheet's header row (2.15, docs/design/DESIGN_2_15.md §2.3; pure,
+ * unit-tested), so the form the file will hold shows before the first trip. None on the phone ([car] false): its preview does
+ * not change. On the car [PREVIEW_MAX_ROWS] (eight) at the data rows' height, as many of them as [room] holds under the header,
+ * counted as [previewRowsPerPage] counts a page (a 66-dp header, 72 + 1 dp a row, 64 + 1 when [compact], taller at a large
+ * font), with no pager or hint to leave room for. A room without one row draws no table; without a definite height, all eight.
+ */
+internal fun emptySheetRows(room: Dp?, compact: Boolean, fontScale: Float = 1f, car: Boolean = true): Int {
+    if (!car) return 0
+    if (room == null || !room.value.isFinite()) return PREVIEW_MAX_ROWS
+    val scale = fontScale.coerceAtLeast(1f)
+    val header = 24.dp + 40.dp * scale + 2.dp
+    val row = maxOf(if (compact) 64.dp else 72.dp, 24.dp + 40.dp * scale) + 1.dp
+    return ((room - header) / row).toInt().coerceIn(0, PREVIEW_MAX_ROWS)
+}
+
 /** What the pager and the hint take under the table on its page: two 12-dp gaps, the pager's touch target and one labelMedium line. */
 internal fun previewPagerHeight(tapHeight: Dp, fontScale: Float = 1f): Dp = 12.dp + tapHeight + 12.dp + 16.dp * fontScale.coerceAtLeast(1f)
 
@@ -108,8 +125,9 @@ internal fun previewCell(value: Any): String = when (value) {
  *
  * On the car (2.12, [isCar]) the preview sits in its own card, so it speaks the car's one line: the closed month as a tag, an
  * empty sheet or a failed build as a title over one line instead of a nested panel, and the chosen sheet in the accent ink.
- * The caveat leaves the preview for the card's ⓘ row under it, so its long form never takes the table's room. The phone
- * draws it as before.
+ * The caveat leaves the preview for the card's ⓘ row under it, so its long form never takes the table's room. Since 2.15 an
+ * empty sheet on the car also draws the sheet's header row and ruled, empty rows under its two lines ([EmptySheet]), so the
+ * preview of an empty month is the form, not a hollow card. The phone draws it as before.
  */
 @Composable
 internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate, to: LocalDate,
@@ -161,7 +179,13 @@ internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate,
                 }
                 val emptyTitle = when (sheetIndex) { 2 -> "등록된 경비가 없어요"; 3 -> "정비 기록과 기한이 없어요"; else -> "이 범위의 기록이 없어요" }
                 if (sheet.rows.isEmpty()) {
-                    if (car) PreviewNotice(emptyTitle, ReportCopy.PREVIEW_EMPTY_LINE)
+                    if (car) {
+                        PreviewNotice(emptyTitle, ReportCopy.PREVIEW_EMPTY_LINE)
+                        // 2.15: under the two lines, the sheet's header row and its ruled, empty rows in the room the table would get.
+                        if (fillHeight) BoxWithConstraints(Modifier.weight(1f, fill = false).fillMaxWidth()) {
+                            EmptySheet(sheet.columns, emptySheetRows(maxHeight, compact, fontScale), compact)
+                        } else EmptySheet(sheet.columns, emptySheetRows(null, compact), compact)
+                    }
                     else Panel(padding = 24.dp) {
                         Text(emptyTitle, style = MaterialTheme.typography.titleMedium)
                         Muted("조회 기간과 직원 선택을 확인하세요. 저장 시에도 빈 내역으로 표시됩니다.")
@@ -212,6 +236,30 @@ internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate,
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(title, style = MaterialTheme.typography.titleMedium, color = Scene.text)
         CarLine(line)
+    }
+}
+
+/**
+ * The car's empty sheet (2.15, §2.3): the table's frame with the sheet's [columns] as its header row and [rows] ruled, empty rows
+ * ([emptySheetRows]) numbered from the sheet's first data row, at the data rows' height and zebra, scrolling sideways together
+ * as the data table does, so the form the file will hold is visible before the first trip. Not buttons: TalkBack hears the
+ * header row as one stop (the columns the file will hold) and skips the empty rows. No rows, no table.
+ */
+@Composable private fun EmptySheet(columns: List<String>, rows: Int, compact: Boolean) {
+    if (rows <= 0) return
+    val widths = excelColumnWidths(columns, compact)
+    val sideways = rememberScrollState()
+    val blank = List(columns.size) { "" }
+    Surface(shape = RoundedCornerShape(18.dp), border = Scene.edge, color = MaterialTheme.colorScheme.surface, contentColor = Scene.text) {
+        Column {
+            Box(Modifier.semantics(mergeDescendants = true) {}) { PreviewRow("행", columns, widths, sideways, header = true, compact = compact) }
+            Column(Modifier.clearAndSetSemantics {}) {
+                repeat(rows) { offset ->
+                    HorizontalDivider(color = Scene.divider)
+                    PreviewRow((offset + 6).toString(), blank, widths, sideways, header = false, compact = compact, zebra = offset % 2 == 1)
+                }
+            }
+        }
     }
 }
 

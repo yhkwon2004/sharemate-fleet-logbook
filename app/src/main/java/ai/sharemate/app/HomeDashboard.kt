@@ -349,8 +349,14 @@ internal fun heroBand(heroWidth: Float, heroHeight: Float, readingWidth: Float, 
     return if (right > left && bottom > 0f) Rect(left, 0f, right, bottom) else null
 }
 
+/**
+ * What 홈's three cards say and where they lead. [logMonth] (2.15) is the month 운행일지 확인 opens 운행기록 on: this month, or
+ * null where its line names the month the log lands on by itself ("최근 10월 · 9건"), so the page opens following the trips
+ * ([landingMonth]) with its landing tag.
+ */
 @Immutable
-internal data class HomeCardLines(val vehicle: String, val log: String, val logPending: Int, val export: String, val exportMonth: YearMonth)
+internal data class HomeCardLines(val vehicle: String, val log: String, val logPending: Int, val export: String, val exportMonth: YearMonth,
+    val logMonth: YearMonth?)
 
 /**
  * The 운행기록 tab's own numbers for [month]: its 전체 count and its 점검 필요 count (audit issues over the whole odometer
@@ -365,10 +371,14 @@ internal fun logReview(data: TripLogData, month: YearMonth, zone: ZoneId): LogRe
 }
 
 /**
- * What each home card says under its title. 차량 정보 leads with a due care deadline, then battery and odometer (a value
- * that is not live is marked 마지막, and a zero or missing reading is left out); 운행일지 확인 counts this month the way the
- * log does; 정보 내보내기 names the month the Excel covers, [HomeCardLines.exportMonth], which 월간·Excel then opens on
- * ([reportLandingMonth], as the phone's card).
+ * What each home card says under its title (the car's; the phone's are [phoneCardLines]). 차량 정보 leads with a due care
+ * deadline, then battery and odometer (a value that is not live is marked 마지막, and a zero or missing reading is left out);
+ * 운행일지 확인 counts this month the way the log does. 2.15 (DESIGN_2_15 §2.1): the cards point where the pages land. While
+ * this month has no trip and none records, and the log lands on an earlier month ([landingMonth]), 운행일지 확인 names that
+ * month, "최근 10월 · 9건", and opens the log following it ([HomeCardLines.logMonth] null); its count badge keeps counting this
+ * month. 정보 내보내기 names the month the Excel covers, [HomeCardLines.exportMonth], which 월간·Excel then opens on
+ * ([carReportLandingMonth]): "… · 마감 전 저장" for an earlier month still to close, "… · Excel 5개 시트" for this month or a
+ * closed one.
  */
 internal fun homeCardLines(data: TripLogData, socPercent: Int?, odometerKm: Double?, odometerLive: Boolean, today: LocalDate, zone: ZoneId,
     snoozedCare: Set<String> = emptySet()): HomeCardLines {
@@ -378,17 +388,19 @@ internal fun homeCardLines(data: TripLogData, socPercent: Int?, odometerKm: Doub
     val month = YearMonth.from(today)
     val review = logReview(data, month, zone)
     val recording = data.open?.let { YearMonth.from(Instant.ofEpochMilli(it.startAt).atZone(zone)) == month } == true
+    val landing = landingMonth(data.trips, today, zone).takeIf { review.trips == 0 && !recording && it < month }
     val log = when {
         review.trips == 0 && recording -> "${month.monthValue}월 첫 운행 기록 중"
+        landing != null -> "최근 ${monthLabel(landing, today)} · ${tripsIn(data.trips, landing.atDay(1), landing.atEndOfMonth(), zone).size}건"
         review.trips == 0 -> "${month.monthValue}월 운행이 아직 없어요"
         review.issues > 0 -> "${month.monthValue}월 ${review.trips}건 · 확인 ${review.issues}건 남음"
         else -> "${month.monthValue}월 ${review.trips}건 · 모두 확인됨"
     }
     val pending = review.issues
-    val exportMonth = reportLandingMonth(data, today, zone)
-    val export = if (exportMonth != month) "${monthLabel(exportMonth, today)} 운행기록부 · 마감 전 저장"
-        else "${month.monthValue}월 운행기록부 · Excel 5개 시트"
-    return HomeCardLines(vehicle, log, pending, export, exportMonth)
+    val exportMonth = carReportLandingMonth(data, today, zone)
+    val export = if (exportMonth != month && monthStatus(data, exportMonth, zone).closed == null) "${monthLabel(exportMonth, today)} 운행기록부 · 마감 전 저장"
+        else "${monthLabel(exportMonth, today)} 운행기록부 · Excel 5개 시트"
+    return HomeCardLines(vehicle, log, pending, export, exportMonth, logMonth = if (landing != null) null else month)
 }
 
 /**

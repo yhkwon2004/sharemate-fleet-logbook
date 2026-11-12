@@ -48,7 +48,6 @@ import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.AccountBox
-import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
@@ -423,7 +422,9 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                                             when (page) {
                                                 0 -> DrivePane(state, now, act, repository, homeNav, snoozes, bannerCharges, { bannerCharges = it },
                                                     nowColumn = columns.split, onHeroSky = { paneSky = it }, onBand = { homeBand = it })
-                                                1 -> key(logGen) { LogPane(state, now, act, repository, openDriver, expenseTripId, logFilter, logMonth, openReport = goReport) }
+                                                // The empty hero's ways on (2.15): the header's 시연 체험, 설정 › 기록 and 홈.
+                                                1 -> key(logGen) { LogPane(state, now, act, repository, openDriver, expenseTripId, logFilter, logMonth, openReport = goReport,
+                                                    startTutorial = { tutorial = true }, openRecordSettings = { goSettings(3) }, goHome = { tab = 0 }) }
                                                 2 -> key(reportGen) { ReportPane(state, now, pendingExportName != null, export, act, repository, { goSettings(2) }, { tab = 0 },
                                                     initialMonth = reportMonth, onSaveBar = { saveBarUp = it }) { month -> openLog(1, month) } }
                                                 3 -> VehiclePane(state, now, act, repository, goSettings = { goSettings(0) })
@@ -1113,7 +1114,7 @@ private const val HOME_FRAME_SETTLE_MS = 400L
     val lines = remember(data, soc, odometer, odometerLive, today) { homeCardLines(data, soc, odometer, odometerLive, today, zone) }
     val cards = listOf(
         HomeCardSpec("차량 정보", lines.vehicle, R.drawable.ic_vehicle, openIncidents(data).size) { nav.navigate(3) },
-        HomeCardSpec("운행일지 확인", lines.log, R.drawable.ic_journal, lines.logPending) { nav.openLog(if (lines.logPending > 0) 1 else 0, YearMonth.from(today)) },
+        HomeCardSpec("운행일지 확인", lines.log, R.drawable.ic_journal, lines.logPending) { nav.openLog(if (lines.logPending > 0) 1 else 0, lines.logMonth) },
         HomeCardSpec("정보 내보내기", lines.export, R.drawable.ic_export, 0) { nav.openReport(lines.exportMonth) },
     )
     // The greeting block rises in once per session; a return to the tab or a sync lands in place.
@@ -1265,36 +1266,6 @@ private fun purposeCaption(purpose: TripPurpose) = if (purpose.business) "업무
 internal fun logFilterLabels(trips: Int, issues: Int, matched: Int, wide: Boolean): List<String> =
     listOf("전체 $trips", "점검 필요 $issues", if (wide) "자동 반영 $matched" else "자동 $matched")
 
-/** Which list an empty card stands for, and so its mark: no trips (ic_journal), nothing to check (CheckCircle), no matches (ic_receipt). */
-internal enum class LogEmptyKind { TRIPS, ISSUES, MATCHED }
-
-/**
- * The log's one empty state (2.13): a short [title] (the stepper and the chip already name the month and the employee), the
- * long title TalkBack keeps ([spoken]), an optional second line, whether 필터 해제 is offered beside 이전 달 보기, and the
- * [kind] that picks the card's mark.
- */
-@Immutable
-internal data class LogEmptyCopy(val title: String, val spoken: String, val detail: String? = null, val clearable: Boolean = false,
-    val kind: LogEmptyKind = LogEmptyKind.TRIPS)
-
-/**
- * What the log says when the list under [filter] (0 전체, 1 점검 필요, 2 자동 반영) has nothing to pick in [month]: no trips,
- * no trip left to check, or no card payment that went in by itself. [monthTrips] counts the month's trips after the employee
- * filter, whose label is [employee] when one is set. The title is the short one of [LogCopy]; TalkBack hears the long one,
- * with the month and the employee ("11월 영업 · 권 님의 운행 기록이 없어요"). 필터 해제 ([LogEmptyCopy.clearable]) whenever a
- * filter other than 전체 or an employee is set; 이전 달 보기 always.
- */
-internal fun logEmptyCopy(filter: Int, month: YearMonth, monthTrips: Int, employee: String?, today: LocalDate): LogEmptyCopy {
-    val name = monthLabel(month, today)
-    val who = employee?.let { " $it 님의" }.orEmpty()
-    val clearable = filter != 0 || employee != null
-    return when {
-        filter == 1 && monthTrips > 0 -> LogEmptyCopy(LogCopy.EMPTY_ISSUES, "$name$who 점검할 운행이 없어요", LogCopy.EMPTY_ISSUES_LINE, clearable, LogEmptyKind.ISSUES)
-        filter == 2 -> LogEmptyCopy(LogCopy.EMPTY_MATCHED, "$name 카드 결제가 자동으로 들어간 운행이 없어요", clearable = clearable, kind = LogEmptyKind.MATCHED)
-        else -> LogEmptyCopy(LogCopy.EMPTY_TRIPS, "$name$who 운행 기록이 없어요", clearable = clearable)
-    }
-}
-
 /**
  * The 운행기록 list's width when the page holds the list beside the detail, else null: the list then fills the page and the
  * detail opens as a side sheet (pure, unit-tested). Two panes need EXPANDED or wider and 900 dp of effective page (its width
@@ -1315,22 +1286,39 @@ internal fun logListWidth(layout: LayoutTokens, page: Dp, gap: Dp, fontScale: Fl
  *
  * The tap ([selectedId]) is cleared by a month, employee or filter change and by a delete, so the detail goes back to
  * following the list; an edit in the pane pins its trip, so a fix that drops it from 점검 필요 never swaps the detail under
- * the driver's finger. An empty list is one card in the list column; its 점검 필요 card leads to 월간·Excel ([openReport])
- * while the month is ready to close.
+ * the driver's finger.
+ *
+ * 2.15 (docs/design/DESIGN_2_15.md §2.1–2.2): opened without a month ([initialMonth] null), the page follows [landingMonth] of
+ * its trips until the driver steps the month, which is then theirs; standing on an earlier month that way, the tag row says
+ * that this month has no trip yet ([LogCopy.landingTag]), and a trip that arrives in a later month moves the page with it. An
+ * empty list is the [CarEmptyHero] ([logEmptyHero]), across both panes of the split page or in the list's place, whose ways on
+ * are the page's own month, filter and employee, the 시연 체험 walkthrough ([startTutorial]), 설정 › 기록
+ * ([openRecordSettings]), 홈 ([goHome]) and the close of a month that is ready ([openReport]).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable private fun LogPane(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, openDriver: (String?) -> Unit,
-    initialTripId: String?, initialFilter: Int = 0, initialMonth: String? = null, openReport: (YearMonth) -> Unit = {}) {
+    initialTripId: String?, initialFilter: Int = 0, initialMonth: String? = null, openReport: (YearMonth) -> Unit = {},
+    startTutorial: () -> Unit = {}, openRecordSettings: () -> Unit = {}, goHome: () -> Unit = {}) {
     val layout = LocalLayout.current
     val fontScale = LocalDensity.current.fontScale
     val today = localDate(now)
-    var month by rememberSaveable { mutableStateOf(initialMonth?.takeIf { runCatching { YearMonth.parse(it) }.isSuccess } ?: YearMonth.from(today).toString()) }
+    // The month a button named or the driver stepped to; null while the page follows the trips (2.15 §2.1).
+    var month by rememberSaveable { mutableStateOf(initialMonth?.takeIf { runCatching { YearMonth.parse(it) }.isSuccess }) }
     var filter by rememberSaveable(initialFilter) { mutableIntStateOf(initialFilter) }
     // The row the driver tapped, or the trip a button opened the page on; null while the detail follows the list.
     var selectedId by rememberSaveable(initialTripId) { mutableStateOf(initialTripId) }
     var employeeFilter by rememberSaveable { mutableStateOf<String?>(null) }
-    val period = YearMonth.parse(month)
     val all = state.data.trips
+    val landing = remember(all, today) { landingMonth(all, today, zone) }
+    val period = month?.let(YearMonth::parse) ?: landing
+    // A following page that moves to a later month (a trip arrived there) drops the row tapped in the month it leaves.
+    val shownMonth = remember { mutableStateOf(period) }
+    LaunchedEffect(period) {
+        if (shownMonth.value != period) {
+            if (month == null) selectedId = null
+            shownMonth.value = period
+        }
+    }
     val byId = remember(all) { all.associateBy { it.id } }
     val audit = remember(all) { auditTrips(all) }
     val trips = tripsIn(all, period.atDay(1), period.atEndOfMonth(), zone).filter { employeeFilter == null || it.driverId == employeeFilter }
@@ -1360,11 +1348,14 @@ internal fun logListWidth(layout: LayoutTokens, page: Dp, gap: Dp, fontScale: Fl
         DropdownChip(employeeLabel, LogCopy.SPOKEN_EMPLOYEE_FILTER, modifier.widthIn(max = 280.dp), icon = rememberVectorPainter(Icons.Outlined.Person),
             active = employeeFilter != null, content = employeeItems)
     }
-    // The facts of the list on screen, each a tag: the totals (none in an empty month), demo data once, the 점검 필요 counts.
+    // The facts of the list on screen, each a tag: why a following page stands on an earlier month (2.15, a quiet tag), the
+    // totals (none in an empty month), demo data once, the 점검 필요 counts.
+    val landed = month == null && period < thisMonth
     val countLine = if (filter == 1) issueCountLine(required, issues.size - required) else ""
-    val hasTags = trips.isNotEmpty() || demo || countLine.isNotEmpty()
+    val hasTags = landed || trips.isNotEmpty() || demo || countLine.isNotEmpty()
     val tags: @Composable (Modifier, Arrangement.Horizontal) -> Unit = { modifier, arrangement ->
         FlowRow(modifier, horizontalArrangement = arrangement, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (landed) CarTag(LogCopy.landingTag(thisMonth))
             if (trips.isNotEmpty()) CarTag(logTotalsLine(totals))
             if (demo) CarTag(LogCopy.DEMO, tone = PillTone.DEMO)
             if (countLine.isNotEmpty()) CarTag(countLine)
@@ -1412,24 +1403,35 @@ internal fun logListWidth(layout: LayoutTokens, page: Dp, gap: Dp, fontScale: Fl
                     }
                 }
             }
-            // An empty list is one card in the list column, never a blank column beside an empty detail panel.
             val empty = when (filter) { 0 -> trips.isEmpty(); 1 -> issues.isEmpty(); else -> matchedRows.isEmpty() }
-            // The empty 점검 필요 card of a month with nothing left to finish leads to its close.
-            val closable = filter == 1 && monthStatus(state.data, period, zone).ready
+            // 2.15 §2.2: an empty list is the hero, never a small card beside a blank column: what it says is [logEmptyHero].
+            val hero: @Composable (Modifier) -> Unit = { modifier ->
+                val model = remember(state.data, filter, period, employeeFilter, today) { logEmptyHero(filter, period, state.data, employeeFilter, today, zone) }
+                CarEmptyHero(model, modifier) { action, target ->
+                    when (action) {
+                        HeroAction.TUTORIAL -> startTutorial()
+                        HeroAction.DEMO_SETTING, HeroAction.CARD_SETTING -> openRecordSettings()
+                        HeroAction.DEMO_DRIVE -> goHome()
+                        HeroAction.PREVIOUS_MONTH -> previousMonth()
+                        HeroAction.CLEAR_FILTER -> { filter = 0; employeeFilter = null; selectedId = null }
+                        HeroAction.OPEN_MONTH -> if (target != null) { month = target.toString(); selectedId = null }
+                        HeroAction.CLOSE_MONTH -> openReport(period)
+                        HeroAction.SHOW_ALL -> showFilter(0)
+                    }
+                }
+            }
             val list: @Composable (Modifier) -> Unit = { modifier ->
                 val group = modifier.semantics { isTraversalGroup = true }
-                if (empty) Box(group.verticalScroll(rememberScrollState())) {
-                    LogEmptyCard(logEmptyCopy(filter, period, trips.size, employeeName, today), onPrevious = previousMonth,
-                        onClear = { filter = 0; employeeFilter = null; selectedId = null },
-                        closeLabel = if (closable) "${monthLabel(period, today)} 마감하러 가기" else null, onClose = { openReport(period) })
-                } else when (filter) {
+                when (filter) {
                     // Opened on a trip (the assistant's citation), the list scrolls that day into view until another row is tapped.
                     0 -> TripList(trips, state.data, flagged, shownId, group, compact = layout.short, scrollTo = initialTripId?.takeIf { it == selectedId }) { selectedId = it }
                     1 -> IssueList(issues, state.data, shownId, group, act, repository, openDriver) { selectedId = it }
                     else -> MatchedTripList(state.data, periodClock, act, repository, shownId, group) { selectedId = it }
                 }
             }
-            if (listWidth != null) Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(layout.cardGap)) {
+            // Split, an empty list's hero takes both panes; narrow, it takes the list's place under the side sheet.
+            if (empty && listWidth != null) hero(Modifier.weight(1f).fillMaxWidth())
+            else if (listWidth != null) Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(layout.cardGap)) {
                 // FULL: list 526 + gap 16 + detail 570 share the 1112-dp page.
                 list(Modifier.width(listWidth).fillMaxHeight())
                 val skin = Car.skin
@@ -1440,7 +1442,8 @@ internal fun logListWidth(layout: LayoutTokens, page: Dp, gap: Dp, fontScale: Fl
                 }
             } else Box(Modifier.weight(1f).fillMaxWidth()) {
                 // While the detail sheet is up, the list under its scrim is out of TalkBack's reach: the sheet is the one pane to read.
-                list(Modifier.fillMaxSize().then(if (shown != null) Modifier.clearAndSetSemantics {} else Modifier))
+                val under = Modifier.fillMaxSize().then(if (shown != null) Modifier.clearAndSetSemantics {} else Modifier)
+                if (empty) hero(under) else list(under)
                 SideSheet(shown, onDismiss = { selectedId = null }, widthFraction = if (layout.compact) .94f else .62f, title = LogCopy.DETAIL) { trip ->
                     TripDetail(trip, state.data, audit.filter { it.tripId == trip.id }, act, repository, openDriver, inPane = false,
                         pin = { selectedId = trip.id }) { selectedId = null }
@@ -1484,39 +1487,6 @@ internal fun logListWidth(layout: LayoutTokens, page: Dp, gap: Dp, fontScale: Fl
         .semantics { contentDescription = description }, contentAlignment = Alignment.Center) {
         Icon(if (forward) Icons.AutoMirrored.Outlined.KeyboardArrowRight else Icons.AutoMirrored.Outlined.KeyboardArrowLeft, contentDescription = null,
             modifier = Modifier.size(28.dp), tint = tint)
-    }
-}
-
-/**
- * The log's one empty state (2.13): a car card at the top of the list column (max 560) with the list's mark on the disc, the
- * short title (TalkBack hears the long one, with the month and the employee) and its line, then the ways on: 이전 달 보기,
- * 필터 해제 while a filter or an employee narrows the list ([LogEmptyCopy.clearable]), and, on an empty 점검 필요 of a month
- * that is ready to close, [closeLabel] ("10월 마감하러 가기"), the card's one primary action, which opens 월간·Excel on it.
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable private fun LogEmptyCard(copy: LogEmptyCopy, onPrevious: () -> Unit, onClear: () -> Unit, modifier: Modifier = Modifier,
-    closeLabel: String? = null, onClose: () -> Unit = {}) {
-    val icon = when (copy.kind) {
-        LogEmptyKind.TRIPS -> painterResource(R.drawable.ic_journal)
-        LogEmptyKind.ISSUES -> rememberVectorPainter(Icons.Outlined.CheckCircle)
-        LogEmptyKind.MATCHED -> painterResource(R.drawable.ic_receipt)
-    }
-    CarCard(modifier.widthIn(max = 560.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            CarIconDisc(icon)
-            Spacer(Modifier.width(16.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(copy.title, style = MaterialTheme.typography.titleSmall, color = Scene.text,
-                    modifier = Modifier.semantics { heading(); contentDescription = copy.spoken })
-                copy.detail?.let { CarLine(it) }
-            }
-        }
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
-            itemVerticalAlignment = Alignment.CenterVertically) {
-            CarPillButton(LogCopy.PREVIOUS_MONTH, onPrevious)
-            if (copy.clearable) CarPillButton(LogCopy.CLEAR_FILTER, onClear)
-            if (closeLabel != null) PrimaryAction(closeLabel, onClick = onClose)
-        }
     }
 }
 
@@ -2196,7 +2166,7 @@ internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = Se
     // month moves only when the driver steps.
     var period by rememberSaveable { mutableIntStateOf(0) }
     var month by rememberSaveable { mutableStateOf(initialMonth?.takeIf { runCatching { YearMonth.parse(it) }.isSuccess }
-        ?: reportLandingMonth(data, today, zone).toString()) }
+        ?: carReportLandingMonth(data, today, zone).toString()) }
     var view by rememberSaveable { mutableIntStateOf(2) }
     var confirmExport by remember { mutableStateOf(false) }
     // Read back clamped to this month, so a clock set back never shows a period that has not begun.

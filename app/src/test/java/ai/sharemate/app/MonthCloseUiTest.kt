@@ -46,10 +46,16 @@ class MonthCloseUiTest {
         )
         cases.forEach { (case, today, expected) ->
             assertEquals("$today", expected, reportLandingMonth(case, today, zone))
-            // The home's and the phone's 정보 내보내기 open the same month the pane lands on.
-            assertEquals("홈 $today", expected, homeCardLines(case, null, null, false, today, zone).exportMonth)
+            // The home's and the phone's 정보 내보내기 open the same month their pane lands on: the car's (2.15) and the phone's.
+            assertEquals("홈 $today", carReportLandingMonth(case, today, zone), homeCardLines(case, null, null, false, today, zone).exportMonth)
             assertEquals("휴대폰 $today", expected, phoneCardLines(case, today, zone).exportMonth)
         }
+        // Where the two differ: last month closed, this month without a trip yet. The phone keeps this month, the car shows October.
+        val quiet = closed.copy(trips = closed.trips.filter { it.id != id("c") })
+        val today = LocalDate.of(2026, 11, 13)
+        assertEquals(YearMonth.of(2026, 11), phoneCardLines(quiet, today, zone).exportMonth)
+        assertEquals(YearMonth.of(2026, 10), homeCardLines(quiet, null, null, false, today, zone).exportMonth)
+        assertEquals(YearMonth.of(2026, 10), carReportLandingMonth(quiet, today, zone))
     }
 
     @Test fun aCarPageLandsOnTheLatestMonthThatHasTrips() {

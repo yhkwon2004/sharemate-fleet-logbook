@@ -110,6 +110,28 @@ class HomeDashboardTest {
         assertEquals("11월 1건 · 모두 확인됨", done.log); assertEquals(0, done.logPending)
         val recording = TripLogData(open = Trip(id("o"), at(11, 20, 8), null, 100.0, 101.0))
         assertEquals("11월 첫 운행 기록 중", homeCardLines(recording, null, null, false, today, zone).log)
+        assertEquals("이번 달 카드는 이번 달을 엶", YearMonth.of(2026, 11), lines.logMonth)
+        assertEquals(YearMonth.of(2026, 11), homeCardLines(TripLogData(), null, null, false, today, zone).logMonth)
+    }
+
+    /** 2.15 (DESIGN_2_15 §2.1): a month without a trip yet points where 운행기록 lands, the latest month that has trips. */
+    @Test fun anEmptyMonthsLogCardNamesTheMonthTheLogLandsOn() {
+        val today = LocalDate.of(2026, 11, 13)
+        val october = TripLogData(drivers = listOf(driver), trips = (1..9).map { day -> trip("o$day", 10, day, start = 100.0 + day * 10) } +
+            trip("s", 9, 3, TripPurpose.UNCLASSIFIED, start = 50.0))
+        val lines = homeCardLines(october, null, null, false, today, zone)
+        assertEquals("최근 10월 · 9건", lines.log)
+        assertEquals("운행기록은 스스로 그 달에 섬", null, lines.logMonth)
+        assertEquals("배지는 이번 달을 셈", 0, lines.logPending)
+        val recording = october.copy(open = Trip(id("open"), at(11, 13, 8), null, 200.0, 201.0))
+        assertEquals("기록 중이면 이번 달", "11월 첫 운행 기록 중", homeCardLines(recording, null, null, false, today, zone).log)
+        assertEquals(YearMonth.of(2026, 11), homeCardLines(recording, null, null, false, today, zone).logMonth)
+        val december = LocalDateTime.of(2025, 12, 10, 9, 0).atZone(zone).toInstant().toEpochMilli()
+        val lastYear = TripLogData(trips = listOf(Trip(id("dec"), december, december + 3_600_000, 100.0, 110.0, driverId = driver.id, purpose = TripPurpose.BUSINESS)))
+        assertEquals("다른 해는 연도를 붙임", "최근 2025년 12월 · 1건", homeCardLines(lastYear, null, null, false, LocalDate.of(2026, 2, 3), zone).log)
+        listOf(lines.log, homeCardLines(lastYear, null, null, false, LocalDate.of(2026, 2, 3), zone).log).forEach {
+            assertOneLine(it, HOME_TILE_LINE_UNITS); assertOneLine(it, HOME_TALL_LINE_UNITS)
+        }
     }
 
     @Test fun exportCardNamesLastMonthWhileItIsStillOpen() {
@@ -117,6 +139,12 @@ class HomeDashboardTest {
         assertEquals("10월 운행기록부 · 마감 전 저장", homeCardLines(data, null, null, false, LocalDate.of(2026, 11, 3), zone).export)
         val closed = closeMonth(data, YearMonth.of(2026, 10), at(11, 1, 9), zone)
         assertEquals("11월 운행기록부 · Excel 5개 시트", homeCardLines(closed, null, null, false, LocalDate.of(2026, 11, 3), zone).export)
+        // 2.15: without a trip this month the card names the month the car's 월간·Excel lands on, closed or still to close.
+        val quiet = closed.copy(trips = closed.trips.filter { it.id != id("b") })
+        assertEquals("10월 운행기록부 · Excel 5개 시트", homeCardLines(quiet, null, null, false, LocalDate.of(2026, 11, 13), zone).export)
+        val september = TripLogData(drivers = listOf(driver), trips = listOf(trip("s", 9, 3)))
+        assertEquals("마감하지 않은 지난 달", "9월 운행기록부 · 마감 전 저장", homeCardLines(september, null, null, false, LocalDate.of(2026, 11, 13), zone).export)
+        assertEquals(YearMonth.of(2026, 9), homeCardLines(september, null, null, false, LocalDate.of(2026, 11, 13), zone).exportMonth)
     }
 
     @Test fun monthWidgetUsesOneTruthfulWord() {
