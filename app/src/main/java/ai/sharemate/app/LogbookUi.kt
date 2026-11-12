@@ -2392,13 +2392,16 @@ internal fun expenseTypeSums(trips: List<Trip>): List<Pair<ExpenseType, Long>> {
 /**
  * 운행 현황's first card (2.12): the business ratio as the ring, without its caption (the title says it; TalkBack still hears
  * "업무사용비율 80%"), the form's ⑬ = ⑫ ÷ ⑪ as a tag that reads as words, the four kinds of distance as bars and ⑪ under them.
+ * [yearTag] (2.15 §7, 설정 › 정산·세무, [SettingsCopy.ratioYearTag]) leads the formula with the year the figures cover, which
+ * nothing else on that page says; 월간 passes none, since its range tag names the period.
  */
-@Composable private fun RatioCard(totals: LogbookTotals, modifier: Modifier, compact: Boolean = false) {
+@Composable private fun RatioCard(totals: LogbookTotals, modifier: Modifier, compact: Boolean = false, yearTag: String? = null) {
     val pleos = LocalPleosColors.current
     // The bar tracks share the ring's track token so they read on the card by day as well as by night.
     val track = Scene.ringTrack
     CarCard(modifier.fillMaxHeight(), title = {
         CarSectionTitle(ReportCopy.RATIO_TITLE, icon = painterResource(R.drawable.ic_report), trailing = {
+            yearTag?.let { CarTag(it) }
             CarTag(ReportCopy.RATIO_FORMULA, description = ReportCopy.SPOKEN_RATIO_FORMULA)
         })
     }) {
@@ -2430,8 +2433,9 @@ internal fun expenseTypeSums(trips: List<Trip>): List<Pair<ExpenseType, Long>> {
  * the no-logbook comparison as rows, a hairline, then the ratio-applied amount as the total row with [taxDifferenceLine]
  * under its label. That amount is the card's one tone: positive while it exceeds the no-logbook figure, the case the logbook
  * pays for. The card's ₩ mark is its title's alone (2.12 drew three, and the result in Material's onTertiaryContainer).
+ * 설정 › 정산·세무 (2.15 §7) shows it under the form that sets the cost and passes no [goSettings], as it does the settlement's.
  */
-@Composable private fun TaxCard(profile: FleetProfile, year: LogbookTotals, basis: String, blocker: String?, modifier: Modifier, goSettings: () -> Unit) {
+@Composable private fun TaxCard(profile: FleetProfile, year: LogbookTotals, basis: String, blocker: String?, modifier: Modifier, goSettings: (() -> Unit)?) {
     CarCard(modifier.fillMaxHeight(), title = { CarSectionTitle(ReportCopy.TAX_TITLE, icon = painterResource(R.drawable.ic_won), trailing = { CarTag(basis) }) }) {
         val cost = profile.annualCostWon
         val ratio = year.ratio
@@ -2439,7 +2443,7 @@ internal fun expenseTypeSums(trips: List<Trip>): List<Pair<ExpenseType, Long>> {
             Text(blocker, style = MaterialTheme.typography.titleSmall, color = Scene.text)
             if (cost == null) {
                 CarInfoRow(ReportCopy.TAX_CAP_NOTE, more = ReportCopy.TAX_CAP_MORE)
-                QuietAction("설정에서 입력", onClick = goSettings)
+                goSettings?.let { QuietAction("설정에서 입력", onClick = it) }
             } else CarMoneyRow(ReportCopy.TAX_COST, cost)
         } else if (cost != null && ratio != null) {
             val effect = taxEffect(cost, ratio)
@@ -2510,7 +2514,9 @@ internal fun settingsCardColumns(layout: LayoutTokens, page: Dp, fontScale: Floa
  * takes the whole page. Cards stand 16 dp apart in either arrangement (2.13). Otherwise one form
  * column at the start of the page (max 720), in the same order, with fields paired from EXPANDED at the normal font
  * ([settingsFieldColumns]). The PLEOS SDK card of 2.11 is gone: its facts are an ⓘ row of 기록 및 개인정보. The shell holds the
- * [section], so a button that opens 설정 on one lands there and the header's tab returns to the last one.
+ * [section], so a button that opens 설정 on one lands there and the header's tab returns to the last one. 2.15 (§7): 직원 and
+ * 정산·세무 reach the page's foot, the manager over 직원별 운행 with share bars, and a second pair, 비용 참고 beside this year's
+ * 업무사용비율 ([SettingsStack], SettingsFill.kt).
  */
 @Composable private fun SettingsPane(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, section: Int, onSection: (Int) -> Unit,
     onTutorial: () -> Unit = {}, onAssistant: (String?) -> Unit = {}, showInfo: (String) -> Unit) {
@@ -2535,10 +2541,31 @@ internal fun settingsCardColumns(layout: LayoutTokens, page: Dp, fontScale: Floa
                 CareSettingsCard(state, act, repository, modifier = modifier, columns = if (twoColumns) 2 else 1)
             }
         }
-        val drivers: @Composable () -> Unit = { DriversCard(state.data, act, repository, pairFields) }
+        // 2.15 §7: under the manager, 직원별 운행 of the month 운행기록 lands on, a share bar under each row, reaching the page's
+        // foot ([SettingsStack]); before the first finished trip there is no card.
+        val drivers: @Composable () -> Unit = {
+            val today = localDate(now)
+            val shown = remember(state.data.trips, today) { landingMonth(state.data.trips, today, zone) }
+            val shares = remember(state.data.trips, state.data.drivers, shown) {
+                usageShares(tripsIn(state.data.trips, shown.atDay(1), shown.atEndOfMonth(), zone), state.data.drivers)
+            }
+            SettingsStack(maxHeight, gap, top = { DriversCard(state.data, act, repository, pairFields) },
+                bottom = if (shares.isEmpty()) null else { { EmployeeShareCard(shares, monthLabel(shown, today)) } })
+        }
+        // 2.15 §7: a second pair under the first, what the yearly cost does (비용 참고) beside the ratio it applies, both this
+        // year's, reaching the page's foot ([SettingsStack]). Here the tax card offers no 설정에서 입력: the form is above it.
         val costs: @Composable () -> Unit = {
-            SideBySide(twoUp, gap, equalHeight = true, first = { modifier -> CostCard(state.data.profile, act, repository, showInfo, modifier, twoColumns) }) { modifier ->
-                SettlementCard(monthTrips, state.data, modifier, period = SettingsCopy.SETTLEMENT_PERIOD)
+            val today = localDate(now)
+            val (yearFrom, yearTo) = reportRange(ReportPeriod(YearMonth.from(today), yearly = true), today)
+            val year = remember(state.data.trips, yearFrom, yearTo) { logbookTotals(tripsIn(state.data.trips, yearFrom, yearTo, zone)) }
+            SettingsStack(maxHeight, gap, top = {
+                SideBySide(twoUp, gap, equalHeight = true, first = { modifier -> CostCard(state.data.profile, act, repository, showInfo, modifier, twoColumns) }) { modifier ->
+                    SettlementCard(monthTrips, state.data, modifier, period = SettingsCopy.SETTLEMENT_PERIOD)
+                }
+            }) {
+                SideBySide(twoUp, gap, equalHeight = true, first = { modifier ->
+                    TaxCard(state.data.profile, year, taxBasis(today.year, today), taxCardBlocker(state.data.profile.annualCostWon, year.ratio, today.year, today), modifier, null)
+                }) { modifier -> RatioCard(year, modifier, compact = !twoUp, yearTag = SettingsCopy.ratioYearTag(today.year)) }
             }
         }
         // Stacked (one up), a Column gives no height to share, so the lower card simply wraps its content.
