@@ -36,6 +36,9 @@ class ReportCopyTest {
         assertEquals(listOf(driverless), exportConfirmLines(0.0, 3))
         assertEquals("미분류가 먼저", listOf(unclassified, driverless), exportConfirmLines(12.0, 3))
         assertEquals("천 단위 구분", "미분류 1,234.5 km는 업무 거리에서 빠져요", exportConfirmLines(1_234.5, 0).single())
+        // 2.13: they are the lines of a CarDialog, one sentence each at its 600-dp width.
+        exportConfirmLines(12_345.6, 999).forEach { assertOneLine(it, DIALOG_LINE_UNITS) }
+        assertOneLine(ReportCopy.CONFIRM_TITLE, DIALOG_LINE_UNITS)
     }
 
     @Test fun theTaxCardBlockersAndBasisFitTheirPlaces() {
