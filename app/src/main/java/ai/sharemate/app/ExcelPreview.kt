@@ -25,6 +25,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.role
@@ -178,13 +179,26 @@ internal fun ExcelPreview(data: TripLogData, trips: List<Trip>, from: LocalDate,
                 // The car's caveat is its card's ⓘ row under the preview (ReportPane), where opening it lengthens the card
                 // instead of taking the table's room; the phone keeps its line here.
                 if (!car) Text("실제 저장 데이터 · Excel 인쇄 배치와 다를 수 있어요. 증빙·세무 요건은 제출 전 별도로 확인하세요.", style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary)
-                detail?.let { (number, row) -> AlertDialog(onDismissRequest = { detail = null }, title = { Text("${sheet.name} · ${number}행") },
-                    text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        row.forEachIndexed { index, cell -> Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Text(sheet.columns[index], style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
-                            Text(previewCell(cell).ifBlank { "—" }, style = MaterialTheme.typography.bodyLarge)
-                        } }
-                    } }, confirmButton = { DialogButton("닫기") { detail = null } }) }
+                // A row's full contents. The car's is its own dialog (2.13, [CarDialog], read only): the cells scroll in what the
+                // title and 닫기 leave, so the button stays whole on a short window. The phone keeps Material's.
+                detail?.let { (number, row) ->
+                    val title = "${sheet.name} · ${number}행"
+                    if (car) CarDialog(title, { detail = null }, icon = painterResource(R.drawable.ic_report), body = {
+                        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            row.forEachIndexed { index, cell -> Column(Modifier.semantics(mergeDescendants = true) {}, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(sheet.columns[index], style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary)
+                                Text(previewCell(cell).ifBlank { "—" }, style = MaterialTheme.typography.bodyLarge.copy(fontFeatureSettings = "tnum"), color = Scene.text)
+                            } }
+                        }
+                    }) { QuietAction("닫기") { detail = null } }
+                    else AlertDialog(onDismissRequest = { detail = null }, title = { Text(title) },
+                        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            row.forEachIndexed { index, cell -> Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(sheet.columns[index], style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                                Text(previewCell(cell).ifBlank { "—" }, style = MaterialTheme.typography.bodyLarge)
+                            } }
+                        } }, confirmButton = { DialogButton("닫기") { detail = null } })
+                }
             }
         }
     }

@@ -1,7 +1,5 @@
 package ai.sharemate.app
 
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -14,7 +12,7 @@ import java.util.UUID
 
 /**
  * Driver management's pure rules (2.11): the avatar, the copy, the stable list with what is next, the picker's columns and
- * paint, deletes and undo, and the booking switch.
+ * lead line (2.13), deletes and undo, and the booking switch.
  */
 class DriverRosterTest {
     private val zone = ZoneId.of("Asia/Seoul")
@@ -136,37 +134,17 @@ class DriverRosterTest {
         assertTrue(NOW_CARD_NO_DRIVERS_SPOKEN.startsWith("운행기록부 ④ 사용자 칸"))
     }
 
-    @Test fun everyPickerStatusLineClearsAaOnTheDialog() {
-        // The dialog's container is AlertDialogDefaults.containerColor: surfaceContainerHigh of the day and night Material schemes.
-        val dialogs = listOf(DaySceneColors to Color(0xFFE9EFF7), NightSceneColors to Color(0xFF1D2738))
-        dialogs.forEach { (scene, dialog) ->
-            val light = if (scene.isDay) "낮" else "밤"
-            listOf(false, true).forEach { chosen ->
-                val paint = pickerCardStyle(scene, chosen)
-                val card = paint.fill.compositeOver(dialog)
-                val which = if (chosen) "고른 카드" else "다른 카드"
-                assertTrue("$light $which: 상태 줄", contrast(paint.status, card) >= 4.5)
-                assertTrue("$light $which: 부서", contrast(scene.textSecondary, card) >= 4.5)
-            }
-            assertEquals("$light: 고른 카드는 선택 채움", scene.selectionFill, pickerCardStyle(scene, chosen = true).fill)
-            assertEquals("$light: 다른 카드의 상태 줄은 흐린 글자", scene.textMuted, pickerCardStyle(scene, chosen = false).status)
+    @Test fun thePickerLeadSaysWhereThePickLands() {
+        // 2.13: the picker's card is the car's (its AA pairs are the selection paint's, in CarSkinTest), and its one line under the title is pure.
+        val line = pickerTripLine(trip("t", kimJiwoo, at(9, 8, 12), at(9, 8, 47)), zone)
+        assertNull("직원이 없으면 빈 상태가 말함", pickerLead(noDrivers = true, tripLine = line, forTrip = true, recording = true))
+        assertEquals("운행이면 그 운행", line, pickerLead(noDrivers = false, tripLine = line, forTrip = true, recording = false))
+        assertNull("찾지 못한 운행은 줄 없음", pickerLead(noDrivers = false, tripLine = null, forTrip = true, recording = true))
+        assertEquals("새 운행과 기록 중인 운행에 바로 반영돼요", pickerLead(noDrivers = false, tripLine = null, forTrip = false, recording = true))
+        assertEquals("새 운행부터 적용돼요", pickerLead(noDrivers = false, tripLine = null, forTrip = false, recording = false))
+        listOf(true, false).forEach { recording ->
+            assertOneLine(pickerLead(noDrivers = false, tripLine = null, forTrip = false, recording = recording)!!, CARD_LINE_UNITS)
         }
-        assertEquals("낮: 다른 카드는 흰 유리", DaySceneColors.glass, pickerCardStyle(DaySceneColors, chosen = false).fill)
-        assertEquals("밤: 다른 카드는 옅은 채움", NightSceneColors.fill, pickerCardStyle(NightSceneColors, chosen = false).fill)
-        assertEquals("낮: 고른 카드도 흐린 글자", DaySceneColors.textMuted, pickerCardStyle(DaySceneColors, chosen = true).status)
-        assertEquals("밤: 고른 카드만 보조 글자", NightSceneColors.textSecondary, pickerCardStyle(NightSceneColors, chosen = true).status)
-        // Why: on the dialog, textMuted fell to 4.47:1 on the faint day fill and to 4.17:1 on the night selection.
-        assertTrue(contrast(DaySceneColors.textMuted, DaySceneColors.fill.compositeOver(Color(0xFFE9EFF7))) < 4.5)
-        assertTrue(contrast(NightSceneColors.textMuted, NightSceneColors.selectionFill.compositeOver(Color(0xFF1D2738))) < 4.5)
-    }
-
-    /** The WCAG contrast of two opaque colours. */
-    private fun contrast(a: Color, b: Color): Double {
-        fun lin(v: Float): Double = if (v <= 0.03928f) v / 12.92 else Math.pow((v + 0.055) / 1.055, 2.4)
-        fun luminance(c: Color): Double = 0.2126 * lin(c.red) + 0.7152 * lin(c.green) + 0.0722 * lin(c.blue)
-        val l1 = luminance(a)
-        val l2 = luminance(b)
-        return (maxOf(l1, l2) + 0.05) / (minOf(l1, l2) + 0.05)
     }
 
     @Test fun onlyDriversWithoutAnyTripCanBeRemoved() {

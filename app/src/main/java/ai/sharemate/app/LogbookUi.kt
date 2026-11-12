@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.AccountBox
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.Person
@@ -175,20 +176,26 @@ internal fun withRo(word: String): String {
     }
 }
 
-/** Classifies a trip with haptic confirmation, then offers undo or a same-day bulk apply in the follow-up bar. */
+/**
+ * Classifies a trip with haptic confirmation, then answers on the follow-up bar ([classifyFollowUp]): always 실행 취소, and,
+ * while other trips of that day are still unclassified, "3건도 같게" beside it (2.13; in 2.12 the bulk offer took the undo's
+ * place, so a wrong tap could not be taken back). The bulk answers in turn with its own 실행 취소, which puts those trips
+ * back to 미분류, as they were when it was offered.
+ */
 @Composable internal fun rememberClassifier(data: TripLogData, act: Act, repository: TripLogRepository): (Trip, TripPurpose, EditSource) -> Unit {
     val followUp = LocalFollowUp.current
     val haptic = LocalHapticFeedback.current
     return { trip, purpose, source ->
         haptic.performHapticFeedback(HapticFeedbackType.Confirm)
-        val others = bulkClassifyCandidates(data.trips, trip, zone)
+        val others = bulkClassifyCandidates(data.trips, trip, zone).map { it.id }
         act {
             repository.classify(trip.id, purpose, source)
-            followUp(if (others.isEmpty()) FollowUp("${withRo(purpose.label)} 기록했어요", "실행 취소") {
-                repository.classify(trip.id, trip.purpose, trip.purposeSource ?: EditSource.DRIVER)
-            } else FollowUp("${withRo(purpose.label)} 기록 · 같은 날 미분류 ${others.size}건", "${others.size}건도 같게") {
-                repository.classifyMany(others.map { it.id }, purpose, EditSource.DRIVER)
-            })
+            followUp(classifyFollowUp(purpose, others.size,
+                undo = { repository.classify(trip.id, trip.purpose, trip.purposeSource ?: EditSource.DRIVER) },
+                sameForOthers = {
+                    repository.classifyMany(others, purpose, EditSource.DRIVER)
+                    followUp(classifyManyFollowUp(purpose, others.size) { repository.classifyMany(others, TripPurpose.UNCLASSIFIED, EditSource.DRIVER) })
+                }))
         }
     }
 }
@@ -466,25 +473,28 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
 
 /**
  * Shows [item] on the shell's follow-up bar (2.13, a seam of LogbookApp): the bar it shows replaces the one on screen, it
- * stays long while it offers an action, and the action runs through [act], so its errors reach the shell's dialog.
+ * stays long while it offers an action, and every action runs through [act], so its errors reach the shell's dialog. The
+ * car's bar ([CarFollowUpBar]) gets the [FollowUp.second] action too ([FollowUpVisuals]): tapping it closes the bar and runs
+ * it, so the undo beside it is not run.
  */
 internal fun CoroutineScope.showFollowUp(snackbar: SnackbarHostState, act: Act, item: FollowUp) {
     launch {
         snackbar.currentSnackbarData?.dismiss()
-        val result = snackbar.showSnackbar(item.message, item.action, duration = if (item.action != null) SnackbarDuration.Long else SnackbarDuration.Short)
+        val second = item.second?.let { action -> FollowUpSecond(action.label) { act(action.perform) } }
+        val result = snackbar.showSnackbar(FollowUpVisuals(item.message, item.action, second))
         if (result == SnackbarResult.ActionPerformed) item.perform?.let(act)
     }
 }
 
 /**
- * The shell's follow-up bar (2.13, a seam of LogbookApp): it centres on the page column ([pageWidth], clear of the 지금
- * column), 760 dp at most, 24 dp above the window's bottom plus [lift] (월간·Excel's save bar), and slides in and out on the
- * bar's clock.
+ * The shell's follow-up bar (2.13, a seam of LogbookApp): [CarFollowUpBar], centred on the page column ([pageWidth], clear
+ * of the 지금 column), 760 dp at most, 24 dp above the window's bottom plus [lift] (월간·Excel's save bar), sliding in and
+ * out on the bar's clock.
  */
 @Composable private fun BoxScope.ShellFollowUpBar(snackbar: SnackbarHostState, pageWidth: Dp, lift: Dp) {
     Box(Modifier.width(pageWidth).fillMaxHeight().align(Alignment.BottomStart)) {
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(top = 24.dp, bottom = 24.dp + lift).widthIn(max = 760.dp)) { data ->
-            AnimatedVisibility(visible = true, enter = barEnter(), exit = barExit()) { FollowUpBar(data) }
+            AnimatedVisibility(visible = true, enter = barEnter(), exit = barExit()) { CarFollowUpBar(data) }
         }
     }
 }
@@ -493,7 +503,9 @@ internal fun CoroutineScope.showFollowUp(snackbar: SnackbarHostState, act: Act, 
  * Everything the shell lays over its pages (2.13, a seam of LogbookApp), none of it while driving ([blocked]): the driver
  * picker ([picking], for [driverFor] or for the person driving now), the assistant sheet, the 시연 체험 walkthrough, the
  * error dialog ([error], or the repository's) and the saved-file dialog ([info] is the file's path). Composed inside the
- * follow-up provider, so the picker's confirmations and their undo reach the shell's bar.
+ * follow-up provider, so the picker's confirmations and their undo reach the shell's bar. The two dialogs are the car's
+ * ([CarDialog]): the error acknowledges its message one sentence a line ([dialogLines]; the repository's messages stay as
+ * written), and the saved file says where it went over its path, which may take three lines so the file name is not cut.
  */
 @Composable private fun ShellOverlays(state: TripLogState, now: Long, blocked: Boolean, act: Act, repository: TripLogRepository, followUp: (FollowUp) -> Unit,
     picking: Boolean, driverFor: String?, closePicker: () -> Unit, openDrivers: () -> Unit,
@@ -507,11 +519,13 @@ internal fun CoroutineScope.showFollowUp(snackbar: SnackbarHostState, act: Act, 
         compact = false, initialText = assistantText)
     if (tutorial && !blocked) DemoTutorial(exporting, export, closeTutorial)
     val message = error ?: state.error
-    if (message != null && !blocked) AlertDialog(onDismissRequest = clearError, title = { Text("확인이 필요해요") }, text = { Text(message) },
-        confirmButton = { DialogButton("확인", onClick = clearError) })
+    if (message != null && !blocked) CarDialog(OverlayCopy.ERROR_TITLE, clearError, icon = painterResource(R.drawable.ic_warning), lines = dialogLines(message)) {
+        PrimaryAction("확인", onClick = clearError)
+    }
     info?.takeUnless { blocked }?.let { path ->
-        AlertDialog(onDismissRequest = clearInfo, title = { Text("저장 위치") }, text = { Text("파일 선택기를 사용할 수 없어 앱 보관 폴더에 저장했어요.\n$path") },
-            confirmButton = { DialogButton("확인", onClick = clearInfo) })
+        CarDialog(OverlayCopy.SAVED_TITLE, clearInfo, icon = rememberVectorPainter(Icons.Outlined.Info), lines = listOf(OverlayCopy.SAVED_LINE), body = {
+            Text(path, style = MaterialTheme.typography.labelMedium, color = Scene.textSecondary, maxLines = 3, overflow = TextOverflow.Ellipsis)
+        }) { PrimaryAction("확인", onClick = clearInfo) }
     }
 }
 

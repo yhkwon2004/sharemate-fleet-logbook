@@ -84,7 +84,7 @@ class MainActivity : ComponentActivity() {
             }.getOrDefault(false)
         }
         if (missing.isNotEmpty()) permissionRequest.launch(missing.toTypedArray())
-        else Toast.makeText(this, "추가로 요청할 수 있는 권한이 없습니다.", Toast.LENGTH_SHORT).show()
+        else Toast.makeText(this, OverlayCopy.NO_MORE_PERMISSIONS, Toast.LENGTH_SHORT).show()
     }
 
     override fun onStart() {
