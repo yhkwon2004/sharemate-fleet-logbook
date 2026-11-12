@@ -140,7 +140,9 @@ internal enum class PairAttemptOutcome {
  * Whether a pairing attempt that threw [error] lets the next address be tried (pure). Only a place that could not be
  * reached moves on. A certificate that is not the pinned one (a wrong key, or a clock outside the certificate's dates) stops
  * at once, as does every answer from the car: the code is never sent to a second address after one that spoke as the car,
- * because the car counts wrong codes and closes pairing after [SYNC_MAX_PAIR_FAILURES].
+ * because the car counts wrong codes and closes pairing after [SYNC_MAX_PAIR_FAILURES]. A connection that drops or times out
+ * after the handshake also moves on (an I/O error cannot say when it happened), but only a place that proves the pinned
+ * certificate ever receives the code, so the next address that takes it is the same car.
  */
 internal fun pairAttemptOutcome(error: Throwable): PairAttemptOutcome = when {
     error is CancellationException -> PairAttemptOutcome.STOP
