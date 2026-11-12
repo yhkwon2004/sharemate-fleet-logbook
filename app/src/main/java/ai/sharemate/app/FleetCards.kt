@@ -1,5 +1,6 @@
 package ai.sharemate.app
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.LocalIndication
@@ -108,21 +109,34 @@ private fun incidentCaption(kind: IncidentKind) = when (kind) {
     IncidentKind.OTHER -> "메모로 남기기"
 }
 
-/** The dock's lead: the warning mark, 사고·특이사항 and its one line, 224 dp wide beside the buttons. */
+/** The compact dock's lead: the warning mark, 사고·특이사항 and its one line, 224 dp wide beside the buttons. */
 private val DOCK_LEAD = 224.dp
 
 /**
- * One tap at the scene (2.13, 홈's incident dock at the foot of the page, which never moves): the car fills time, odometer,
- * place, trip and driver, the driver only chooses what happened. An 80-dp card: the lead (사고·특이사항, and whether the record
- * reaches the phone too), then four 56-dp outlined stadiums, 사고 in the negative. A caption sits beside its label from 196 dp
- * of button ([incidentCaptionBeside]) and under it, in a 72-dp button, below that: it is the safety hint, so it stays on
- * screen. Under 560 dp the lead takes its own row over two rows of two. A report answers "{종류} 기록됨 · 실행 취소": the
- * card that appears under the greeting already says what was saved.
+ * How strongly the tall dock's 사고 button is tinted with the negative over the card (pure, unit-tested): 10 % by day, 6 % by
+ * night, the most that keeps its label in the negative and its caption in textMuted at AA on the tint. The negative is only
+ * 4.81 on the bare night card, and 2.12's 16 % took the label down to 4.09.
  */
-@Composable internal fun IncidentDock(data: TripLogData, act: Act, repository: TripLogRepository, modifier: Modifier = Modifier) {
+internal fun incidentTint(day: Boolean): Float = if (day) .10f else .06f
+
+/**
+ * One tap at the scene (홈's incident dock, pinned to the foot of the page, which never moves): the car fills time, odometer,
+ * place, trip and driver, the driver only chooses what happened. A report answers "{종류} 기록됨 · 실행 취소": the card that
+ * appears in the attention slot already says what was saved. Two forms ([form], 2.14), swapped on the card clock (a snap
+ * under reduced motion) when the frame changes its choice:
+ * - TALL (2.12's panel, [HOME_DOCK_TALL]): a header line (the warning mark, 사고·특이사항 and 한 번 누르면 차량 정보가 바로
+ *   기록돼요; on its right, muted, 휴대폰에도 공유 while the phone link is on), then four equal 72-dp buttons, each the label
+ *   over its caption: 사고 tinted with the negative ([incidentTint]), the others on the chip fill inside the chip border.
+ * - COMPACT (2.13's row, [HOME_DOCK_COMPACT]): the lead (사고·특이사항, and whether the record reaches the phone too), then
+ *   four 56-dp outlined stadiums, 사고 in the negative. A caption sits beside its label from 196 dp of button
+ *   ([incidentCaptionBeside]) and under it, in a 72-dp button, below that: it is the safety hint, so it stays on screen.
+ * Under 560 dp the buttons stand two by two in either form, the header or the lead on its own row above them. TalkBack hears
+ * the header as one heading, "사고·특이사항, 한 번 누르면 차량 정보가 바로 기록돼요", and each button as "사고 기록, 119 · 112
+ * 안내".
+ */
+@Composable internal fun IncidentDock(data: TripLogData, act: Act, repository: TripLogRepository, form: HomeForm, modifier: Modifier = Modifier) {
     val followUp = LocalFollowUp.current
     val haptic = LocalHapticFeedback.current
-    val fontScale = LocalDensity.current.fontScale
     val report: (IncidentKind) -> Unit = { kind ->
         act {
             val incident = repository.reportIncident(kind)
@@ -130,7 +144,71 @@ private val DOCK_LEAD = 224.dp
             followUp(FollowUp("${kind.label} 기록됨", HomeCopy.UNDO) { repository.deleteIncident(incident.id) })
         }
     }
-    val line = if (data.profile.phoneSync) HomeCopy.DOCK_LINE else HomeCopy.DOCK_LINE_OFF
+    val swap = cardSwap()
+    val sync = data.profile.phoneSync
+    AnimatedContent(targetState = form, modifier = modifier.fillMaxWidth(), transitionSpec = { swap }, label = "dock-form") { shown ->
+        if (shown == HomeForm.TALL) TallDock(sync, report) else CompactDock(sync, report)
+    }
+}
+
+/** The tall dock ([IncidentDock]): the header line over four 72-dp buttons, two by two under 560 dp. */
+@Composable private fun TallDock(sync: Boolean, report: (IncidentKind) -> Unit) {
+    CarCard(Modifier.heightIn(min = HOME_DOCK_TALL), padding = DOCK_TALL_PADDING, gap = DOCK_HEADER_GAP) {
+        Row(Modifier.fillMaxWidth().heightIn(min = DOCK_HEADER).clearAndSetSemantics { contentDescription = HomeCopy.SPOKEN_DOCK; heading() }.padding(start = 4.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Icon(painterResource(R.drawable.ic_warning), contentDescription = null, Modifier.size(24.dp), tint = Car.skin.icon)
+            Spacer(Modifier.width(10.dp))
+            Text(HomeCopy.DOCK_TITLE, style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 1)
+            Spacer(Modifier.width(12.dp))
+            Text(HomeCopy.DOCK_CAPTION, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = Scene.textSecondary, maxLines = 1,
+                overflow = TextOverflow.Ellipsis)
+            if (sync) {
+                Spacer(Modifier.width(12.dp))
+                Text(HomeCopy.DOCK_SHARED, style = MaterialTheme.typography.labelMedium, color = Scene.textMuted, maxLines = 1)
+            }
+        }
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val gap = 12.dp
+            val kinds = IncidentKind.entries
+            if (maxWidth < 560.dp) Column(verticalArrangement = Arrangement.spacedBy(gap)) {
+                kinds.chunked(2).forEach { pair ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(gap)) { pair.forEach { IncidentTile(it, Modifier.weight(1f)) { report(it) } } }
+                }
+            } else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                kinds.forEach { IncidentTile(it, Modifier.weight(1f)) { report(it) } }
+            }
+        }
+    }
+}
+
+/**
+ * One kind on the tall dock (2.14): a 72-dp tile, corner 16, the label in titleMedium over its caption in labelMedium
+ * textMuted. 사고 is tinted with the negative ([incidentTint]) inside a negative outline, its label in the negative (4.78 /
+ * 4.56 on the tint); the others sit on the chip fill inside the chip border. It settles to .98 with the press fill, no
+ * ripple. TalkBack hears "사고 기록, 119 · 112 안내".
+ */
+@Composable private fun IncidentTile(kind: IncidentKind, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val skin = Car.skin
+    val urgent = kind == IncidentKind.ACCIDENT
+    val negative = Scene.negative
+    val fill = if (urgent) negative.copy(alpha = incidentTint(Scene.isDay)) else skin.chipFill
+    val outline = if (urgent) negative else skin.chipBorder
+    val source = remember { MutableInteractionSource() }
+    val shape = RoundedCornerShape(16.dp)
+    Box(modifier.heightIn(min = DOCK_BUTTON_TALL).carTap(source, label = "${kind.label} 기록", onClick = onClick).clip(shape).background(fill)
+        .border(1.dp, outline, shape).pressFill(source).semantics { contentDescription = "${kind.label} 기록, ${incidentCaption(kind)}" }
+        .padding(horizontal = 12.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+        Column(Modifier.clearAndSetSemantics {}, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(kind.label, style = MaterialTheme.typography.titleMedium, color = if (urgent) negative else Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(incidentCaption(kind), style = MaterialTheme.typography.labelMedium, color = Scene.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/** The compact dock ([IncidentDock], 2.13's row): the lead beside four 56-dp stadiums; under 560 dp the lead over two by two. */
+@Composable private fun CompactDock(sync: Boolean, report: (IncidentKind) -> Unit) {
+    val fontScale = LocalDensity.current.fontScale
+    val line = if (sync) HomeCopy.DOCK_LINE else HomeCopy.DOCK_LINE_OFF
     val lead: @Composable (Modifier) -> Unit = { place ->
         Row(place.clearAndSetSemantics { contentDescription = HomeCopy.SPOKEN_DOCK; heading() }.padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(painterResource(R.drawable.ic_warning), contentDescription = null, Modifier.size(24.dp), tint = Car.skin.icon)
@@ -141,7 +219,7 @@ private val DOCK_LEAD = 224.dp
             }
         }
     }
-    CarCard(modifier, padding = 12.dp) {
+    CarCard(Modifier.heightIn(min = HOME_DOCK_COMPACT), padding = 12.dp) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val gap = 12.dp
             val kinds = IncidentKind.entries

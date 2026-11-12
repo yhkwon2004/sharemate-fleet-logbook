@@ -130,6 +130,16 @@ class CarSkinTest {
         pair("a field's outline", nonText, 4.56 to 3.69, card) { it.scene.outline }
     }
 
+    @Test fun theTallDocksAccidentTintKeepsItsWordsReadable() {
+        // 2.14: 사고 on the tall incident dock is tinted with the negative over the card ([incidentTint]: 10 % by day, 6 % by
+        // night), its label in the negative and its caption in textMuted; 2.12's 16 % by night left the label at 4.09.
+        val tint = { s: Skin -> s.scene.negative.copy(alpha = incidentTint(s === day)) }
+        pair("사고 label on its tint", text, 4.78 to 4.56, tint) { it.scene.negative }
+        pair("사고 caption on its tint", text, 4.97 to 5.96, tint) { it.scene.textMuted }
+        pair("사고 outline against the card", nonText, 5.60 to 4.81, card) { it.scene.negative }
+        assertTrue("밤 16 %는 AA를 못 넘음", contrast(night.scene.negative, night.scene.negative.copy(alpha = .16f).compositeOver(night.car.card)) < text)
+    }
+
     @Test fun theTabBadgeReadsOnTheAccentThroughItsRing() {
         // The digits are the tile's foreground: white by day, #F2F8FF by night.
         pair("badge digits", text, 5.35 to 5.00, { it.scene.badge }) { it.scene.onTile }

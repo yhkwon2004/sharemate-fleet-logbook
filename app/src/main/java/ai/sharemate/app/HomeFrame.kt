@@ -15,8 +15,13 @@ import java.time.ZoneId
  * LogbookUi.kt's DrivePane lay themselves out with the constants here, and HomeFrameTest checks every card kind, with and
  * without the pager and the demo strip, against the 1209-dp window: that is why 홈 never needs to scroll there.
  *
+ * 2.14 ("채운 홈", docs/design/DESIGN_2_14_HOME.md): 2.13's page read as empty, a small card over a large sky. The blocks are
+ * stacked again under the greeting, as 2.12 had them: the destinations in a tall form, the attention card (always one: the
+ * idle card holds the slot when the queue is empty), the sky, and the incident dock in a tall form at the foot. Both tall
+ * forms have the 2.13 forms as their compact fallback, and [homeForms] picks, for each state, the largest pair that fits.
+ *
  * Heights are one text line as Asta Sans draws it (round(.952 s) + round(.241 s) dp: bodySmall 19, titleSmall and labelLarge
- * 23, bodyLarge 24, headlineSmall 31, displaySmall 53), which reproduces the shots to the pixel.
+ * 23, bodyLarge 24, titleLarge 29, headlineSmall 31, displaySmall 53), which reproduces the shots to the pixel.
  */
 
 // ───────────────────────── the frame (FULL, 1×, with the 지금 column) ─────────────────────────
@@ -29,11 +34,18 @@ internal val HOME_PAGE_PADDING = 28.dp
 /** The page the frame is budgeted for: the full window less the header row and the page slot's padding (1,097 dp). */
 internal val HOME_PAGE_FULL = HOME_WINDOW_FULL - HOME_HEADER_ROW - HOME_PAGE_PADDING
 
-/** The greeting block's minimum beside the 지금 column: the sun rests right of it and needs the band down to 152.7 dp. */
+/**
+ * The greeting block's minimum beside the 지금 column: the sun rests right of it and needs the band down to 152.7 dp. 2.14
+ * puts the brand line back over the greeting (8 + 30 + 12 + 53 + 8 + 24 = 135), which still fits because the greeting keeps
+ * to one line there ([HomeGreeting]).
+ */
 internal val HOME_GREETING_MIN = 160.dp
 
-/** The space between the greeting block and the attention card; it goes with the card. */
-internal val HOME_CARD_GAP = 24.dp
+/**
+ * The space between the page's blocks (2.14): under the greeting, under the destinations (the attention card's top), and
+ * between the card and the column's tiles where the 지금 column is not there.
+ */
+internal val HOME_BLOCK_GAP = 24.dp
 
 /** The sky's fixed part; the rest of the page's height is the sky's too (a weighted spacer). */
 internal val HOME_SKY_MIN = 24.dp
@@ -41,14 +53,31 @@ internal val HOME_SKY_MIN = 24.dp
 /** The demo strip (12 + 56 + 12) and the space under it, while demo mode is on. */
 internal val HOME_DEMO_STRIP = 80.dp
 
-/** The gap inside the bottom band: under the demo strip and between the destination row and the incident dock. */
+/** The gap under the demo strip, over the dock. */
 internal val HOME_BAND_GAP = 16.dp
 
-/** The destination row: 20 + a 32-dp title + 12 + one 19-dp line + 20 is 103, held at 104 so the budget is exact. */
-internal val HOME_DESTINATION_ROW = 104.dp
+/**
+ * A destination card's two forms (2.14). TALL, 2.12's look under the greeting: 40 + the 56-dp icon tile + 16 + the title
+ * (titleLarge, 29) + 6 + the line (bodyMedium, 21) + 40. COMPACT, 2.13's card: 20 + a 32-dp title + 12 + one 19-dp line +
+ * 20 is 103, held at 104 so the budget is exact.
+ */
+internal val HOME_DESTINATION_TALL = 208.dp
+internal val HOME_DESTINATION_COMPACT = 104.dp
 
-/** The incident dock: 12 + the 56-dp buttons + 12. */
-internal val HOME_DOCK = 80.dp
+/** The tall destination card's icon tile (corner 16, the accent) and its glyph (onAccent). */
+internal val DESTINATION_TILE = 56.dp
+internal val DESTINATION_GLYPH = 28.dp
+
+/**
+ * The incident dock's two forms (2.14). TALL, 2.12's panel: 16 + the 24-dp header line + 12 + the 72-dp buttons (the label
+ * over its caption) + 16. COMPACT, 2.13's one row: 12 + the 56-dp buttons + 12.
+ */
+internal val HOME_DOCK_TALL = 140.dp
+internal val HOME_DOCK_COMPACT = 80.dp
+internal val DOCK_TALL_PADDING = 16.dp
+internal val DOCK_HEADER = 24.dp
+internal val DOCK_HEADER_GAP = 12.dp
+internal val DOCK_BUTTON_TALL = 72.dp
 
 /** The tallest an attention card is designed to get; every kind stays under it (HomeFrameTest). */
 internal val ATTENTION_CARD_CAP = 480.dp
@@ -94,9 +123,12 @@ internal const val CHARGE_CHIP_ROWS = 2
 internal val CHARGE_CHIP_ROW = 56.dp
 internal val CHARGE_CHIP_GAP = 8.dp
 
-/** The purpose tiles ([PurposeOptions]), the setup steps across, the pairing card's two rows, the mini stats. */
+/**
+ * The purpose tiles ([PurposeOptions]), the setup steps (2.14: three tiles across, each the button for its step, 96 dp at
+ * least: 16 + the 32-dp disc beside a title and a line + 16, with room to spare), the pairing card's two rows, the mini stats.
+ */
 internal val PURPOSE_TILES = 72.dp
-internal val SETUP_STEPS = 32.dp
+internal val SETUP_TILES = 96.dp
 internal val PAIRING_ROWS = 66.dp
 internal val MINI_STATS = 46.dp
 
@@ -179,12 +211,17 @@ internal fun attentionIndex(queue: List<AttentionItem>, pin: AttentionPin?): Int
 
 /**
  * How a card kind is built, for its height: a figure at the headline's end, the supporting lines, a block under the headline
- * ([under], the month-close bar), the body block, and the action row.
+ * ([under], the month-close bar), the body block, and the action row (none: [row] null, as on the setup card, whose tiles
+ * are its buttons).
  */
-@Immutable internal data class AttentionAnatomy(val figure: Boolean, val lines: Int, val under: Dp = 0.dp, val body: Dp? = null, val row: Dp = ATTENTION_ROW)
+@Immutable internal data class AttentionAnatomy(val figure: Boolean, val lines: Int, val under: Dp = 0.dp, val body: Dp? = null, val row: Dp? = ATTENTION_ROW)
 
-/** Each kind's anatomy at its tallest (§3.2's table); the composables draw the same blocks with the same constants. */
-internal fun attentionAnatomy(kind: AttentionKind): AttentionAnatomy = when (kind) {
+/**
+ * Each kind's anatomy at its tallest (§3.2's table), and the idle card's for null (2.14: 최근 운행, the trip's title with its
+ * distance at the end, one line, 운행기록 보기); the composables draw the same blocks with the same constants.
+ */
+internal fun attentionAnatomy(kind: AttentionKind?): AttentionAnatomy = when (kind) {
+    null -> AttentionAnatomy(figure = true, lines = 1)
     // 지금 할 일 / the photo hint; four steps, the note and the photo strip, 8 dp apart; the facts line beside two buttons.
     AttentionKind.INCIDENT -> AttentionAnatomy(figure = false, lines = 1,
         body = INCIDENT_STEP_ROW * INCIDENT_STEPS_MAX + INCIDENT_GAP + CAR_LINE_HEIGHT + INCIDENT_GAP + INCIDENT_PHOTO)
@@ -194,7 +231,8 @@ internal fun attentionAnatomy(kind: AttentionKind): AttentionAnatomy = when (kin
     AttentionKind.CHARGE -> AttentionAnatomy(figure = false, lines = 1, body = CHARGE_CHIP_ROW * CHARGE_CHIP_ROWS + CHARGE_CHIP_GAP * (CHARGE_CHIP_ROWS - 1),
         row = ATTENTION_FIELD_ROW + ATTENTION_FIELD_ERROR)
     AttentionKind.FINISHED, AttentionKind.MATCHED -> AttentionAnatomy(figure = true, lines = 1)
-    AttentionKind.SETUP -> AttentionAnatomy(figure = false, lines = 0, body = SETUP_STEPS)
+    // 2.14: the three steps are tiles that open their own place, so the two buttons under them went.
+    AttentionKind.SETUP -> AttentionAnatomy(figure = false, lines = 0, body = SETUP_TILES, row = null)
     AttentionKind.PAIRING -> AttentionAnatomy(figure = true, lines = 1, body = PAIRING_ROWS)
     AttentionKind.MONTH_CLOSE -> AttentionAnatomy(figure = false, lines = 1, under = CLOSE_BAR_GAP + CLOSE_BAR)
     AttentionKind.CLOSE_REMINDER -> AttentionAnatomy(figure = false, lines = 0)
@@ -203,43 +241,103 @@ internal fun attentionAnatomy(kind: AttentionKind): AttentionAnatomy = when (kin
 
 /**
  * The tallest a card of [kind] gets at FULL 1× (pure, unit-tested): padding, the title row (taller with the [pager]), the
- * headline or its figure, the lines, the body and the action row. Every kind stays under [ATTENTION_CARD_CAP]: the incident
- * card is the tallest at 477 with the pager.
+ * headline or its figure, the lines, the body and the action row. Null is the idle card (2.14), which never has a pager:
+ * it shows only while the queue is empty. Every card stays under [ATTENTION_CARD_CAP]: the incident card is the tallest at
+ * 477 with the pager.
  */
-internal fun attentionCardMax(kind: AttentionKind, pager: Boolean): Dp {
+internal fun attentionCardMax(kind: AttentionKind?, pager: Boolean): Dp {
     val a = attentionAnatomy(kind)
-    return ATTENTION_PADDING * 2 + (if (pager) ATTENTION_TITLE_PAGER else ATTENTION_TITLE) + ATTENTION_TITLE_GAP +
+    return ATTENTION_PADDING * 2 + (if (pager && kind != null) ATTENTION_TITLE_PAGER else ATTENTION_TITLE) + ATTENTION_TITLE_GAP +
         (if (a.figure) ATTENTION_FIGURE else ATTENTION_HEADLINE) + a.under + ATTENTION_LINE * a.lines +
-        (a.body?.let { ATTENTION_BLOCK_GAP + it } ?: 0.dp) + ATTENTION_BLOCK_GAP + a.row
+        (a.body?.let { ATTENTION_BLOCK_GAP + it } ?: 0.dp) + (a.row?.let { ATTENTION_BLOCK_GAP + it } ?: 0.dp)
+}
+
+/** A form of 홈's destination cards or of its incident dock (2.14): 2.12's [TALL] look, or 2.13's [COMPACT] one. */
+internal enum class HomeForm { TALL, COMPACT }
+
+/** The forms 홈 draws its destination [cards] and its [dock] in. */
+@Immutable internal data class HomeForms(val cards: HomeForm, val dock: HomeForm)
+
+/**
+ * The pairs [homeForms] tries, the one it likes best first: both tall; then the dock gives way, since the destinations sit
+ * right under the greeting where the page's weight is; then the cards; then both.
+ */
+internal val HOME_FORM_ORDER = listOf(HomeForms(HomeForm.TALL, HomeForm.TALL), HomeForms(HomeForm.TALL, HomeForm.COMPACT),
+    HomeForms(HomeForm.COMPACT, HomeForm.TALL), HomeForms(HomeForm.COMPACT, HomeForm.COMPACT))
+
+/** A destination card's height in [form]: 208 or 104 dp. */
+internal fun destinationHeight(form: HomeForm): Dp = if (form == HomeForm.TALL) HOME_DESTINATION_TALL else HOME_DESTINATION_COMPACT
+
+/** The incident dock's height in [form]: 140 or 80 dp. */
+internal fun dockHeight(form: HomeForm): Dp = if (form == HomeForm.TALL) HOME_DOCK_TALL else HOME_DOCK_COMPACT
+
+/**
+ * 홈's frame in the full window, block by block (2.14): the greeting block, 24, the destinations, 24, the attention card, the
+ * sky's fixed part, the demo strip with its gap, and the dock, in the [forms] it was built for. [total] is the page's content
+ * at its tallest; the page slot is 1097 dp.
+ */
+@Immutable internal data class HomeFrame(val forms: HomeForms, val greeting: Dp, val destinations: Dp, val card: Dp, val sky: Dp, val demo: Dp,
+    val dock: Dp) {
+    val total: Dp get() = greeting + HOME_BLOCK_GAP + destinations + HOME_BLOCK_GAP + card + sky + demo + dock
+
+    /** The sky this frame leaves at the least on the 1097-dp page: its fixed 24 dp and what the blocks do not take. */
+    val skyLeft: Dp get() = HOME_PAGE_FULL - total + sky
 }
 
 /**
- * 홈's frame in the full window, slot by slot (§3.1): the greeting block, the card's gap and the card (none without a card),
- * the sky's fixed part, the demo strip with its gap, the destination row, the band's gap and the dock. [total] is the page's
- * content at its tallest; the page slot is 1097 dp.
+ * The frame for the card of [kind] (null: the idle card), with the [pager] (two items or more) and the [demo] strip, in
+ * [forms] (pure, unit-tested): 160 + 24 + the destinations + 24 + [attentionCardMax] + 24 + 96 in demo mode + the dock.
  */
-@Immutable internal data class HomeFrame(val greeting: Dp, val cardGap: Dp, val card: Dp, val sky: Dp, val demo: Dp, val destinations: Dp,
-    val bandGap: Dp, val dock: Dp) {
-    val total: Dp get() = greeting + cardGap + card + sky + demo + destinations + bandGap + dock
-}
-
-/**
- * The frame for the card of [kind] (null: the slot is empty), with the [pager] (two items or more) and the [demo] strip (pure,
- * unit-tested). Idle it is 384 dp; the worst, an incident with the pager in demo mode, 981 of the 1097-dp page.
- */
-internal fun homeFrame(kind: AttentionKind?, pager: Boolean, demo: Boolean): HomeFrame = HomeFrame(
+internal fun homeFrame(kind: AttentionKind?, pager: Boolean, demo: Boolean, forms: HomeForms): HomeFrame = HomeFrame(
+    forms = forms,
     greeting = HOME_GREETING_MIN,
-    cardGap = if (kind != null) HOME_CARD_GAP else 0.dp,
-    card = kind?.let { attentionCardMax(it, pager) } ?: 0.dp,
+    destinations = destinationHeight(forms.cards),
+    card = attentionCardMax(kind, pager),
     sky = HOME_SKY_MIN,
     demo = if (demo) HOME_DEMO_STRIP + HOME_BAND_GAP else 0.dp,
-    destinations = HOME_DESTINATION_ROW,
-    bandGap = HOME_BAND_GAP,
-    dock = HOME_DOCK,
+    dock = dockHeight(forms.dock),
 )
 
-/** The height of 홈's bottom band (demo strip, destination row, dock), the follow-up bar rides above it. */
-internal fun homeBandHeight(demo: Boolean): Dp = (if (demo) HOME_DEMO_STRIP + HOME_BAND_GAP else 0.dp) + HOME_DESTINATION_ROW + HOME_BAND_GAP + HOME_DOCK
+/**
+ * The forms 홈 takes for a state (pure, unit-tested): the first pair of [HOME_FORM_ORDER] whose frame fits the 1097-dp page
+ * with the card of [kind] (null: idle) at its tallest. Every state takes both tall forms but an open incident in demo mode,
+ * whose dock steps down to the compact row (1,093 dp). The composables read the choice beside the 지금 column at the normal
+ * font, where the budget holds; a change of form swaps on the card clock, and snaps under reduced motion.
+ */
+internal fun homeForms(kind: AttentionKind?, pager: Boolean, demo: Boolean): HomeForms =
+    HOME_FORM_ORDER.firstOrNull { homeFrame(kind, pager, demo, it).total <= HOME_PAGE_FULL } ?: HOME_FORM_ORDER.last()
+
+/**
+ * The frame for 홈 as it stands (pure, unit-tested): [homeFrame] for the tallest card in [queue], with the pager from two
+ * items, in the forms [homeForms] picks for it, so paging through the queue never changes a form under the driver's finger;
+ * the idle card's while the queue is empty. Its [HomeFrame.forms] are what the page draws, and its [HomeFrame.skyLeft] is
+ * what the follow-up bar decides by ([homeBarLift]), from the state at once rather than from a sky still animating.
+ */
+internal fun homeFrameFor(queue: List<AttentionItem>, demo: Boolean): HomeFrame {
+    val pager = queue.size >= 2
+    val tallest = queue.maxByOrNull { attentionCardMax(it.kind, pager) }?.kind
+    return homeFrame(tallest, pager, demo, homeForms(tallest, pager, demo))
+}
+
+/**
+ * The forms 홈 takes where the frame's budget does not hold (pure, unit-tested): no 지금 column, a font above 1×, a short
+ * window. The page scrolls there when it must, so it keeps the tall look wherever it reads: the tall cards where the three
+ * stand across ([columns] 3) and the window is not [short], the tall dock unless the window is [short].
+ */
+internal fun homeFallbackForms(columns: Int, short: Boolean): HomeForms =
+    HomeForms(if (columns >= 3 && !short) HomeForm.TALL else HomeForm.COMPACT, if (short) HomeForm.COMPACT else HomeForm.TALL)
+
+/** The room the follow-up bar takes over what it rides on: the 64-dp bar and the 24 dp under it. */
+internal val FOLLOW_UP_ROOM = 88.dp
+
+/**
+ * How high the follow-up bar rides over 홈's foot (pure, unit-tested): over the whole [band] (the demo strip, its gap and the
+ * dock) while the [sky] above it holds the bar, else over the [dock] alone, across the demo strip: a full page in demo mode
+ * leaves 28 dp of sky, and the bar would cover the attention card's buttons. The incident buttons are never covered.
+ * Without the demo strip the band is the dock, and the fullest page (the incident card with the pager, 64 dp of sky) lets
+ * the bar reach at most the card's 24-dp bottom padding.
+ */
+internal fun homeBarLift(band: Dp, dock: Dp, sky: Dp): Dp = if (sky >= FOLLOW_UP_ROOM) band else dock
 
 /**
  * Whether an incident button's caption (119 · 112 안내) sits beside its label (pure, unit-tested): from 196 dp of [button]
@@ -335,22 +433,73 @@ internal fun purposeCardTag(count: Int, current: TripPurpose?): String? = when {
     else -> null
 }
 
-/** Where a setup step's button leads: 설정 › 법인·차량, 설정 › 직원, or the driver picker. */
+/** Where a setup step's tile leads: 설정 › 법인·차량, 설정 › 직원, or the driver picker. */
 internal enum class SetupTarget { COMPANY, DRIVERS, PICKER }
 
-/** One step of 시작 설정: its [label], whether it is [done], and its button ([action], none while it cannot be done yet). */
-@Immutable internal data class SetupStep(val label: String, val done: Boolean, val action: String?, val target: SetupTarget)
+/**
+ * One step of 시작 설정 (2.14, a tile that is the step's button): its [label]; the [line] under it, what the step is for
+ * while it is open and what it holds once it is [done]; whether it can be taken now ([enabled]: choosing a driver waits for
+ * an employee); whether it is the [current] one, the first open step, whose disc is the solid accent; where it leads
+ * ([target]); and the [state] TalkBack says with it.
+ */
+@Immutable internal data class SetupStep(val label: String, val line: String, val done: Boolean, val enabled: Boolean, val current: Boolean,
+    val target: SetupTarget, val spokenLine: String = line) {
+    val state: String get() = when {
+        done -> HomeCopy.SETUP_STATE_DONE
+        enabled -> HomeCopy.SETUP_STATE_NEXT
+        else -> HomeCopy.SETUP_STATE_WAITING
+    }
+}
 
 /**
- * The three setup steps (pure, unit-tested): 법인·차량 정보 (company and plate), 직원 등록 and 운전자 선택. Each open step names
- * its own button; choosing a driver needs a registered employee first, so with nobody registered it has none.
+ * The three setup steps (pure, unit-tested): 법인·차량 정보 (company and plate, which head the logbook form), 직원 등록 (the ④
+ * column's names) and 운전자 선택 (who drives today). A done step shows what it holds, "쉐어메이트 · 123가4567", "직원 3명" or
+ * the driver's name, and stays a tile that opens the same place to change it. Choosing a driver needs a registered employee
+ * first, so with nobody registered that tile is disabled and says why.
  */
-internal fun setupSteps(data: TripLogData): List<SetupStep> = listOf(
-    SetupStep(HomeCopy.SETUP_COMPANY, data.profile.companyName.isNotBlank() && data.profile.plateNumber.isNotBlank(), HomeCopy.SETUP_COMPANY_ACTION, SetupTarget.COMPANY),
-    SetupStep(HomeCopy.SETUP_DRIVERS, data.drivers.isNotEmpty(), HomeCopy.SETUP_DRIVERS_ACTION, SetupTarget.DRIVERS),
-    SetupStep(HomeCopy.SETUP_PICK, data.currentDriverId != null && data.drivers.any { it.id == data.currentDriverId },
-        HomeCopy.SETUP_PICK_ACTION.takeIf { data.drivers.isNotEmpty() }, SetupTarget.PICKER),
-).map { if (it.done) it.copy(action = null) else it }
+internal fun setupSteps(data: TripLogData): List<SetupStep> {
+    val profile = data.profile
+    val company = profile.companyName.isNotBlank() && profile.plateNumber.isNotBlank()
+    val staff = data.drivers.isNotEmpty()
+    val driver = data.drivers.firstOrNull { it.id == data.currentDriverId }
+    val steps = listOf(
+        SetupStep(HomeCopy.SETUP_COMPANY, if (company) "${profile.companyName} · ${profile.plateNumber}" else HomeCopy.SETUP_COMPANY_LINE, company, true, false,
+            SetupTarget.COMPANY),
+        SetupStep(HomeCopy.SETUP_DRIVERS, if (staff) "직원 ${data.drivers.size}명" else HomeCopy.SETUP_DRIVERS_LINE, staff, true, false, SetupTarget.DRIVERS,
+            spokenLine = if (staff) "직원 ${data.drivers.size}명" else HomeCopy.SPOKEN_SETUP_DRIVERS_LINE),
+        SetupStep(HomeCopy.SETUP_PICK, when {
+            driver != null -> driver.name.ifBlank { driver.label }
+            staff -> HomeCopy.SETUP_PICK_LINE
+            else -> HomeCopy.SETUP_PICK_WAITING
+        }, driver != null, staff, false, SetupTarget.PICKER),
+    )
+    val first = steps.indexOfFirst { !it.done && it.enabled }
+    return steps.mapIndexed { index, step -> if (index == first) step.copy(current = true) else step }
+}
+
+/**
+ * What the idle card says (2.14, [homeIdle]): the [headline] (a trip's row title, or that there is none yet), the trip's
+ * distance at its end ([km]), the one [line] with its spoken form, and the [month] 운행기록 보기 opens on (none without a trip,
+ * and then no action either).
+ */
+@Immutable internal data class HomeIdle(val headline: String, val km: Double?, val line: HomeLine, val month: YearMonth?)
+
+/**
+ * The idle card's words (pure, unit-tested): the newest finished trip of the data set on screen (demo trips only in demo
+ * mode, real ones otherwise), titled as 운행기록 titles its row ([tripRowTitle]), with its distance, and one line "10월 29일 (목)
+ * 02:26 · 일반 업무 · Kim Jiwoo": the day, the start, the purpose or 미분류, the driver's name or 사용자 미지정. Without any
+ * trip: 아직 운행이 없어요, and how a trip starts.
+ */
+internal fun homeIdle(data: TripLogData): HomeIdle {
+    val trip = data.trips.filter { it.demo == data.profile.demoMode && !it.open && it.endAt != null }.maxByOrNull { it.startAt }
+        ?: return HomeIdle(HomeCopy.IDLE_EMPTY, null, HomeLine(HomeCopy.IDLE_EMPTY_LINE, HomeCopy.SPOKEN_IDLE_EMPTY_LINE), null)
+    val day = localDate(trip.startAt)
+    val who = data.drivers.firstOrNull { it.id == trip.driverId }?.name?.takeIf { it.isNotBlank() } ?: HomeCopy.NO_DRIVER
+    val purpose = trip.purpose.label
+    val spokenPurpose = if (trip.purpose == TripPurpose.UNCLASSIFIED) IssueType.UNCLASSIFIED.label else purpose
+    return HomeIdle(tripRowTitle(trip), trip.distanceKm,
+        HomeLine("${dayLabel(day)} ${hm(trip.startAt)} · $purpose · $who", "${dayLabel(day)} ${hm(trip.startAt)} 출발, $spokenPurpose, $who"), YearMonth.from(day))
+}
 
 /** The month a batch of settled card payments opens on (pure): the month of its first payment; null for no batch. */
 internal fun matchedBatchMonth(charges: List<CardCharge>, zone: ZoneId): YearMonth? =

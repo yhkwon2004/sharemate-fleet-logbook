@@ -39,6 +39,20 @@ internal const val LOG_ROW_LINE_UNITS = 19.0
 /** The line of a tile on 홈: a destination card's line, three across at 360 dp. */
 internal const val HOME_TILE_LINE_UNITS = 19.0
 
+// 2.14 (docs/design/DESIGN_2_14_HOME.md): the tall forms' places, at FULL and the normal font.
+
+/**
+ * A tall destination card's line: bodyMedium (18 sp, a unit about 16.3 dp) in a 360-dp card less 16 dp a side, the chevron
+ * and its gap: 304 dp.
+ */
+internal const val HOME_TALL_LINE_UNITS = 18.0
+
+/** A setup tile's line beside its disc: a third of the 1064-dp card (346 dp) less 16 a side, the disc, the chevron and gaps. */
+internal const val SETUP_TILE_LINE_UNITS = 16.0
+
+/** The tall dock's caption after 사고·특이사항, beside 휴대폰에도 공유 (bodySmall in the 1080-dp header line). */
+internal const val DOCK_CAPTION_UNITS = 40.0
+
 /** A line of 홈's attention card, across its whole width. */
 internal const val HOME_CARD_LINE_UNITS = 38.0
 

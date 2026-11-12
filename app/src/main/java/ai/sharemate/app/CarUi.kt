@@ -575,13 +575,16 @@ private const val INFO_FOLD_MS = 200
 /**
  * A step's disc (2.12, shared since 2.13: 월 마감's steps, 홈's setup and incident steps, 휴대폰 연결's rows): done, the
  * scene's positive with a check in the scheme's text for it (6.21 / 7.44); otherwise the icon disc with the [number] in text,
- * a quieter number while the step is [idle]. [size] is 32 dp, 28 where the discs stack in 32-dp rows and would touch.
- * Decorative: the step's own node says the number.
+ * a quieter number while the step is [idle]. [current] (2.14, 홈's setup tiles) marks the step to take now: the solid accent
+ * with the number in onAccent (4.93), the one accent of the card. [size] is 32 dp, 28 where the discs stack in 32-dp rows and
+ * would touch. Decorative: the step's own node says the number.
  */
-@Composable internal fun CarStepDisc(number: Int, done: Boolean, idle: Boolean = false, size: Dp = 32.dp) {
-    Box(Modifier.size(size).clip(CircleShape).background(if (done) Scene.positive else Car.skin.disc), contentAlignment = Alignment.Center) {
+@Composable internal fun CarStepDisc(number: Int, done: Boolean, idle: Boolean = false, size: Dp = 32.dp, current: Boolean = false) {
+    val skin = Car.skin
+    val fill = when { done -> Scene.positive; current -> skin.accent; else -> skin.disc }
+    Box(Modifier.size(size).clip(CircleShape).background(fill), contentAlignment = Alignment.Center) {
         Text(if (done) "✓" else number.toString(), style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center,
-            color = when { done -> MaterialTheme.colorScheme.onTertiary; idle -> Scene.textSecondary; else -> Scene.text },
+            color = when { done -> MaterialTheme.colorScheme.onTertiary; current -> skin.onAccent; idle -> Scene.textSecondary; else -> Scene.text },
             modifier = Modifier.clearAndSetSemantics {})
     }
 }

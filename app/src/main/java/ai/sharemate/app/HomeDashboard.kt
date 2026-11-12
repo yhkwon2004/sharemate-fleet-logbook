@@ -12,6 +12,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -35,6 +37,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
@@ -86,6 +90,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.traversalIndex
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -102,12 +107,14 @@ import java.util.Locale
 
 /**
  * The car home: a city in the current scene's light that greets the driver, and since 2.13 (docs/design/DESIGN_2_13_SPEC.md
- * §3) a page that never scrolls in the full window: the greeting block, the one attention card (HomeAttention.kt), the open
- * sky, and the bottom band of the three destinations (차량 정보 · 운행일지 확인 · 정보 내보내기) and the incident dock. Every
- * number on it is read from the log or the vehicle; nothing is decorative except the skyline itself. The motion rules of
- * Motion.kt hold: press feedback, a gliding selection pill, numbers that cross-fade instead of counting. 2.11: on a wide, tall
- * window today, this month and the next booking stand in the 지금 column beside the page ([NowColumn]), and the sun or moon
- * rests in the sky the page leaves free.
+ * §3) a page that never scrolls in the full window. 2.14 (docs/design/DESIGN_2_14_HOME.md) stacks it again the way 2.12
+ * did, because 2.13's small card over a large sky read as empty: the brand line and the greeting block, the three
+ * destinations (차량 정보 · 운행일지 확인 · 정보 내보내기) right under it in their tall form, the one attention card
+ * (HomeAttention.kt), the sky with the city standing on the incident dock at the foot. Every number on it is read from the
+ * log or the vehicle; nothing is decorative except the skyline and the brand line. The motion rules of Motion.kt hold: press
+ * feedback, a gliding selection pill, numbers that cross-fade instead of counting. 2.11: on a wide, tall window today, this
+ * month and the next booking stand in the 지금 column beside the page ([NowColumn]), and the sun or moon rests in the sky the
+ * page leaves free.
  */
 
 // ───────────────────────── selection pill (tabs and segments) ─────────────────────────
@@ -331,8 +338,9 @@ internal fun homePlan(layout: LayoutTokens, nowColumn: Boolean = false): HomePla
  * ([readingWidth] inside [padH]) and above the first card ([heroHeight], the card's top, less [cardsHeight] inside [padV]),
  * [margin] clear of both and of the page's end. Null when nothing is left, as on a page too narrow beside the reading measure.
  * Built from sizes, never positions, so neither the entrance lift nor the page slide moves it. Since 2.13 홈 passes the first
- * card's top and nothing else: with an attention card the full window gives (744, 0)–(1088, 160), (816, 92)–(1160, 252) on
- * screen, where the sun still rests at (1052.8, 181.5); idle the band reaches down to the bottom band (873, 777 in demo).
+ * card's top and nothing else; since 2.14 that is always the destination row's, the greeting block's height and 24 dp under
+ * it, so the full window gives (744, 0)–(1088, 160) in every state, (816, 92)–(1160, 252) on screen, where the sun still
+ * rests at (1052.8, 181.5).
  */
 internal fun heroBand(heroWidth: Float, heroHeight: Float, readingWidth: Float, cardsHeight: Float, padH: Float, padV: Float, margin: Float): Rect? {
     val left = padH + readingWidth + margin
@@ -460,25 +468,43 @@ private var homeEntranceDone = false
     return animate
 }
 
+/** The least the greeting steps down to where it keeps to one line beside the 지금 column (headlineMedium's size). */
+private val GREETING_MIN_SIZE = 30.sp
+
 /**
- * The greeting block (2.13): the greeting ([homeGreeting], displaySmall Bold, two lines at most; headlineLarge at a large
- * font) and 8 dp under it the [status] line ([homeStatusLine], bodyLarge textSecondary, one line at the normal font), both to
- * the 720-dp reading measure, 8 dp from the page top. The brand line, the inset and the hero's minimum of 2.12 went; beside
- * the 지금 column [modifier] holds the block to [HOME_GREETING_MIN], which is the sky the sun needs. Both lines cross-fade
- * when their words change, except a recording trip's distance, which updates in place. TalkBack hears the status line's
- * long form. [entrance] lifts the block in on the session's first composition only.
+ * The greeting block (2.13; 2.14 puts 2.12's brand line back on top): the brand line (the mark and SHAREMATE · FLEET
+ * JOURNAL in the brand ink, decorative for TalkBack; left out in a short window, as 2.12 did), 12 dp, the greeting
+ * ([homeGreeting], displaySmall Bold; headlineLarge at a large font) and 8 dp under it the [status] line ([homeStatusLine],
+ * bodyLarge textSecondary, one line at the normal font), all to the 720-dp reading measure, 8 dp from the page top. Beside
+ * the 지금 column [modifier] holds the block to [HOME_GREETING_MIN], the sky the sun needs, and [oneLine] keeps the greeting
+ * on one line, stepping its size down to 30 sp for a long name ("오늘도 안전한 운행 되세요, Kim Jiwoo 님" may take two at
+ * 44 sp): with the brand line a second line would make the block 187 dp and break the frame's budget. Elsewhere it may take
+ * two lines. Both lines cross-fade when their words change, except a recording trip's distance, which updates in place.
+ * TalkBack hears the status line's long form. [entrance] lifts the block in on the session's first composition only.
  */
-@Composable internal fun HomeGreeting(state: TripLogState, now: Long, status: HomeLine, modifier: Modifier = Modifier, entrance: Boolean = false) {
+@Composable internal fun HomeGreeting(state: TripLogState, now: Long, status: HomeLine, modifier: Modifier = Modifier, entrance: Boolean = false,
+    oneLine: Boolean = false) {
     val data = state.data
     val open = data.open?.takeIf { it.demo == data.profile.demoMode }
     val driver = data.drivers.firstOrNull { it.id == data.currentDriverId }
     val hour = Instant.ofEpochMilli(now).atZone(zone).hour
     val fontScale = LocalDensity.current.fontScale
     Appear(modifier.fillMaxWidth(), index = 0, animate = entrance) {
-        Column(Modifier.readingWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            DigitChange(homeGreeting(hour, driver?.name, open != null), Modifier.semantics { heading() },
-                style = scaledDisplay(MaterialTheme.typography.displaySmall, MaterialTheme.typography.headlineLarge),
-                color = Scene.text, fontWeight = FontWeight.Bold, maxLines = 2, lift = 4.dp)
+        Column(Modifier.readingWidth().padding(top = 8.dp)) {
+            // As in 2.12, a short window keeps its height for the page and leaves the brand line out.
+            if (!LocalLayout.current.short) {
+                Row(Modifier.clearAndSetSemantics {}, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Icon(painterResource(R.drawable.ic_splash_logo), contentDescription = null, Modifier.size(30.dp), tint = Scene.brand)
+                    Text(HomeCopy.BRAND, style = MaterialTheme.typography.labelLarge, color = Scene.brand, letterSpacing = 3.sp, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis)
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+            val greeting = homeGreeting(hour, driver?.name, open != null)
+            val style = scaledDisplay(MaterialTheme.typography.displaySmall, MaterialTheme.typography.headlineLarge)
+            if (oneLine) GreetingLine(greeting, style)
+            else DigitChange(greeting, Modifier.semantics { heading() }, style = style, color = Scene.text, fontWeight = FontWeight.Bold, maxLines = 2, lift = 4.dp)
+            Spacer(Modifier.height(8.dp))
             val spoken = Modifier.clearAndSetSemantics { contentDescription = status.spoken }
             val lines = carLineMaxLines(fontScale)
             if (homeShowsLiveTrip(data)) Text(status.text, spoken, style = MaterialTheme.typography.bodyLarge, color = Scene.textSecondary, maxLines = lines,
@@ -489,30 +515,81 @@ private var homeEntranceDone = false
 }
 
 /**
- * The three destinations (2.13, the bottom band's top row): three across from EXPANDED at every font, one per row below
- * ([HomePlan.cardColumns]), the card gap apart.
+ * The greeting kept to one line (2.14, beside the 지금 column): [DigitChange]'s cross-fade with a 4-dp lift (a snap under
+ * reduced motion), the text Bold in [style] and stepping down to [GREETING_MIN_SIZE] where it would wrap, an ellipsis only
+ * past that. The page's one heading.
  */
-@Composable internal fun DestinationRow(cards: List<HomeCardSpec>, columns: Int, modifier: Modifier = Modifier) {
-    val gap = LocalLayout.current.cardGap
-    if (columns >= 3) Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
-        cards.forEach { DestinationCard(it, Modifier.weight(1f)) }
-    } else Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(gap)) {
-        cards.forEach { DestinationCard(it) }
+@Composable private fun GreetingLine(text: String, style: TextStyle) {
+    val reduce = LocalReduceMotion.current
+    val lift = with(LocalDensity.current) { 4.dp.roundToPx() }
+    val ink = Scene.text
+    AnimatedContent(targetState = text, modifier = Modifier.semantics { heading() }, label = "greeting", transitionSpec = {
+        val swap = if (reduce) fadeIn(snap()) togetherWith fadeOut(snap())
+        else (fadeIn(tween(160, easing = FastOutSlowInEasing)) + slideInVertically(tween(160, easing = FastOutSlowInEasing)) { lift }) togetherWith
+            (fadeOut(tween(120, easing = FastOutSlowInEasing)) + slideOutVertically(tween(160, easing = FastOutSlowInEasing)) { -lift })
+        swap using SizeTransform(clip = false) { _, _ -> digitSizeSpec(reduce) }
+    }) { value ->
+        BasicText(value, style = style.copy(fontWeight = FontWeight.Bold), color = { ink }, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
+            autoSize = TextAutoSize.StepBased(minFontSize = GREETING_MIN_SIZE, maxFontSize = style.fontSize, stepSize = 1.sp))
     }
 }
 
 /**
- * One destination (2.13, 184 → 104 dp): a tappable [CarCard] with 20 dp of padding, its title row (the icon, the title, the
- * count badge and the chevron) over one [CarLine] ([homeCardLines]). [HOME_DESTINATION_ROW] tall at least, the frame's
- * budget. TalkBack hears "차량 정보, 정기검사 D-9 · 배터리 100%, 확인 필요 2건" with the click label 열기.
+ * The three destinations (2.14: right under the greeting, in [form]): three across from EXPANDED at every font, one per row
+ * below ([HomePlan.cardColumns]), the card gap apart. A change of form swaps the row on the card clock ([cardSwap]: 160 ms,
+ * the size following on the same clock, a snap under reduced motion).
  */
-@Composable internal fun DestinationCard(spec: HomeCardSpec, modifier: Modifier = Modifier) {
+@Composable internal fun DestinationRow(cards: List<HomeCardSpec>, columns: Int, form: HomeForm, modifier: Modifier = Modifier) {
+    val gap = LocalLayout.current.cardGap
+    val swap = cardSwap()
+    AnimatedContent(targetState = form, modifier = modifier.fillMaxWidth(), transitionSpec = { swap }, label = "destination-form") { shown ->
+        if (columns >= 3) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
+            cards.forEach { DestinationCard(it, shown, Modifier.weight(1f)) }
+        } else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(gap)) {
+            cards.forEach { DestinationCard(it, shown) }
+        }
+    }
+}
+
+/**
+ * One destination, a tappable [CarCard] that settles to .98 with the press fill. TALL (2.14, 2.12's look, [HOME_DESTINATION_TALL]
+ * at least): its content centred, the icon on a 56-dp accent tile (corner 16, the glyph onAccent, 4.93), 16 dp, the title
+ * in titleLarge, 6 dp, one line ([homeCardLines]) in bodyMedium textMuted, ellipsised, ending in a chevron; the count badge
+ * at the top right. COMPACT (2.13, [HOME_DESTINATION_COMPACT] at least): 20 dp of padding, the title row (the icon, the
+ * title, the count badge and the chevron) over one [CarLine]. TalkBack hears either as "차량 정보, 정기검사 D-9 · 배터리
+ * 100%, 확인 필요 2건" with the click label 열기.
+ */
+@Composable internal fun DestinationCard(spec: HomeCardSpec, form: HomeForm, modifier: Modifier = Modifier) {
     val description = "${spec.title}, ${spec.subtitle}" + if (spec.badge > 0) ", 확인 필요 ${spec.badge}건" else ""
-    CarCard(modifier.heightIn(min = HOME_DESTINATION_ROW), onClick = spec.onClick, onClickLabel = HomeCopy.DESTINATION_CLICK, description = description,
-        padding = 20.dp, title = {
-            CarSectionTitle(spec.title, icon = painterResource(spec.icon), chevron = true, trailing = if (spec.badge > 0) { { CountBadge(spec.badge) } } else null)
-        }) {
-        CarLine(spec.subtitle)
+    if (form == HomeForm.COMPACT) {
+        CarCard(modifier.heightIn(min = HOME_DESTINATION_COMPACT), onClick = spec.onClick, onClickLabel = HomeCopy.DESTINATION_CLICK, description = description,
+            padding = 20.dp, title = {
+                CarSectionTitle(spec.title, icon = painterResource(spec.icon), chevron = true, trailing = if (spec.badge > 0) { { CountBadge(spec.badge) } } else null)
+            }) {
+            CarLine(spec.subtitle)
+        }
+        return
+    }
+    val skin = Car.skin
+    CarCard(modifier, onClick = spec.onClick, onClickLabel = HomeCopy.DESTINATION_CLICK, description = description, padding = 0.dp) {
+        Box(Modifier.fillMaxWidth().heightIn(min = HOME_DESTINATION_TALL)) {
+            Column(Modifier.align(Alignment.Center).fillMaxWidth().padding(horizontal = 16.dp, vertical = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(Modifier.size(DESTINATION_TILE).clip(RoundedCornerShape(16.dp)).background(skin.accent), contentAlignment = Alignment.Center) {
+                    Icon(painterResource(spec.icon), contentDescription = null, Modifier.size(DESTINATION_GLYPH), tint = skin.onAccent)
+                }
+                Spacer(Modifier.height(16.dp))
+                Text(spec.title, Modifier.semantics { heading() }, style = MaterialTheme.typography.titleLarge, color = Scene.text, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(spec.subtitle, Modifier.weight(1f, fill = false), style = MaterialTheme.typography.bodyMedium, color = Scene.textMuted, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.width(4.dp))
+                    Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, Modifier.size(20.dp), tint = Scene.textSecondary)
+                }
+            }
+            if (spec.badge > 0) CountBadge(spec.badge, Modifier.align(Alignment.TopEnd).padding(16.dp))
+        }
     }
 }
 

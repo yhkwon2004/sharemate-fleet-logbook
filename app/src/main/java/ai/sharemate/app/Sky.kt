@@ -495,8 +495,8 @@ private class OrbRest { var at: Offset? = null; var band: Rect? = null; var scro
  * day clouds in the same band. Both fade with the page ([pageAlpha]), with the home's [scroll] as the cards come up to the
  * disc ([heroSkyAlpha]), and with the band: a re-measured band that no longer holds the orb leaves it where it last rested and
  * fades it out over 220 ms (a snap under reduced motion). It never slides. Since 2.13 each day cloud fades in and out with
- * the band on the same clock ([Skyline]'s cloudAlphaFor): 홈's band shrinks to the greeting's side when an attention card
- * unfolds and grows back to the bottom band when it goes. Every alpha is read in the draw only.
+ * the band on the same clock ([Skyline]'s cloudAlphaFor), for a band that changes height (a larger font, another window);
+ * since 2.14 홈's band ends at the destination row in every state. Every alpha is read in the draw only.
  */
 @Composable private fun HeroSkyline(phase: ScenePhase, band: Rect?, scroll: (() -> Int)?, w: Float, h: Float, horizonAt: Float, heightScale: Float,
     hazeEnd: Float, entering: Boolean, leaving: Boolean, showOrb: Boolean, showClouds: Boolean, pageAlpha: () -> Float) {
@@ -529,14 +529,40 @@ private class OrbRest { var at: Offset? = null; var band: Rect? = null; var scro
         orbAlpha = alpha, cloudAlpha = alpha, cloudAlphaFor = { index -> cloudFades.getOrNull(index)?.value ?: 0f })
 }
 
+/** What the car's horizon stands on (2.14): the page slot's 20-dp bottom padding, the tall incident dock, and 12 dp of river. */
+private val CAR_HORIZON_FOOT = 20.dp + HOME_DOCK_TALL + 12.dp
+
+/** The car's horizon never rises above 2.13's .52 (a short window) nor sinks below .86 (a tall one, where the river would vanish). */
+internal const val CAR_HORIZON_MIN = .52f
+internal const val CAR_HORIZON_MAX = .86f
+
+/**
+ * Where the car's horizon lies in a [windowHeight]-tall backdrop (2.14, pure, unit-tested): just above 홈's incident dock,
+ * ((h − 20 − 140 − 12) / h), held to .52–.86; about .858 in the full 1209-dp window, the horizon at 1,037 dp, 12 dp above
+ * the dock's top. 2.13 kept the phone's .52, which left the towers halfway up behind the cards and a pale river where the
+ * page is emptiest; standing on the dock, the city fills the sky between the attention card and the foot, the space under
+ * the 지금 column's last tile, and the bottom of the short pages (설정). Nothing else in the car's sky reads the horizon but
+ * the scrims: the sun, the moon and the day clouds rest in the hero band right of the greeting ([heroOrbAt],
+ * [visibleDayClouds]), the haze behind the greeting runs across, and the bottom scrim follows the horizon down
+ * ([skyScrims]: clear to .818, the haze from there, the base colour at the foot), so the reflections and the river's lines
+ * sit under the dock and the column.
+ */
+internal fun carHorizonAt(windowHeight: Dp): Float {
+    if (!windowHeight.value.isFinite() || windowHeight <= 0.dp) return CAR_HORIZON_MIN
+    return ((windowHeight - CAR_HORIZON_FOOT) / windowHeight).coerceIn(CAR_HORIZON_MIN, CAR_HORIZON_MAX)
+}
+
 /**
  * The car's backdrop at [level] (1 on home, dimmed elsewhere, 0 hidden), fading on the page clock inside its own
- * recomposition scope. [heroSky] is read only in here, so a re-measured band never recomposes the shell.
+ * recomposition scope. [heroSky] is read only in here, so a re-measured band never recomposes the shell. 2.14: the horizon
+ * follows the window's height ([carHorizonAt]), so the city stands on the incident dock; the phone passes its own.
  */
 @Composable internal fun SkyLayer(level: Float, heroSky: () -> HeroSky?, modifier: Modifier = Modifier) {
     val alpha by animateFloatAsState(level, if (LocalReduceMotion.current) snap() else tween(MOTION_PAGE_MS), label = "sky")
     // The sun and the moon belong to the home; on the dimmed panes they fade out with the page (fully gone at the panes' .34)
     // instead of popping on the first frame of the tab change. On the home they rest in the hero's free band ([heroOrbAt]).
-    if (level > 0f || alpha > 0f) HomeBackdrop(modifier.graphicsLayer { this.alpha = alpha }, orbAlpha = { ((alpha - .34f) / .66f).coerceIn(0f, 1f) },
-        heroSky = heroSky)
+    if (level > 0f || alpha > 0f) BoxWithConstraints(modifier.graphicsLayer { this.alpha = alpha }) {
+        HomeBackdrop(Modifier.matchParentSize(), horizonAt = carHorizonAt(maxHeight), orbAlpha = { ((alpha - .34f) / .66f).coerceIn(0f, 1f) },
+            heroSky = heroSky)
+    }
 }

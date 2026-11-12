@@ -2,11 +2,8 @@ package ai.sharemate.app
 
 import android.util.Log
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -73,12 +70,13 @@ import java.util.Date
 import java.util.Locale
 
 /*
- * 홈's attention slot (2.13, docs/design/DESIGN_2_13_SPEC.md §3.2): one card under the greeting, the head of the queue
- * ([attentionQueue]) unless the driver paged to another item ([attentionIndex]). Every card is one [AttentionCard]: the
- * title row with its state tag and, from two items, the pager; one headline with a figure at its end; a line or two; at
- * most one body block; and the action row, one line or link at its start and at most two buttons at its end. Each kind's
- * blocks are the ones HomeFrame.kt counts ([attentionAnatomy]), with the same constants, so the frame's budget is the
- * card's. The thirteen bodies below read the data themselves; a card whose subject has gone draws nothing.
+ * 홈's attention slot (2.13, docs/design/DESIGN_2_13_SPEC.md §3.2): one card under the destinations (2.14), the head of the
+ * queue ([attentionQueue]) unless the driver paged to another item ([attentionIndex]), and since 2.14 the idle card, 최근
+ * 운행, while the queue is empty, so the slot always holds one card and the page never falls back to a bare sky. Every card
+ * is one [AttentionCard]: the title row with its state tag and, from two items, the pager; one headline with a figure at its
+ * end; a line or two; at most one body block; and the action row, one line or link at its start and at most two buttons at
+ * its end. Each card's blocks are the ones HomeFrame.kt counts ([attentionAnatomy]), with the same constants, so the frame's
+ * budget is the card's. The bodies below read the data themselves; a card whose subject has gone draws nothing.
  */
 
 /** Where 홈's cards lead: the picker, the permission prompt, 설정's sections, 운행기록 (a filter and month, or one trip), 월간·Excel and the tabs. */
@@ -108,11 +106,12 @@ private val AttentionPinSaver = Saver<AttentionPin?, String>(
     })
 
 /**
- * The slot under the greeting: the card [attentionIndex] picks from [queue], 24 dp under the block, unfolding and folding
- * away with its gap (260 ms, a snap under reduced motion), and swapping one card for the next on [cardSwap]. A new head
- * (something more urgent, or the head answered) drops the driver's page. [answers], [prompt] and [snoozes] are 홈's state;
- * [banner] is the batch of card payments the shell holds ([onBanner] clears it), [onReminderClosed] hides this month's close
- * reminder.
+ * The slot under the destinations: the card [attentionIndex] picks from [queue], or the idle card ([IdleBody]) while the
+ * queue is empty, 24 dp under the row. One card swaps for the next on [cardSwap] (160 ms, the slot's height following on the
+ * same clock, so a taller card unfolds downward into the sky; a snap under reduced motion), and nothing above the slot moves.
+ * A new head (something more urgent, or the head answered) drops the driver's page. [answers], [prompt] and [snoozes] are
+ * 홈's state; [banner] is the batch of card payments the shell holds ([onBanner] clears it), [onReminderClosed] hides this
+ * month's close reminder.
  */
 @Composable internal fun AttentionSlot(state: TripLogState, now: Long, queue: List<AttentionItem>, nav: HomeNav, act: Act, repository: TripLogRepository,
     answers: ParkedStackAnswers, prompt: MutableState<ChargePrompt>, snoozes: MutableState<Set<String>>, banner: List<CardCharge>,
@@ -126,11 +125,9 @@ private val AttentionPinSaver = Saver<AttentionPin?, String>(
     val pinKind: (AttentionKind) -> Unit = { kind -> queue.indexOfFirst { it.kind == kind }.takeIf { it >= 0 }?.let(pageTo) }
     val pager = if (queue.size >= 2) AttentionPager(index, queue.size, queue.getOrNull(index - 1)?.kind?.label, queue.getOrNull(index + 1)?.kind?.label, pageTo) else null
     val swap = cardSwap()
-    AnimatedVisibility(shown != null, modifier.fillMaxWidth(), label = "attention-slot",
-        enter = fadeIn(enterSpec(220)) + expandVertically(enterSpec(260)), exit = fadeOut(enterSpec(160)) + shrinkVertically(enterSpec(260))) {
-        AnimatedContent(targetState = shown, modifier = Modifier.fillMaxWidth().padding(top = HOME_CARD_GAP), transitionSpec = { swap }, label = "attention-card") { item ->
-            if (item != null) AttentionBody(item, state, now, nav, act, repository, answers, prompt, snoozes, banner, onBanner, onReminderClosed, pager, pinKind)
-        }
+    AnimatedContent(targetState = shown, modifier = modifier.fillMaxWidth().padding(top = HOME_BLOCK_GAP), transitionSpec = { swap }, label = "attention-card") { item ->
+        if (item != null) AttentionBody(item, state, now, nav, act, repository, answers, prompt, snoozes, banner, onBanner, onReminderClosed, pager, pinKind)
+        else IdleBody(state.data, nav)
     }
 }
 
@@ -178,10 +175,10 @@ private val AttentionPinSaver = Saver<AttentionPin?, String>(
  * [lines] 4 dp under it (one [CarLine] each, its spoken form for TalkBack); 16 dp and the [body]; 16 dp and the action row,
  * the [start] slot (a line, a link or a field) and the [actions], at most two buttons, the way on last. Under 560 dp of
  * content the start slot takes its own row above the buttons. A debug build logs (tag HomeFrame) a card taller than
- * [attentionCardMax] at the full window's normal font, where the frame's budget holds.
+ * [attentionCardMax] at the full window's normal font, where the frame's budget holds. [kind] null is the idle card.
  */
 @OptIn(ExperimentalLayoutApi::class)
-@Composable private fun AttentionCard(kind: AttentionKind, title: String, icon: Painter, pager: AttentionPager?, headline: String,
+@Composable private fun AttentionCard(kind: AttentionKind?, title: String, icon: Painter, pager: AttentionPager?, headline: String,
     tag: (@Composable () -> Unit)? = null, headlineColor: Color = Scene.text, live: Boolean = false, figure: (@Composable () -> Unit)? = null,
     under: (@Composable () -> Unit)? = null, lines: List<HomeLine> = emptyList(), body: (@Composable ColumnScope.() -> Unit)? = null,
     start: (@Composable () -> Unit)? = null, actions: (@Composable RowScope.() -> Unit)? = null) {
@@ -190,7 +187,7 @@ private val AttentionPinSaver = Saver<AttentionPin?, String>(
     val check = BuildConfig.DEBUG && layout.full && density.fontScale <= 1f
     CarCard(if (check) Modifier.onSizeChanged { size ->
         val tall = with(density) { size.height.toDp() }
-        if (tall > attentionCardMax(kind, pager != null) + 1.dp) Log.w("HomeFrame", "$kind card ${tall.value} dp > ${attentionCardMax(kind, pager != null).value}")
+        if (tall > attentionCardMax(kind, pager != null) + 1.dp) Log.w("HomeFrame", "${kind ?: "IDLE"} card ${tall.value} dp > ${attentionCardMax(kind, pager != null).value}")
     } else Modifier, padding = ATTENTION_PADDING, gap = 0.dp) {
         FlowRow(Modifier.fillMaxWidth().heightIn(min = if (pager != null) ATTENTION_TITLE_PAGER else ATTENTION_TITLE), horizontalArrangement = Arrangement.SpaceBetween,
             verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically), itemVerticalAlignment = Alignment.CenterVertically) {
@@ -534,13 +531,17 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
 
 // ───────────────────────── 시작 설정 ─────────────────────────
 
+/** Under this much card width the setup tiles stack instead of standing three across. */
+private val SETUP_TILES_STACK_UNDER = 560.dp
+
 /**
- * What the logbook needs before it can be filed ([setupSteps]): three steps across, and the first two open ones as buttons
- * that open their own place (설정 › 법인·차량, 설정 › 직원, the picker), the first open step the solid one at the end.
+ * What the logbook needs before it can be filed ([setupSteps]), the first-run card (2.14, richer): the headline and the n/3
+ * tag, then the three steps as tiles across (stacked under 560 dp of card width), each the button that opens its own place:
+ * 설정 › 법인·차량, 설정 › 직원, the picker. A tile says what its step is for and, once done, what it holds; the first open
+ * step's disc is the solid accent. 2.13's two buttons under the steps went: every step is one tap on its own tile.
  */
 @Composable private fun SetupBody(data: TripLogData, nav: HomeNav, pager: AttentionPager?) {
     val steps = setupSteps(data)
-    val open = steps.filter { !it.done && it.action != null }.take(2)
     val go: (SetupTarget) -> Unit = { target ->
         when (target) {
             SetupTarget.COMPANY -> nav.goSettings(0)
@@ -551,22 +552,64 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
     AttentionCard(AttentionKind.SETUP, HomeCopy.SETUP_TITLE, painterResource(R.drawable.ic_settings), pager, HomeCopy.SETUP_HEADLINE,
         tag = { CarTag("${steps.count { it.done }}/${steps.size}") },
         body = {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                steps.forEachIndexed { index, step ->
-                    Row(Modifier.weight(1f).heightIn(min = SETUP_STEPS).semantics(mergeDescendants = true) { stateDescription = if (step.done) "완료" else "미완료" },
-                        verticalAlignment = Alignment.CenterVertically) {
-                        CarStepDisc(index + 1, step.done)
-                        Spacer(Modifier.width(10.dp))
-                        Text(step.label, style = MaterialTheme.typography.titleSmall, color = if (step.done) Scene.textSecondary else Scene.text, maxLines = 1,
-                            overflow = TextOverflow.Ellipsis)
-                    }
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val gap = 12.dp
+                if (maxWidth < SETUP_TILES_STACK_UNDER) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(gap)) {
+                    steps.forEachIndexed { index, step -> SetupTile(index + 1, step, Modifier.fillMaxWidth()) { go(step.target) } }
+                } else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                    steps.forEachIndexed { index, step -> SetupTile(index + 1, step, Modifier.weight(1f)) { go(step.target) } }
                 }
             }
-        },
-        actions = {
-            open.getOrNull(1)?.let { QuietAction(it.action!!) { go(it.target) } }
-            open.firstOrNull()?.let { PrimaryAction(it.action!!) { go(it.target) } }
         })
+}
+
+/**
+ * One setup step as a tile (2.14), [SETUP_TILES] tall at least, corner 16: the [CarStepDisc] (the [number]; a check once
+ * done; the solid accent on the current step), 12 dp, the title (titleSmall) over its one line (bodySmall textMuted), and a
+ * chevron. An open step sits on the chip fill inside the chip border, a done one is outlined only, and a step that cannot be
+ * taken yet (운전자 선택 before any employee) has 2.13's disabled look: no fill, the outline at 38 %, everything muted. It
+ * settles to .98 with the press fill, no ripple. TalkBack hears one button, "법인·차량 정보, 운행기록부 머리말에 들어가요",
+ * with its state (완료 / 다음 단계 / 직원 등록 뒤), disabled where it cannot act.
+ */
+@Composable private fun SetupTile(number: Int, step: SetupStep, modifier: Modifier, onClick: () -> Unit) {
+    val skin = Car.skin
+    val interaction = remember { MutableInteractionSource() }
+    val shape = RoundedCornerShape(16.dp)
+    val open = !step.done && step.enabled
+    val border = if (step.enabled) skin.chipBorder else skin.chipBorder.copy(alpha = skin.chipBorder.alpha * .38f)
+    Row(modifier.then(if (step.enabled) Modifier.pressable(interaction, .98f) else Modifier).heightIn(min = SETUP_TILES).clip(shape)
+        .then(if (open) Modifier.background(skin.chipFill) else Modifier).border(1.dp, border, shape)
+        .clickable(interactionSource = interaction, indication = null, enabled = step.enabled, role = Role.Button, onClick = onClick)
+        .semantics { contentDescription = "${step.label}, ${step.spokenLine}"; stateDescription = step.state }
+        .pressFill(interaction).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+        CarStepDisc(number, step.done, idle = !step.enabled, current = step.current)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f).clearAndSetSemantics {}, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(step.label, style = MaterialTheme.typography.titleSmall, color = if (step.enabled) Scene.text else Scene.textMuted, maxLines = 1,
+                overflow = TextOverflow.Ellipsis)
+            Text(step.line, style = MaterialTheme.typography.bodySmall, color = Scene.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Spacer(Modifier.width(8.dp))
+        Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, Modifier.size(20.dp),
+            tint = if (step.enabled) Scene.textSecondary else Scene.textMuted)
+    }
+}
+
+// ───────────────────────── 최근 운행 (idle) ─────────────────────────
+
+/**
+ * The idle card (2.14, while the queue is empty), so the slot never leaves the page bare: 최근 운행 with the quiet tag 확인할
+ * 일 없음, the newest finished trip of the data set on screen as 운행기록 titles it, its distance at the headline's end as on
+ * 목적 확인, one line (the day, the start, the purpose, the driver), and 운행기록 보기, which opens 운행기록 on that trip's
+ * month. Without any trip it says so and how one starts, with no button ([homeIdle]).
+ */
+@Composable private fun IdleBody(data: TripLogData, nav: HomeNav) {
+    val idle = remember(data) { homeIdle(data) }
+    AttentionCard(null, HomeCopy.IDLE_TITLE, painterResource(R.drawable.ic_journal), null, idle.headline,
+        tag = { CarTag(HomeCopy.IDLE_TAG, description = HomeCopy.SPOKEN_IDLE_TAG) },
+        figure = idle.km?.let { km -> { KmFigure(km) } },
+        lines = listOf(idle.line),
+        actions = idle.month?.let { month -> { QuietAction(HomeCopy.IDLE_ACTION) { nav.openLog(0, month) } } })
 }
 
 // ───────────────────────── 휴대폰 연결 ─────────────────────────
