@@ -7,30 +7,96 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 홈 without scrolling (2.13, docs/design/DESIGN_2_13_SPEC.md §3): every card kind, with and without the pager and the demo
- * strip, fits the full Pleos window (1209 dp: the 84-dp header, the page slot's 28 dp of padding and the 1097-dp page); the
- * 지금 column fits beside it; the queue keeps the order the moment demands; and the driver's page follows the queue.
+ * 홈 without scrolling (2.13, docs/design/DESIGN_2_13_SPEC.md §3; 2.14, docs/design/DESIGN_2_14_HOME.md): every card kind and
+ * the idle card, with and without the pager and the demo strip, fits the full Pleos window (1209 dp: the 84-dp header, the
+ * page slot's 28 dp of padding and the 1097-dp page) in the forms the frame picks, which are the first pair that fits in the
+ * order the design likes best; the 지금 column fits beside it; the queue keeps the order the moment demands; and the
+ * driver's page follows the queue.
  */
 class HomeFrameTest {
-    @Test fun everyCardFitsTheFullWindowWithThePagerAndTheDemoStrip() {
-        val kinds = AttentionKind.entries.map { it as AttentionKind? } + null
+    private val kinds = AttentionKind.entries.map { it as AttentionKind? } + null
+    private val tall = HomeForms(HomeForm.TALL, HomeForm.TALL)
+
+    @Test fun everyStateFitsTheFullWindowInTheLargestFormsThatFit() {
         kinds.forEach { kind ->
             listOf(false, true).forEach { pager ->
                 listOf(false, true).forEach { demo ->
-                    val frame = homeFrame(kind, pager, demo)
-                    assertTrue("$kind pager=$pager demo=$demo: ${frame.total}", frame.total + HOME_HEADER_ROW + HOME_PAGE_PADDING <= HOME_WINDOW_FULL)
-                    if (kind != null) assertTrue("$kind ${attentionCardMax(kind, pager)}", attentionCardMax(kind, pager) <= ATTENTION_CARD_CAP)
+                    val state = "${kind ?: "IDLE"} pager=$pager demo=$demo"
+                    val forms = homeForms(kind, pager, demo)
+                    val frame = homeFrame(kind, pager, demo, forms)
+                    assertTrue("$state: ${frame.total}", frame.total <= HOME_PAGE_FULL)
+                    assertTrue("$state: ${frame.total}", frame.total + HOME_HEADER_ROW + HOME_PAGE_PADDING <= HOME_WINDOW_FULL)
+                    // The first pair that fits, in the order the design prefers: every pair before it is too tall.
+                    val at = HOME_FORM_ORDER.indexOf(forms)
+                    assertTrue("$state: $forms", at >= 0)
+                    HOME_FORM_ORDER.take(at).forEach { better -> assertTrue("$state: $better", homeFrame(kind, pager, demo, better).total > HOME_PAGE_FULL) }
+                    assertTrue("$state ${attentionCardMax(kind, pager)}", attentionCardMax(kind, pager) <= ATTENTION_CARD_CAP)
+                    // The budget, block by block: 160 + 24 + cards + 24 + the card + 24 + 96 in demo + the dock.
+                    assertEquals(state, HOME_GREETING_MIN + 24.dp + destinationHeight(forms.cards) + 24.dp + attentionCardMax(kind, pager) + 24.dp +
+                        (if (demo) 96.dp else 0.dp) + dockHeight(forms.dock), frame.total)
                 }
             }
         }
-        assertEquals("빈 홈", 384.dp, homeFrame(null, pager = false, demo = false).total)
-        assertEquals("가장 긴 화면: 시연 중 사고 카드와 넘김", 981.dp, homeFrame(AttentionKind.INCIDENT, pager = true, demo = true).total)
         assertEquals("1209 − 84 − 28", 1097.dp, HOME_WINDOW_FULL - HOME_HEADER_ROW - HOME_PAGE_PADDING)
+    }
+
+    @Test fun everyStateIsTallButAnOpenIncidentInDemoMode() {
+        kinds.forEach { kind ->
+            listOf(false, true).forEach { pager ->
+                listOf(false, true).forEach { demo ->
+                    val expected = if (kind == AttentionKind.INCIDENT && demo) HomeForms(HomeForm.TALL, HomeForm.COMPACT) else tall
+                    assertEquals("${kind ?: "IDLE"} pager=$pager demo=$demo", expected, homeForms(kind, pager, demo))
+                }
+            }
+        }
+        assertEquals("빈 홈도 꽉 참: 최근 운행 카드", 820.dp, homeFrame(null, pager = false, demo = false, tall).total)
+        assertEquals("시연 아닌 가장 긴 화면: 사고 카드와 넘김", 1057.dp, homeFrame(AttentionKind.INCIDENT, pager = true, demo = false, tall).total)
+        assertEquals("시연 중 사고는 낮은 독으로", 1093.dp, homeFrame(AttentionKind.INCIDENT, true, true, homeForms(AttentionKind.INCIDENT, true, true)).total)
+        assertEquals("시연 중 충전 비용은 키 큰 그대로", 1090.dp, homeFrame(AttentionKind.CHARGE, true, true, tall).total)
+        assertEquals("아무것도 맞지 않으면 둘 다 낮게", HOME_FORM_ORDER.last(), HomeForms(HomeForm.COMPACT, HomeForm.COMPACT))
+    }
+
+    @Test fun theFrameFollowsTheTallestCardInTheQueueSoPagingNeverChangesTheForms() {
+        val incident = AttentionItem(AttentionKind.INCIDENT)
+        val care = AttentionItem(AttentionKind.CARE)
+        assertEquals("빈 큐는 최근 운행 카드", homeFrame(null, false, true, homeForms(null, false, true)), homeFrameFor(emptyList(), demo = true))
+        assertEquals(HomeForms(HomeForm.TALL, HomeForm.COMPACT), homeFrameFor(listOf(incident, care), demo = true).forms)
+        assertEquals("넘기는 순서와 무관하게 가장 큰 카드로", homeFrameFor(listOf(incident, care), demo = true), homeFrameFor(listOf(care, incident), demo = true))
+        assertEquals(477.dp, homeFrameFor(listOf(care, incident), demo = true).card)
+        assertEquals(tall, homeFrameFor(listOf(incident, care), demo = false).forms)
+        assertEquals(tall, homeFrameFor(listOf(care), demo = true).forms)
+        // The sky the frame leaves at the least: 1,097 − the blocks + the fixed 24.
+        assertEquals(28.dp, homeFrameFor(listOf(incident, care), demo = true).skyLeft)
+        assertEquals(64.dp, homeFrameFor(listOf(incident, care), demo = false).skyLeft)
+        assertEquals("빈 홈의 하늘", 301.dp, homeFrameFor(emptyList(), demo = false).skyLeft)
+        // On a page of another height the same blocks leave that much more or less (a FULL window under 1209 dp keeps the frame).
+        val idle = homeFrameFor(emptyList(), demo = false)
+        assertEquals(idle.skyLeft, idle.skyOn(HOME_PAGE_FULL))
+        assertEquals("1680 × 1100 창의 988 dp 페이지", 192.dp, idle.skyOn(988.dp))
+    }
+
+    @Test fun theFormsAreTheirAnatomy() {
+        assertEquals(208.dp, destinationHeight(HomeForm.TALL))
+        assertEquals(104.dp, destinationHeight(HomeForm.COMPACT))
+        assertEquals(140.dp, dockHeight(HomeForm.TALL))
+        assertEquals(80.dp, dockHeight(HomeForm.COMPACT))
+        // The tall card: 40 + the 56-dp tile + 16 + the title (titleLarge, 29) + 6 + the line (bodyMedium, 21) + 40.
+        assertEquals(HOME_DESTINATION_TALL, 40.dp + DESTINATION_TILE + 16.dp + 29.dp + 6.dp + 21.dp + 40.dp)
+        // The tall dock: 16 + the header line + 12 + the 72-dp buttons + 16.
+        assertEquals(HOME_DOCK_TALL, DOCK_TALL_PADDING + DOCK_HEADER + DOCK_HEADER_GAP + DOCK_BUTTON_TALL + DOCK_TALL_PADDING)
+        // The greeting block with the brand line back: 8 + 30 + 12 + one 53-dp line + 8 + the 24-dp status line fits its 160.
+        assertTrue(8.dp + 30.dp + 12.dp + 53.dp + 8.dp + 24.dp <= HOME_GREETING_MIN)
+    }
+
+    @Test fun whereTheFramesBudgetDoesNotHoldThePageKeepsTheTallLook() {
+        assertEquals("세 장이 나란하면 키 큰 카드", tall, homeFallbackForms(columns = 3, short = false))
+        assertEquals("한 줄씩이면 낮은 카드, 독은 키 큰 그대로", HomeForms(HomeForm.COMPACT, HomeForm.TALL), homeFallbackForms(columns = 1, short = false))
+        assertEquals("낮은 창은 둘 다 낮게", HomeForms(HomeForm.COMPACT, HomeForm.COMPACT), homeFallbackForms(columns = 3, short = true))
     }
 
     @Test fun theCardMaximaAreTheSpecsAnatomy() {
         val withPager = mapOf(AttentionKind.INCIDENT to 477, AttentionKind.PERMISSION to 242, AttentionKind.RECLASSIFY to 375, AttentionKind.PURPOSE to 375,
-            AttentionKind.CARD_REVIEW to 287, AttentionKind.CHARGE to 414, AttentionKind.FINISHED to 264, AttentionKind.MATCHED to 264, AttentionKind.SETUP to 267,
+            AttentionKind.CARD_REVIEW to 287, AttentionKind.CHARGE to 414, AttentionKind.FINISHED to 264, AttentionKind.MATCHED to 264, AttentionKind.SETUP to 259,
             AttentionKind.PAIRING to 346, AttentionKind.MONTH_CLOSE to 264, AttentionKind.CARE to 242, AttentionKind.CLOSE_REMINDER to 219,
             AttentionKind.CHARGE_WAITING to 304)
         assertEquals(AttentionKind.entries.toSet(), withPager.keys)
@@ -40,6 +106,11 @@ class HomeFrameTest {
         }
         // The charge card is 390 dp; its money field's range error adds 24.
         assertEquals(390.dp, attentionCardMax(AttentionKind.CHARGE, pager = true) - ATTENTION_FIELD_ERROR)
+        // 2.14's setup card: 48 + 56 + 12 + the headline 31 + 16 + the 96-dp tiles, and no action row under them.
+        assertEquals(48.dp + 56.dp + 12.dp + 31.dp + 16.dp + SETUP_TILES, attentionCardMax(AttentionKind.SETUP, pager = true))
+        // The idle card: 48 + 32 + 12 + the headline with its distance 53 + one line 23 + 16 + 운행기록 보기 56. It never pages.
+        assertEquals(240.dp, attentionCardMax(null, pager = false))
+        assertEquals("최근 운행 카드는 넘김이 없음", 240.dp, attentionCardMax(null, pager = true))
     }
 
     @Test fun theNowColumnFitsBesideIt() {
@@ -115,11 +186,64 @@ class HomeFrameTest {
         assertTrue("작은 글꼴은 1배로 셈", incidentCaptionBeside(196.dp, .85f))
     }
 
-    @Test fun theBandIsWhatTheFollowUpBarRidesAbove() {
-        assertEquals(200.dp, homeBandHeight(demo = false))
-        assertEquals(296.dp, homeBandHeight(demo = true))
-        // The sky keeps room for the bar (64 dp and 24 over the band) beside the tallest card.
-        val sky = HOME_WINDOW_FULL - HOME_HEADER_ROW - HOME_PAGE_PADDING - homeFrame(AttentionKind.INCIDENT, pager = true, demo = true).total + HOME_SKY_MIN
-        assertTrue("$sky", sky >= 88.dp)
+    /** The tall dock's header keeps 2.12's one row from 560 dp of dock (1,080 beside the 지금 column); narrower, the caption goes under the title. */
+    @Test fun theTallDocksHeaderKeepsOneRowFrom560Dp() {
+        assertTrue("지금 열 옆의 1,080 dp", dockHeaderOneRow(1080.dp, 1f))
+        assertTrue(dockHeaderOneRow(560.dp, 1f))
+        assertFalse("나눈 창의 좁은 독", dockHeaderOneRow(559.dp, 1f))
+        assertFalse("1.3배 글꼴은 728 dp부터", dockHeaderOneRow(727.dp, 1.3f))
+        assertTrue(dockHeaderOneRow(728.dp, 1.3f))
+        assertTrue("작은 글꼴은 1배로 셈", dockHeaderOneRow(560.dp, .85f))
+    }
+
+    @Test fun theFollowUpBarRidesOverTheFootAndNeverOverTheButtons() {
+        val dock = HOME_DOCK_TALL
+        val foot = HOME_DEMO_STRIP + HOME_BAND_GAP + dock
+        assertEquals("하늘이 넉넉하면 시연 띠 위로", foot, homeBarLift(foot, dock, sky = 300.dp))
+        assertEquals("88 dp면 딱 맞음", foot, homeBarLift(foot, dock, sky = FOLLOW_UP_ROOM))
+        assertEquals("하늘이 모자라면 시연 띠를 덮고 독 위로", dock, homeBarLift(foot, dock, sky = 28.dp))
+        assertTrue("시연 띠와 그 아래 틈이 막대를 담음", HOME_DEMO_STRIP + HOME_BAND_GAP >= FOLLOW_UP_ROOM)
+        // Without the demo strip the foot is the dock. The fullest page leaves 64 dp of sky, so the 88-dp bar reaches at most
+        // the attention card's 24-dp bottom padding, never its buttons.
+        kinds.forEach { kind ->
+            listOf(false, true).forEach { pager ->
+                val sky = homeFrame(kind, pager, demo = false, homeForms(kind, pager, demo = false)).skyLeft
+                assertTrue("${kind ?: "IDLE"} pager=$pager: $sky", FOLLOW_UP_ROOM - sky <= ATTENTION_PADDING)
+                // In demo mode the bar rides over the strip wherever the sky is short, so its top never reaches the card's foot.
+                val demo = homeFrame(kind, pager, demo = true, homeForms(kind, pager, demo = true))
+                val lift = homeBarLift(demo.demo + demo.dock, demo.dock, demo.skyLeft)
+                val cardFoot = HOME_PAGE_FULL - demo.dock - demo.demo - demo.skyLeft
+                val barTop = HOME_PAGE_FULL - lift - FOLLOW_UP_ROOM
+                assertTrue("${kind ?: "IDLE"} pager=$pager demo: bar $barTop, card $cardFoot", barTop >= cardFoot)
+            }
+        }
+    }
+
+    /**
+     * A FULL window shorter than 1209 dp keeps the 지금 column and the frame, but not its 1097-dp page: the bar decides by the
+     * sky the state leaves on the page it really has ([HomeFrame.skyOn]). Where the page rests (nothing scrolls), the bar in
+     * demo mode never reaches the card, whatever the page's height.
+     */
+    @Test fun inAShorterFullWindowTheBarDecidesByThePageItHas() {
+        // 1680 × 1100: a 988-dp page. The card question with the pager in demo mode is 963 dp and rests, with 49 dp of sky.
+        val review = homeFrameFor(listOf(AttentionItem(AttentionKind.CARD_REVIEW), AttentionItem(AttentionKind.FINISHED)), demo = true)
+        assertEquals(963.dp, review.total)
+        assertEquals("1,097 dp 페이지라면 158", 158.dp, review.skyLeft)
+        assertEquals(49.dp, review.skyOn(988.dp))
+        assertEquals("하늘이 49 dp면 시연 띠를 덮고 독 위로", review.dock, homeBarLift(review.demo + review.dock, review.dock, review.skyOn(988.dp)))
+        listOf(1180.dp, HOME_PAGE_FULL, 1040.dp, 988.dp, 900.dp, 800.dp).forEach { page ->
+            kinds.forEach { kind ->
+                listOf(false, true).forEach { pager ->
+                    val frame = homeFrame(kind, pager, demo = true, homeForms(kind, pager, demo = true))
+                    if (frame.total <= page) {
+                        val sky = frame.skyOn(page)
+                        val lift = homeBarLift(frame.demo + frame.dock, frame.dock, sky)
+                        val cardFoot = page - frame.dock - frame.demo - sky
+                        val barTop = page - lift - FOLLOW_UP_ROOM
+                        assertTrue("${kind ?: "IDLE"} pager=$pager page=$page: bar $barTop, card $cardFoot", barTop >= cardFoot)
+                    }
+                }
+            }
+        }
     }
 }

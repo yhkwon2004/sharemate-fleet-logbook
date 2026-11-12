@@ -262,6 +262,38 @@ class SceneTest {
         }
     }
 
+    /**
+     * 2.14: the car's horizon follows the window's height so the city stands just above 홈's incident dock; the phone keeps
+     * its own (.40 home, .42 / .60 sign-in) and draws what it drew.
+     */
+    @Test fun theCarsHorizonStandsJustAboveTheIncidentDock() {
+        // The full window: 1209 − 20 (the page slot's foot) − 140 (the tall dock) − 12 = 1037, 12 dp above the dock's top.
+        val h = 1209f
+        val at = carHorizonAt(1209.dp)
+        assertEquals(1037f / 1209f, at, 1e-5f)
+        assertEquals("약 .858", .858f, at, .001f)
+        assertEquals(12f, h - 20f - HOME_DOCK_TALL.value - h * at, .01f)
+        assertEquals("짧은 창은 2.13의 .52 아래로 오르지 않음", CAR_HORIZON_MIN, carHorizonAt(300.dp), 1e-6f)
+        assertEquals("아주 높은 창은 .86에서 멈춤", CAR_HORIZON_MAX, carHorizonAt(4000.dp), 1e-6f)
+        assertEquals(.52f, CAR_HORIZON_MIN, 0f)
+        assertEquals(.86f, CAR_HORIZON_MAX, 0f)
+        assertEquals("재기 전에는 .52", CAR_HORIZON_MIN, carHorizonAt(0.dp), 0f)
+        assertEquals(CAR_HORIZON_MIN, carHorizonAt(Dp.Infinity), 0f)
+        assertTrue("창이 높을수록 지평선은 아래로", carHorizonAt(900.dp) < carHorizonAt(1209.dp))
+        // The bottom scrim follows it down, its stops still in order: clear to .818, the haze from there to .98, the base
+        // colour at the foot, so the reflections lie under the dock and under the 지금 column's last tile.
+        val day = DaySceneColors
+        val base = skyScrims(day = true, leftScrim = true, horizonAt = at, haze = day.haze, bg = day.bg)[1]
+        val stops = base.stops.map { it.first }
+        assertEquals(stops.sorted(), stops)
+        assertEquals(.818f, stops[2], .001f)
+        assertEquals(.98f, stops[3], .001f)
+        assertEquals("위쪽 옅은 안개는 그대로", .25f, base.stops[0].second.alpha, .005f)
+        // The hero band (92–252 dp on screen), where the sun, the moon and the day clouds rest, stays far above the city: the
+        // tallest tower and its antenna (.44 + .05 of the .72-scaled height) top out near 610 dp.
+        assertTrue(252f < h * at - h * .72f * (.44f + .05f))
+    }
+
     @Test fun theDayCloudsKeepToTheHeroBandAndOffTheSun() {
         // The full Pleos window: 1680 × 1210 dp at 160 dpi (px = dp), towers scaled .72, the hero band and the day sun as placed
         // in theCarSunRestsInTheHeroBandOnly.

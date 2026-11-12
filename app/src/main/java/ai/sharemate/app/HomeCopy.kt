@@ -22,8 +22,14 @@ internal object HeaderCopy {
     const val TUTORIAL = "시연 체험"
 }
 
-/** Every static line of 홈 (§3): the status line, the dock, the demo strip and the attention cards, with their spoken forms. */
+/**
+ * Every static line of 홈 (§3): the status line, the dock, the demo strip and the attention cards, with their spoken forms.
+ * 2.14 (docs/design/DESIGN_2_14_HOME.md) adds the brand line, the tall dock's header, the idle card and the setup tiles.
+ */
 internal object HomeCopy {
+    // ───── the brand line over the greeting (2.12's, back in 2.14; decorative for TalkBack)
+    const val BRAND = "SHAREMATE  ·  FLEET JOURNAL"
+
     // ───── the status line under the greeting (36 units, the 720-dp reading measure)
     const val STATUS_READY = "출발하면 자동으로 기록해요"
     const val SPOKEN_STATUS_READY = "출발하면 자동으로 기록하고, 주차하면 목적과 비용을 정리해 드려요"
@@ -42,14 +48,26 @@ internal object HomeCopy {
     /** The queue's line starts "확인할 일 3건" ([attentionQueueLine]). */
     const val QUEUE_HEAD = "확인할 일"
 
-    // ───── the bottom band
+    // ───── the incident dock and the demo strip
     const val DOCK_TITLE = "사고·특이사항"
-    /** The dock's lead line (13 units, its 224-dp lead), with the phone link on and off. */
+    /** The tall dock's caption after the title (2.12's words), and on its right, muted, while the phone link is on. */
+    const val DOCK_CAPTION = "한 번 누르면 차량 정보가 바로 기록돼요"
+    const val DOCK_SHARED = "휴대폰에도 공유"
+    /** The compact dock's lead line (13 units, its 224-dp lead), with the phone link on and off. */
     const val DOCK_LINE = "바로 기록 · 휴대폰에도 공유"
     const val DOCK_LINE_OFF = "누르면 바로 기록돼요"
-    const val SPOKEN_DOCK = "사고·특이사항, 한 번 누르면 차량 정보가 바로 기록돼요"
+    const val SPOKEN_DOCK = "$DOCK_TITLE, $DOCK_CAPTION"
     const val DEMO_TAG = "시연 모드"
     const val DESTINATION_CLICK = "열기"
+
+    // ───── 최근 운행 (2.14: the idle card, while nothing waits)
+    const val IDLE_TITLE = "최근 운행"
+    const val IDLE_TAG = "확인할 일 없음"
+    const val SPOKEN_IDLE_TAG = "지금 확인할 일이 없어요"
+    const val IDLE_ACTION = "운행기록 보기"
+    const val IDLE_EMPTY = "아직 운행이 없어요"
+    const val IDLE_EMPTY_LINE = "P에서 D로 바꾸면 기록이 시작돼요"
+    const val SPOKEN_IDLE_EMPTY_LINE = "기어를 P에서 D로 바꾸면 운행 기록이 자동으로 시작돼요"
 
     // ───── the pager
     const val PAGER_PREVIOUS = "이전 할 일"
@@ -123,15 +141,21 @@ internal object HomeCopy {
     const val CLOSE = "닫기"
     const val SPOKEN_MATCHED_CLOSE = "자동 반영 알림 닫기"
 
-    // ───── 시작 설정
+    // ───── 시작 설정 (2.14: three tiles, each its step's button; the line is what the step is for, then what it holds)
     const val SETUP_TITLE = "시작 설정"
     const val SETUP_HEADLINE = "운행기록부에 들어갈 정보를 등록해 주세요"
     const val SETUP_COMPANY = "법인·차량 정보"
     const val SETUP_DRIVERS = "직원 등록"
     const val SETUP_PICK = "운전자 선택"
-    const val SETUP_COMPANY_ACTION = "법인·차량 입력"
-    const val SETUP_DRIVERS_ACTION = "직원 추가"
-    const val SETUP_PICK_ACTION = "운전자 선택"
+    const val SETUP_COMPANY_LINE = "운행기록부 머리말에 들어가요"
+    const val SETUP_DRIVERS_LINE = "④ 사용자 칸에 들어가요"
+    const val SPOKEN_SETUP_DRIVERS_LINE = "운행기록부 ④ 사용자 칸에 부서와 성명이 들어가요"
+    const val SETUP_PICK_LINE = "오늘 운전하는 직원을 골라요"
+    /** The 운전자 선택 tile while nobody is registered: it is disabled and says what it waits for. */
+    const val SETUP_PICK_WAITING = "직원을 등록하면 고를 수 있어요"
+    const val SETUP_STATE_DONE = "완료"
+    const val SETUP_STATE_NEXT = "다음 단계"
+    const val SETUP_STATE_WAITING = "직원 등록 뒤"
 
     // ───── 휴대폰 연결
     const val PAIRING_PREPARING = "휴대폰 연결을 준비하고 있어요"
@@ -161,7 +185,7 @@ internal object HomeCopy {
 
     /** Every card title (8 syllables at most), for the copy test. */
     val TITLES = listOf(DOCK_TITLE, PERMISSION_TITLE, PURPOSE_TITLE, RECLASSIFY_TITLE, REVIEW_TITLE, FINISHED_TITLE, MATCHED_TITLE, SETUP_TITLE,
-        CLOSE_TITLE, CARE_TITLE, VehicleCopy.PHONE_TITLE) + IncidentKind.entries.map { it.label }
+        CLOSE_TITLE, CARE_TITLE, VehicleCopy.PHONE_TITLE, IDLE_TITLE, SETUP_COMPANY, SETUP_DRIVERS, SETUP_PICK) + IncidentKind.entries.map { it.label }
 
     /** The status lines with what TalkBack says for them. */
     val STATUS_LINES = listOf(STATUS_READY to SPOKEN_STATUS_READY, STATUS_DEMO to SPOKEN_STATUS_DEMO, STATUS_DENIED to SPOKEN_STATUS_DENIED,
@@ -171,5 +195,9 @@ internal object HomeCopy {
     val CARD_LINES = listOf(INCIDENT_PHONE to SPOKEN_INCIDENT_PHONE, INCIDENT_SYNC_OFF to SPOKEN_INCIDENT_SYNC_OFF, PERMISSION_HEADLINE to PERMISSION_HEADLINE,
         PERMISSION_LINE to PERMISSION_LINE, PURPOSE_HEADLINE to PURPOSE_HEADLINE, REVIEW_NEAREST to REVIEW_NEAREST, REVIEW_NO_TRIP to REVIEW_NO_TRIP,
         MATCHED_LINE to MATCHED_LINE, SETUP_HEADLINE to SETUP_HEADLINE, WAITING_HEADLINE to WAITING_HEADLINE, PHOTO_DIALOG_LINE to PHOTO_DIALOG_LINE,
-        DELETE_DIALOG_LINE to DELETE_DIALOG_LINE)
+        DELETE_DIALOG_LINE to DELETE_DIALOG_LINE, IDLE_EMPTY to IDLE_EMPTY, IDLE_EMPTY_LINE to SPOKEN_IDLE_EMPTY_LINE)
+
+    /** The setup tiles' lines (2.14) with what TalkBack says for them; each fits a third of the card beside its disc. */
+    val SETUP_LINES = listOf(SETUP_COMPANY_LINE to SETUP_COMPANY_LINE, SETUP_DRIVERS_LINE to SPOKEN_SETUP_DRIVERS_LINE, SETUP_PICK_LINE to SETUP_PICK_LINE,
+        SETUP_PICK_WAITING to SETUP_PICK_WAITING)
 }

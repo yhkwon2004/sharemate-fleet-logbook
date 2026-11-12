@@ -308,8 +308,8 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
     val heroSky = remember { derivedStateOf { paneSky?.let { sky -> HeroSky(sky.band.translate(slotOrigin), sky.scroll) } } }
     // True while 월간·Excel pins its save bar: the follow-up bar then rides above it instead of covering it.
     var saveBarUp by remember { mutableStateOf(false) }
-    // The height of 홈's bottom band (demo strip, destinations, incident dock) while the page rests on it, else 0: the
-    // follow-up bar rides above the band so it never covers the incident buttons or the card.
+    // How high the follow-up bar rides over 홈's foot (the demo strip and the incident dock, or the dock alone when the sky is
+    // short, [homeBarLift]) while the page rests on it, else 0: so it never covers the incident buttons or the card's.
     var homeBand by remember { mutableStateOf(0.dp) }
     var pendingExportName by rememberSaveable { mutableStateOf<String?>(null) }
     val exportFile = remember { File(context.cacheDir, "pending-logbook-export") }
@@ -445,8 +445,8 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                                     }
                                 }
                                 // The follow-up bar centres on the page column, clear of the 지금 column, and rides above 월간·Excel's save bar
-                                // and above 홈's bottom band: 24 dp over the band, as over the window's edge (the band ends at the page slot's
-                                // 20-dp bottom padding). 홈's sky keeps at least 137 dp at FULL; the bar needs 88.
+                                // and over 홈's foot: 24 dp over it, as over the window's edge (the foot ends at the page slot's 20-dp bottom
+                                // padding). The bar needs 88 dp; where 홈's sky is shorter it rides over the demo strip instead ([homeBarLift]).
                                 ShellFollowUpBar(snackbar, columns.page, lift = when {
                                     tab == 2 && saveBarUp -> SAVE_BAR_RESERVE
                                     tab == 0 && homeBand > 0.dp -> homeBand + 20.dp
@@ -1062,19 +1062,27 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
 
 // ───────────────────────── 운행 ─────────────────────────
 
+/** How long 홈's debug frame check waits for a swap of card or form (160 ms of sizes) to settle before it calls an overflow a fault. */
+private const val HOME_FRAME_SETTLE_MS = 400L
+
 /**
- * The car home (2.13, docs/design/DESIGN_2_13_SPEC.md §3): one column that never scrolls in the full window. The greeting
- * block with the status line ([homeStatusLine]); 24 dp under it the attention card ([AttentionSlot]), the head of what the
- * car is waiting on ([attentionQueue]: safety, the permission, money the car measured, then paperwork and the manager's
- * deadlines) with the rest one page away; without the 지금 column the due booking and today and this month; then the sky,
- * which takes whatever height is left; and the bottom band, which never moves: the demo strip in demo mode, the three
- * destinations and the incident dock. Scrolling is off while the content fits ([homeFrame] proves it does at FULL 1×); where
- * it ever does not (a large font, a short window), the same column scrolls rather than cuts. A debug build logs (tag
- * HomeFrame) a full window at 1× that needs to scroll.
+ * The car home (2.13, docs/design/DESIGN_2_13_SPEC.md §3; 2.14, docs/design/DESIGN_2_14_HOME.md): one column that never
+ * scrolls in the full window, stacked again as 2.12 stacked it, because 2.13's small card over a large sky read as empty.
+ * The greeting block with the brand line and the status line ([homeStatusLine]); 24 dp under it the three destinations;
+ * 24 dp under them the attention card ([AttentionSlot]), the head of what the car is waiting on ([attentionQueue]: safety,
+ * the permission, money the car measured, then paperwork and the manager's deadlines) with the rest one page away, or the
+ * idle card while nothing waits; without the 지금 column the due booking and today and this month; then the sky, which
+ * takes whatever height is left; and the foot, which never moves: the demo strip in demo mode and the incident dock. Beside
+ * the 지금 column at the normal font the destinations and the dock take the forms the frame picks for the state
+ * ([homeFrameFor]: both tall but for an open incident in demo mode); elsewhere ([homeFallbackForms]) the page keeps the tall
+ * look and scrolls when it must. Scrolling is off while the content fits ([homeFrame] proves it does at FULL 1×); where it
+ * ever does not, the same column scrolls rather than cuts. A debug build logs (tag HomeFrame) a full window at 1× that still
+ * needs to scroll once a swap has settled.
  *
  * Beside the 지금 column the page tells the sky ([onHeroSky]) where it leaves sky free right of the greeting and above the
- * first card ([heroBand], from sizes only), so the sun or moon can rest there; and while the page rests on its band it tells
- * the shell the band's height ([onBand]), so the follow-up bar rides above the incident buttons.
+ * destinations ([heroBand], from sizes only), so the sun or moon can rest there; and while the page rests on its foot it
+ * tells the shell how high the follow-up bar rides ([onBand], [homeBarLift]), so the bar never covers the incident buttons
+ * or the attention card's buttons.
  */
 @Composable private fun DrivePane(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, nav: HomeNav, snoozes: MutableState<Set<String>>,
     banner: List<CardCharge>, onBanner: (List<CardCharge>) -> Unit, nowColumn: Boolean, onHeroSky: (HeroSky?) -> Unit, onBand: (Dp) -> Unit) {
@@ -1110,54 +1118,67 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
     )
     // The greeting block rises in once per session; a return to the tab or a sync lands in place.
     val entrance = rememberHomeEntrance()
+    // The frame's budget holds in the full, tall window beside the 지금 column at the normal font: there the forms are the
+    // frame's choice for this state, and the greeting keeps to one line. Elsewhere the page keeps the tall look and scrolls.
+    val framed = nowColumn && layout.full && density.fontScale <= 1f
+    val frame = if (framed) homeFrameFor(queue, demo) else null
+    val forms = frame?.forms ?: homeFallbackForms(plan.cardColumns, layout.short)
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val viewport = maxHeight
         val pageWidth = maxWidth
+        // Where the frame holds, the follow-up bar decides by the sky the state leaves on this page, at once (a FULL window
+        // shorter than 1209 dp keeps the frame but not its 1097-dp page); elsewhere by the sky measured.
+        val frameSky = frame?.skyOn(viewport)
         val scroll = rememberScrollState()
         var greetingHeight by remember { mutableIntStateOf(0) }
-        var bandHeight by remember { mutableIntStateOf(0) }
-        // The sky above the first card: the attention card's top while one shows, else the band's. Sizes only, so neither the
-        // entrance lift nor the page slide moves it; null until both are measured, and without the column there is none.
-        val firstCardTop = if (queue.isNotEmpty()) greetingHeight + with(density) { HOME_CARD_GAP.toPx() } else with(density) { viewport.toPx() } - bandHeight
-        val band = if (!nowColumn || greetingHeight == 0 || bandHeight == 0) null else with(density) {
-            heroBand(pageWidth.toPx(), firstCardTop, layout.readingMax.toPx(), 0f, 0f, 0f, HERO_SKY_MARGIN.toPx())
+        var footHeight by remember { mutableIntStateOf(0) }
+        var dockHeight by remember { mutableIntStateOf(0) }
+        var skyHeight by remember { mutableIntStateOf(0) }
+        // The sky right of the greeting, down to the destinations' top, 24 dp under the block in every state (2.14). Sizes
+        // only, so neither the entrance lift nor the page slide moves it; null until measured, and without the column none.
+        val band = if (!nowColumn || greetingHeight == 0) null else with(density) {
+            heroBand(pageWidth.toPx(), greetingHeight + HOME_BLOCK_GAP.toPx(), layout.readingMax.toPx(), 0f, 0f, 0f, HERO_SKY_MARGIN.toPx())
         }
         val reportSky by rememberUpdatedState(onHeroSky)
         DisposableEffect(band) {
             reportSky(band?.let { HeroSky(it) { scroll.value } })
             onDispose { reportSky(null) }
         }
-        // The page rests on its band while nothing scrolls; the follow-up bar then rides above it.
+        // The page rests on its foot while nothing scrolls; the follow-up bar then rides over it, above the demo strip too
+        // while the sky leaves the bar its room ([homeBarLift]).
         val resting = scroll.maxValue == 0
         val reportBand by rememberUpdatedState(onBand)
-        val bandDp = with(density) { bandHeight.toDp() }
-        DisposableEffect(resting, bandDp) {
-            reportBand(if (resting) bandDp else 0.dp)
+        // Read through derivedStateOf: the sky changes height on every frame of a card swap, the lift only at the threshold.
+        val lift by remember(density, frameSky) {
+            derivedStateOf { with(density) { homeBarLift(footHeight.toDp(), dockHeight.toDp(), frameSky ?: (skyHeight.toDp() + HOME_SKY_MIN)) } }
+        }
+        DisposableEffect(resting, lift) {
+            reportBand(if (resting) lift else 0.dp)
             onDispose { reportBand(0.dp) }
         }
-        // Only where the frame's budget holds: the full, tall window beside the 지금 column at the normal font, and not
-        // while the keyboard takes the lower half of the page (the page then scrolls the field into view on purpose).
-        if (BuildConfig.DEBUG && layout.full && nowColumn && density.fontScale <= 1f) LaunchedEffect(scroll.maxValue) {
+        // Only where the frame's budget holds, and not while the keyboard takes the lower half of the page (the page then
+        // scrolls the field into view on purpose); a swap of card or form is given its 160 ms to settle first.
+        if (BuildConfig.DEBUG && framed) LaunchedEffect(scroll.maxValue) {
             if (scroll.maxValue > 0 && viewport >= HOME_PAGE_FULL - 8.dp) {
-                Log.w("HomeFrame", "홈 needs ${scroll.maxValue} px more than the ${viewport.value} dp page: ${queue.map { it.kind }}")
+                delay(HOME_FRAME_SETTLE_MS)
+                Log.w("HomeFrame", "홈 needs ${scroll.maxValue} px more than the ${viewport.value} dp page: ${queue.map { it.kind }} $forms")
             }
         }
         Column(Modifier.fillMaxSize().fadingTopEdge(scroll).verticalScroll(scroll, enabled = scroll.maxValue > 0)) {
             // At least the page's height: under the scroll's unbounded maximum the column weighs its sky against this minimum,
-            // so the sky takes what the content leaves and the band sits on the page's bottom edge.
+            // so the sky takes what the content leaves and the dock sits on the page's bottom edge.
             Column(Modifier.fillMaxWidth().heightIn(min = viewport)) {
                 HomeGreeting(state, now, status, Modifier.onSizeChanged { greetingHeight = it.height }
-                    .then(if (nowColumn) Modifier.heightIn(min = HOME_GREETING_MIN) else Modifier), entrance = entrance)
+                    .then(if (nowColumn) Modifier.heightIn(min = HOME_GREETING_MIN) else Modifier), entrance = entrance, oneLine = framed)
+                DestinationRow(cards, plan.cardColumns, forms.cards, Modifier.padding(top = HOME_BLOCK_GAP))
                 AttentionSlot(state, now, queue, nav, act, repository, answers, prompt, snoozes, banner, onBanner, { month -> reminderClosed = monthKey(month) })
                 if (!plan.widgetsInColumn) HomeTiles(state, now, plan, nav)
                 // The sky: 24 dp at least, then whatever the page has left.
                 Spacer(Modifier.height(HOME_SKY_MIN))
-                Spacer(Modifier.weight(1f))
-                Column(Modifier.fillMaxWidth().onSizeChanged { bandHeight = it.height }, verticalArrangement = Arrangement.spacedBy(HOME_BAND_GAP)) {
+                Spacer(Modifier.weight(1f).onSizeChanged { skyHeight = it.height })
+                Column(Modifier.fillMaxWidth().onSizeChanged { footHeight = it.height }, verticalArrangement = Arrangement.spacedBy(HOME_BAND_GAP)) {
                     if (demo) DemoStrip { act { repository.ingestCardEvents(listOf(demoCardApproval(repository.state.value.data, System.currentTimeMillis()))) } }
-                    DestinationRow(cards, plan.cardColumns)
-                    // Held to the frame's slot, as the destinations are, so the band is the height homeFrame budgets.
-                    IncidentDock(data, act, repository, Modifier.heightIn(min = HOME_DOCK))
+                    IncidentDock(data, act, repository, forms.dock, Modifier.onSizeChanged { dockHeight = it.height })
                 }
             }
         }
@@ -1172,7 +1193,7 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
 @Composable private fun HomeTiles(state: TripLogState, now: Long, plan: HomePlan, nav: HomeNav) {
     val gap = LocalLayout.current.cardGap
     val month = YearMonth.from(localDate(now))
-    Column(Modifier.fillMaxWidth().padding(top = HOME_CARD_GAP), verticalArrangement = Arrangement.spacedBy(gap)) {
+    Column(Modifier.fillMaxWidth().padding(top = HOME_BLOCK_GAP), verticalArrangement = Arrangement.spacedBy(gap)) {
         if (reservationDueWithinDay(state.data, now)) ReservationTile(state.data, now, { nav.navigate(3) })
         val today: @Composable (Modifier) -> Unit = { modifier -> TodayTile(state, now, { nav.openLog(0, month) }, modifier) }
         val thisMonth: @Composable (Modifier) -> Unit = { modifier -> MonthTile(state.data, now, { nav.openReport(month) }, modifier) }
@@ -1187,10 +1208,10 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
 }
 
 /**
- * The presenter's controls while demo mode is on (2.13, an 80-dp strip above the destinations): the 시연 모드 tag, then drive
- * and park at 15× (the card's one solid action), a charge (only while parked) and a card approval, at the same weights as
- * before. Under 560 dp the tag stands over the buttons. It is held to the frame's slot ([HOME_DEMO_STRIP]), the height
- * [homeFrame] budgets for it.
+ * The presenter's controls while demo mode is on (2.13, an 80-dp strip; since 2.14 16 dp above the dock): the 시연 모드
+ * tag, then drive and park at 15× (the card's one solid action), a charge (only while parked) and a card approval, at the
+ * same weights as before. Under 560 dp the tag stands over the buttons. It is held to the frame's slot ([HOME_DEMO_STRIP]),
+ * the height [homeFrame] budgets for it.
  */
 @Composable private fun DemoStrip(demoCard: () -> Unit) {
     val moving by DemoDrive.moving.collectAsState()

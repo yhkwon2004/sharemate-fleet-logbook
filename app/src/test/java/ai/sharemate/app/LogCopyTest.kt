@@ -38,6 +38,18 @@ class LogCopyTest {
         assertEquals("빈 주소는 없는 것", "8.0 km · 1분", tripRowTitle(trip("e", start = " ", destination = "")))
     }
 
+    /** Whether the title is a route (2.14, so 홈's 최근 운행 does not say the distance twice), and the title as TalkBack says it. */
+    @Test fun aRowsTitleKnowsWhetherItIsARouteAndSpeaksWithoutTheArrow() {
+        assertTrue(tripHasRoute(trip("a", start = "수정구 시흥동", end = "판교")))
+        assertTrue("주소가 하나여도 길", tripHasRoute(trip("c", end = "판교")))
+        assertFalse("주소가 없으면 제목이 거리와 시간", tripHasRoute(trip("d")))
+        assertFalse("빈 주소는 없는 것", tripHasRoute(trip("e", start = " ", destination = "")))
+        assertEquals("수정구 시흥동, 판교역", tripRowTitleSpoken(trip("b", start = "수정구 시흥동", end = "판교", destination = "판교역")))
+        assertEquals("판교", tripRowTitleSpoken(trip("c", end = "판교")))
+        assertEquals("8.0 km, 1분", tripRowTitleSpoken(trip("d")))
+        assertFalse("화살표는 읽지 않음", tripRowTitleSpoken(trip("a", start = "수정구 시흥동", end = "판교")).contains("→"))
+    }
+
     @Test fun aRowLineCarriesThePersonAndTheCostButTheDistanceOnlyUnderARoute() {
         val routed = trip("a", start = "수정구 시흥동", destination = "판교")
         assertEquals("8.0 km · 1분 · 김", tripRowLine(routed, "김", edited = false))

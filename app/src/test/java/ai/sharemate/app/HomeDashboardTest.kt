@@ -196,9 +196,10 @@ class HomeDashboardTest {
     }
 
     @Test fun theSkyBandRunsRightOfTheGreetingDownToTheFirstCard() {
-        // FULL: a 1112-dp page, the greeting's 720 measure, 24 clear; with a card the first card's top is 160 + 24.
-        assertEquals(Rect(744f, 0f, 1088f, 160f), heroBand(1112f, 184f, 720f, 0f, 0f, 0f, 24f))
-        // Idle the first card is the bottom band's: 1097 − 200 = 897, or 801 with the demo strip.
+        // FULL: a 1112-dp page, the greeting's 720 measure, 24 clear; since 2.14 the first card is always the destinations',
+        // 160 + 24 under the page top, in every state.
+        assertEquals(Rect(744f, 0f, 1088f, 160f), heroBand(1112f, HOME_GREETING_MIN.value + HOME_BLOCK_GAP.value, 720f, 0f, 0f, 0f, 24f))
+        // A taller greeting block (a larger font) takes the band's bottom down with it, 24 dp above the cards.
         assertEquals(873f, heroBand(1112f, 897f, 720f, 0f, 0f, 0f, 24f)!!.bottom)
         assertEquals(777f, heroBand(1112f, 801f, 720f, 0f, 0f, 0f, 24f)!!.bottom)
         assertNull("읽기 폭 옆에 남는 하늘이 없으면 없음", heroBand(760f, 600f, 720f, 0f, 0f, 0f, 24f))
