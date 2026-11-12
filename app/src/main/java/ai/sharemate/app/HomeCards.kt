@@ -25,9 +25,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -47,6 +49,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -358,38 +361,39 @@ internal class ParkedStackAnswers(dismissed: String = "", reclassifyId: String? 
 }
 
 /**
- * The "자동 반영" filter of the log: this month's trips that carry a card-matched expense, each line with its own
- * "회사 비용 아님" and an undo that attaches the payment again. Nothing was hidden in a basket, so nothing sneaks in.
+ * The "자동 반영" filter of the log (2.13): this month's trips that carry a card-matched expense, newest first, one car card
+ * each (padding 16, rows 4 apart): the trip's [TripRow], ringed while the detail shows it ([selectedId]), a divider, then
+ * each payment as a money row behind the receipt mark (its type and amount in the one money style, the merchant or 카드 자동
+ * 매칭 under it) with its own 회사 비용 아님 and an undo that attaches the payment again. Nothing was hidden in a basket, so
+ * nothing sneaks in. The page draws its empty card itself, before this list is asked for.
  */
-@Composable internal fun MatchedTripList(data: TripLogData, now: Long, act: Act, repository: TripLogRepository, modifier: Modifier = Modifier, onOpen: (String) -> Unit) {
+@Composable internal fun MatchedTripList(data: TripLogData, now: Long, act: Act, repository: TripLogRepository, selectedId: String?, modifier: Modifier = Modifier,
+    onOpen: (String) -> Unit) {
     val rows = matchedTripsThisMonth(data, zone, localDate(now))
-    if (rows.isEmpty()) {
-        Box(modifier, contentAlignment = Alignment.Center) { Muted("이달에 카드 결제가 자동으로 들어간 운행이 없어요.") }
-        return
-    }
     val followUp = LocalFollowUp.current
-    LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    val list = rememberLazyListState()
+    val receipt = painterResource(R.drawable.ic_receipt)
+    val ink = Car.skin.icon
+    LazyColumn(modifier.fadingTopEdge(list), state = list, verticalArrangement = Arrangement.spacedBy(LocalLayout.current.cardGap)) {
         items(rows, key = { it.first.id }) { (trip, expenses) ->
-            Column(Modifier.clip(RoundedCornerShape(24.dp)).background(MaterialTheme.colorScheme.surface)) {
-                TripRow(trip, data, flagged = false, selected = false) { onOpen(trip.id) }
+            CarCard(padding = 16.dp, gap = 4.dp) {
+                TripRow(trip, data, flagged = false, selected = trip.id == selectedId) { onOpen(trip.id) }
+                CarDivider()
                 expenses.forEach { expense ->
                     val chargeId = expense.cardChargeId ?: return@forEach
-                    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.tertiaryContainer) {
-                            Text("${expense.type.label} ${formatWon(expense.amountWon)}", style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), maxLines = 1)
-                        }
-                        Muted(expense.merchant ?: EditSource.CARD.label, Modifier.weight(1f))
-                        QuietAction("회사 비용 아님", description = "${expense.merchant ?: expense.type.label} ${formatWon(expense.amountWon)} 회사 비용 아님") {
-                            act {
-                                repository.excludeCardCharge(chargeId)
-                                followUp(FollowUp("${expense.merchant ?: expense.type.label} ${formatWon(expense.amountWon)}을 회사 비용에서 뺐어요", "실행 취소") {
-                                    repository.confirmCardCharge(chargeId, trip.id)
-                                })
-                            }
-                        }
-                    }
+                    val name = expense.merchant ?: expense.type.label
+                    // 12 dp in, under the trip row's own content.
+                    CarMoneyRow(expense.type.label, expense.amountWon, Modifier.padding(horizontal = 12.dp), line = expense.merchant ?: EditSource.CARD.label,
+                        lead = { Icon(receipt, contentDescription = null, Modifier.size(20.dp), tint = ink) }, action = {
+                            CarPillButton(LogCopy.NOT_COMPANY, {
+                                act {
+                                    repository.excludeCardCharge(chargeId)
+                                    followUp(FollowUp("$name ${formatWon(expense.amountWon)}을 회사 비용에서 뺐어요", LogCopy.UNDO) {
+                                        repository.confirmCardCharge(chargeId, trip.id)
+                                    })
+                                }
+                            }, description = "$name ${formatWon(expense.amountWon)} ${LogCopy.NOT_COMPANY}")
+                        })
                 }
             }
         }
