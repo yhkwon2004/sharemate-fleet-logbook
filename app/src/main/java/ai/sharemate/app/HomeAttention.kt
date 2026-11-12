@@ -504,7 +504,7 @@ private val chargeQuickAmounts = listOf(10_000L, 20_000L, 30_000L, 50_000L)
             else CarLink(HomeCopy.FINISHED_ADD_COST, { nav.openTrip(trip.id) }, description = HomeCopy.SPOKEN_FINISHED_ADD_COST)
         },
         actions = {
-            QuietAction(HomeCopy.PURPOSE_OTHER, description = HomeCopy.SPOKEN_PURPOSE_OTHER) { answers.answer(trip.id, reclassify = true) }
+            QuietAction(HomeCopy.PURPOSE_OTHER) { answers.answer(trip.id, reclassify = true) }
             PrimaryAction(HomeCopy.FINISHED_CONFIRM) { answers.answer(trip.id) }
         })
 }

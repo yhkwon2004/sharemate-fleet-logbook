@@ -1113,7 +1113,8 @@ internal fun statusPillInfo(state: TripLogState, fresh: Boolean, status: String)
             reportBand(if (resting) bandDp else 0.dp)
             onDispose { reportBand(0.dp) }
         }
-        if (BuildConfig.DEBUG && layout.full && density.fontScale <= 1f) LaunchedEffect(scroll.maxValue) {
+        // Only where the frame's budget holds: the full, tall window beside the 지금 column at the normal font.
+        if (BuildConfig.DEBUG && layout.full && nowColumn && density.fontScale <= 1f) LaunchedEffect(scroll.maxValue) {
             if (scroll.maxValue > 0) Log.w("HomeFrame", "홈 needs ${scroll.maxValue} px more than the ${viewport.value} dp page: ${queue.map { it.kind }}")
         }
         Column(Modifier.fillMaxSize().fadingTopEdge(scroll).verticalScroll(scroll, enabled = scroll.maxValue > 0)) {
