@@ -685,7 +685,7 @@ private val GREETING_MIN_SIZE = 30.sp
 // ───────────────────────── 지금 column (wide car windows) ─────────────────────────
 
 /** The space between the 지금 column's tiles. */
-private val NOW_TILE_GAP = 16.dp
+internal val NOW_TILE_GAP = 16.dp
 
 /** The padding inside the 지금 column's cards: 20 dp in every class, where the page's cards take 24 from EXPANDED up. */
 internal val NOW_TILE_PADDING = 20.dp
@@ -693,30 +693,37 @@ internal val NOW_TILE_PADDING = 20.dp
 /**
  * The 지금 column beside the page on a wide, tall car window ([carColumns]), in the mock's order: 사용자 ([driverCard], handed
  * the modifier that places it), 예약, 오늘 운행 and 이달 운행일지, each an opaque [CarCard] (2.12; by night too, where the
- * 2.11 tiles were glass at .78). The three under 사용자 open the page they sum up: 차량 ([openVehicle]), 운행기록 on this
- * month ([openToday]) and 월간·Excel ([openMonth]). The column stands outside the page change like the header, so it never
- * slides, and it appears with the shell (no stagger). TalkBack reaches it after the page. The booking line is kept on the
+ * 2.11 tiles were glass at .78), and since 2.15 차량 ([VehicleTile]) at the end. The tiles under 사용자 open the page they sum
+ * up: 차량 ([openVehicle], from 예약 and from 차량), 운행기록 on this month ([openToday]) and 월간·Excel ([openMonth]). The
+ * column stands outside the page change like the header, so it never slides and never changes between pages, and it appears
+ * with the shell (no stagger). TalkBack reaches it after the page; 차량 is its last stop. The booking line is kept on the
  * minute and the month's words on the day, because the clock recomposes the column every second.
  *
- * 2.13 (DESIGN_2_13_SPEC §4): the column never scrolls in the FULL window at 1×. Its tallest state (사용자 with a two-line
- * question, 323, then 84 + 199 + 172, three 16-dp gaps and the 8-dp foot: 834 dp) fits the 1097-dp page with room to spare,
- * so scrolling is off while the content fits ([ScrollState.maxValue] is 0) and a fling or a drag never nudges it. A larger
- * font or a shorter window that overflows turns it back on, so nothing is ever cut.
+ * 2.13 (DESIGN_2_13_SPEC §4): the column never scrolls in the FULL window at 1×; scrolling is off while the content fits
+ * ([ScrollState.maxValue] is 0), so a fling or a drag never nudges it, and a larger font or a shorter window that overflows
+ * turns it back on, so nothing is ever cut. 2.15 (DESIGN_2_15 §3): it also ends where the page ends. The four tiles above
+ * are 826 dp at their tallest (사용자 with a two-line question, 323, then 84 + 199 + 172 and three 16-dp gaps), and
+ * [NowColumnLayout] gives 차량 what the 1,097-dp page leaves after its 16-dp gap and the 8-dp foot ([nowVehicleHeight]): 247
+ * dp in that state, up to 280 where 사용자 is shorter, never under its least (210 dp at 1×, the drawing at 64). Where even
+ * that does not fit, the tile keeps its least and the column scrolls as before. The page reaches the layout as the scroll's
+ * minimum height, so [modifier] must fill the slot's height (the shell's does).
  */
 @Composable internal fun NowColumn(state: TripLogState, now: Long, driverCard: @Composable (Modifier) -> Unit, openVehicle: () -> Unit, openToday: () -> Unit,
     openMonth: () -> Unit, modifier: Modifier = Modifier) {
     val scroll = rememberScrollState()
-    // The bottom padding keeps the last tile's day shadow inside the scroll.
-    Column(modifier.semantics { isTraversalGroup = true; traversalIndex = 1f }.fadingTopEdge(scroll).verticalScroll(scroll, enabled = scroll.maxValue > 0)
-        .padding(bottom = 8.dp)) {
+    // The layout adds the 8-dp foot that keeps the last tile's day shadow inside the scroll.
+    NowColumnLayout(
         // The driver slot carries its own gap, so a card that folds away takes the gap with it.
-        driverCard(Modifier.fillMaxWidth().padding(bottom = NOW_TILE_GAP))
-        Column(verticalArrangement = Arrangement.spacedBy(NOW_TILE_GAP)) {
-            ReservationTile(state.data, now, openVehicle)
-            TodayTile(state, now, openToday)
-            MonthTile(state.data, now, openMonth)
-        }
-    }
+        driver = { driverCard(Modifier.fillMaxWidth().padding(bottom = NOW_TILE_GAP)) },
+        tiles = {
+            Column(verticalArrangement = Arrangement.spacedBy(NOW_TILE_GAP)) {
+                ReservationTile(state.data, now, openVehicle)
+                TodayTile(state, now, openToday)
+                MonthTile(state.data, now, openMonth)
+            }
+        },
+        vehicle = { VehicleTile(state, now, openVehicle) },
+        modifier = modifier.semantics { isTraversalGroup = true; traversalIndex = 1f }.fadingTopEdge(scroll).verticalScroll(scroll, enabled = scroll.maxValue > 0))
 }
 
 /**

@@ -160,10 +160,14 @@ class HomeFrameTest {
     }
 
     @Test fun theNowColumnFitsBesideIt() {
-        // 사용자 with a two-line question, 예약, 오늘 운행 and 이달 운행일지, three 16-dp gaps and 8 at the bottom.
-        val column = 323.dp + 84.dp + 199.dp + 172.dp + 56.dp
-        assertEquals(834.dp, column)
-        assertTrue(column <= HOME_WINDOW_FULL - HOME_HEADER_ROW - HOME_PAGE_PADDING)
+        // 사용자 with a two-line question, 예약, 오늘 운행 and 이달 운행일지 with their three 16-dp gaps; 2.15's 차량 tile takes the
+        // rest of the page after its own 16-dp gap and the 8-dp foot, so the column ends on the page's foot without scrolling.
+        val above = 323.dp + 84.dp + 199.dp + 172.dp + 48.dp
+        assertEquals(826.dp, above)
+        val vehicle = nowVehicleHeight(HOME_PAGE_FULL, above)!!
+        assertEquals(247.dp, vehicle)
+        assertEquals(HOME_PAGE_FULL, above + 16.dp + vehicle + 8.dp)
+        assertTrue(vehicle >= NOW_VEHICLE_MIN)
     }
 
     @Test fun theQueueKeepsTheOrderTheMomentDemands() {

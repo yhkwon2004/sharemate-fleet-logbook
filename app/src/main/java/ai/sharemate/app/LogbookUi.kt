@@ -435,8 +435,9 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                                           }
                                         }
                                         // Who is driving (asking today's question while it is due, on the same answered days as the narrow
-                                        // window's row), the next booking, today and this month. The card's 직원 추가 opens 설정 › 직원; 오늘 운행
-                                        // opens 운행기록 on this month, whose list starts with the newest day (today's, once it has a trip).
+                                        // window's row), the next booking, today, this month and the car (2.15, which ends the column where the page
+                                        // ends). The card's 직원 추가 opens 설정 › 직원; 예약 and the car open 차량; 오늘 운행 opens 운행기록 on this
+                                        // month, whose list starts with the newest day (today's, once it has a trip).
                                         if (columns.split) NowColumn(state, now,
                                             driverCard = { modifier -> DriverNowCard(state, now, driverConfirmed, { driverConfirmed = it }, openPicker = { openDriver(null) },
                                                 openDrivers = { goSettings(1) }, modifier = modifier) },
