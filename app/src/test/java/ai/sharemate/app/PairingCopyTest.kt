@@ -13,14 +13,27 @@ class PairingCopyTest {
     /** A line set in titleSmall (19 sp) across a card gets the width of a 26-unit bodySmall (16 sp) line: 26 × 16 / 19 units. */
     private val titleSmallLineUnits = CARD_LINE_UNITS * 16 / 19
 
+    /**
+     * The 248-dp column beside the 232-dp QR where the steps stand beside it too (§9.6): a titleSmall unit is about 17.5 dp
+     * (19 sp against the 14.7 dp of a 16-sp unit), so 13 units are about 228 dp, inside the column with room to spare.
+     */
+    private val qrSideColumnUnits = 13.0
+
     @Test fun theCarsPairingWordsAreOneLineEach() {
         with(VehicleCopy) {
-            // Beside the QR the prompt may take two lines; stacked under it (a narrow card) it is one card line.
+            // 2.15 fix (§9.6): the QR's headline is one line in the column beside the tile, in either form of the card.
+            assertEquals("휴대폰 앱으로 찍어요", PHONE_QR)
+            assertOneLine(PHONE_QR, qrSideColumnUnits)
+            // So are the two reasons the column gives most often in its place, so the column keeps its height at expiry.
+            listOf(PHONE_EXPIRED, PHONE_ADDRESS_PENDING).forEach { assertOneLine(it, qrSideColumnUnits) }
             listOf(PHONE_QR, PHONE_MANUAL).forEach { assertOneLine(it, titleSmallLineUnits) }
             listOf(PHONE_NEW_CODE, PHONE_RENEW_CODE).forEach { assertOneLine(it, CARD_LINE_UNITS) }
             assertTrue("TalkBack가 QR이라고 들음", SPOKEN_PHONE_QR.contains("QR"))
             assertTrue("그림에 쓴 말과 같은 이름", SPOKEN_PHONE_QR.startsWith(PHONE_TITLE))
             assertFalse("조사 앞 공백 없음", PHONE_QR.contains("QR 을"))
+            // The empty code's place is a mark, not words: no Hangul, and the same shape as "455 426".
+            assertFalse(PHONE_CODE_NONE.any { it in '가'..'힣' })
+            assertEquals(pairingDisplay("455426").length, PHONE_CODE_NONE.length)
         }
     }
 
@@ -31,16 +44,43 @@ class PairingCopyTest {
         assertEquals("번호는 있으나 주소를 아직 모름", VehicleCopy.PHONE_ADDRESS_PENDING, pairingQrHeadline(null, "455426", 0))
     }
 
+    @Test fun atExpiryTheHeadlineSaysTheCodeRanOutAndThePillOffersANewOne() {
+        // §9.6: the column reads the live code, as PhonePairing does; the server has not published yet (the field still holds it).
+        val now = 1_790_000_000_000L
+        val key = "499efa1aa0f8445c3832ad7c3b911b20a0d9e04f3d66d03591d84b964802b21e"
+        val info = SyncInfo(running = true, port = 9247, addresses = listOf("10.0.2.15"), pairingCode = "455426", pairingExpiresAt = now + SYNC_PAIR_TTL,
+            fingerprint = key)
+        fun headline(at: Long) = pairingQrHeadline(syncPairingLinkText(info, at), livePairingCode(info, at), info.pairedPhones)
+        assertEquals("5분 안에는 QR", VehicleCopy.PHONE_QR, headline(now + SYNC_PAIR_TTL - 1))
+        assertEquals("만료되면 만료됐다고", VehicleCopy.PHONE_EXPIRED, headline(now + SYNC_PAIR_TTL))
+        assertEquals("다른 휴대폰이 있으면 더 연결", VehicleCopy.PHONE_ANOTHER,
+            pairingQrHeadline(syncPairingLinkText(info, now + SYNC_PAIR_TTL), livePairingCode(info, now + SYNC_PAIR_TTL), 1))
+        // The pill's label follows the same live code: 새 연결 번호 once it ran out.
+        val pill = { at: Long -> if (livePairingCode(info, at) == null) VehicleCopy.PHONE_NEW_CODE else VehicleCopy.PHONE_RENEW_CODE }
+        assertEquals(VehicleCopy.PHONE_RENEW_CODE, pill(now))
+        assertEquals(VehicleCopy.PHONE_NEW_CODE, pill(now + SYNC_PAIR_TTL))
+    }
+
     @Test fun thePhonesQrWordsAreShortAndEndWithoutAPeriod() {
         with(PhoneQrCopy) {
-            listOf(SCAN, READING, PICK, MANUAL, UNREADABLE, NOT_OURS, NO_CAMERA, NO_PICKER).forEach {
+            listOf(SCAN, READING, PICK, MANUAL, UNREADABLE, NOT_OURS, NO_CAMERA, NO_PICKER, confirm("203.0.113.9:443")).forEach {
                 assertFalse("한 줄: $it", it.contains('\n'))
                 assertFalse("마침표 없음: $it", it.trimEnd().endsWith('.'))
             }
-            // The spec's own words (§6.3).
+            // The spec's own words (§6.3, §9.6).
             assertEquals("QR을 읽지 못했어요 · 화면에 QR이 다 나오게 다시 찍어 주세요", UNREADABLE)
             assertEquals("SHAREMATE 연결 QR이 아니에요", NOT_OURS)
+            assertEquals("주소를 확인하고 차량과 연결을 눌러 주세요 · 203.0.113.9:443", confirm("203.0.113.9:443"))
             listOf(SCAN, PICK, MANUAL).forEach { assertTrue("버튼 이름은 짧게: $it", oneLineUnits(it) <= 10.0) }
         }
+    }
+
+    @Test fun theWaitingLineNamesTheFirstAddressOfTheLink() {
+        // §9.6: a link that does not pair at once shows where the code would go first, the first of its addresses.
+        val link = parsePairingLink("sharemate://pair?v=1&e=203.0.113.9:443&e=10.0.2.15:9247&c=455426&k=${"a".repeat(64)}")!!
+        assertFalse(pairingLinkIsLocal(link))
+        assertTrue(PhoneQrCopy.confirm(link.endpoints.first()).endsWith("· 203.0.113.9:443"))
+        // It names the button the person presses, in the button's own words.
+        assertTrue(PhoneQrCopy.confirm("x").contains("차량과 연결"))
     }
 }

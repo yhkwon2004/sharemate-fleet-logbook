@@ -1,6 +1,7 @@
 package ai.sharemate.app
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -19,7 +20,9 @@ import javax.net.ssl.SSLHandshakeException
 
 /**
  * The pairing link of 2.15 (docs/design/DESIGN_2_15.md §6.1): what the car writes, what the phone accepts (strictly), the round
- * trip between them, the length cap, and the order in which the phone tries the addresses it carries (§6.3).
+ * trip between them, the length cap, and the order in which the phone tries the addresses it carries (§6.3). The fix round
+ * (§9.6): a code past its end gives no link and no countdown, and a scanned link pairs at once only when the camera took it
+ * and every address it names is a car's local IPv4 one.
  */
 class PairingLinkTest {
     private val key = "499efa1aa0f8445c3832ad7c3b911b20a0d9e04f3d66d03591d84b964802b21e"
@@ -114,11 +117,94 @@ class PairingLinkTest {
         assertNull("번호 없음", pairingLinkText(listOf("10.0.0.1:9247"), "", key))
         assertNull("번호 다섯 자리", pairingLinkText(listOf("10.0.0.1:9247"), "12345", key))
         assertNull("키 없음", pairingLinkText(listOf("10.0.0.1:9247"), "123456", ""))
-        val info = SyncInfo(running = true, port = 9247, addresses = listOf("10.0.2.15", "10.0.2.16"), pairingCode = "455426", fingerprint = key)
-        assertEquals(good, syncPairingLinkText(info))
-        assertNull("만료된 번호", syncPairingLinkText(info.copy(pairingCode = null)))
-        assertNull("주소 확인 중", syncPairingLinkText(info.copy(addresses = emptyList())))
-        assertNull("키를 아직 모름", syncPairingLinkText(info.copy(fingerprint = "")))
+        val now = 1_790_000_000_000L
+        val info = SyncInfo(running = true, port = 9247, addresses = listOf("10.0.2.15", "10.0.2.16"), pairingCode = "455426",
+            pairingExpiresAt = now + SYNC_PAIR_TTL, fingerprint = key)
+        assertEquals(good, syncPairingLinkText(info, now))
+        assertNull("번호 없음(사용됨·닫힘)", syncPairingLinkText(info.copy(pairingCode = null), now))
+        assertNull("주소 확인 중", syncPairingLinkText(info.copy(addresses = emptyList()), now))
+        assertNull("키를 아직 모름", syncPairingLinkText(info.copy(fingerprint = ""), now))
+    }
+
+    // ───────────────────────── an expired code is no code (§9.6) ─────────────────────────
+
+    @Test fun aCodeIsLiveOnlyBeforeItsEnd() {
+        val now = 1_790_000_000_000L
+        val info = SyncInfo(running = true, port = 9247, addresses = listOf("10.0.2.15", "10.0.2.16"), pairingCode = "455426",
+            pairingExpiresAt = now + SYNC_PAIR_TTL, fingerprint = key)
+        // Live: the whole five minutes, up to the last millisecond.
+        assertEquals("455426", livePairingCode(info, now))
+        assertEquals(good, syncPairingLinkText(info, now + SYNC_PAIR_TTL - 1))
+        assertEquals("4:59", pairingRemaining(info, now + 1_000))
+        assertEquals("0:00", pairingRemaining(info, now + SYNC_PAIR_TTL - 1))
+        // Expired: the server has not published yet, so the field still holds the code, and nothing on screen may use it.
+        val end = now + SYNC_PAIR_TTL
+        listOf(end, end + 1, end + 60_000).forEach { at ->
+            assertNull("만료 후 번호 없음 ($at)", livePairingCode(info, at))
+            assertNull("만료 후 QR 없음 ($at)", syncPairingLinkText(info, at))
+            assertNull("만료 후 \"0:00 남음\" 없음 ($at)", pairingRemaining(info, at))
+        }
+        // Missing: used, or closed after too many wrong tries.
+        val missing = info.copy(pairingCode = null)
+        assertNull(livePairingCode(missing, now))
+        assertNull(syncPairingLinkText(missing, now))
+        assertNull(pairingRemaining(missing, now))
+        // A state that never had a code (the server not started) has no expiry either.
+        assertNull(syncPairingLinkText(SyncInfo(pairingCode = "455426"), now))
+    }
+
+    // ───────────────────────── how far a scanned link is trusted (§9.6) ─────────────────────────
+
+    private fun linkTo(vararg endpoints: String) = PairingLink(endpoints.toList(), "455426", key)
+
+    @Test fun onlyALinkWhoseAddressesAreAllACarsLocalOnesIsLocal() {
+        val local = mapOf(
+            "에뮬레이터의 두 주소" to linkTo("10.0.2.15:9247", "10.0.2.16:9247"),
+            "10/8 끝" to linkTo("10.255.255.255:9247"),
+            "172.16/12 처음" to linkTo("172.16.0.1:9247"),
+            "172.16/12 끝" to linkTo("172.31.255.254:9247"),
+            "핫스팟" to linkTo("192.168.43.1:9247"),
+            "링크 로컬" to linkTo("169.254.12.7:9247"),
+            "사설 넷" to linkTo("10.0.0.1:1", "172.20.1.1:2", "192.168.0.12:3", "169.254.0.1:4"),
+        )
+        local.forEach { (why, link) -> assertTrue(why, pairingLinkIsLocal(link)) }
+        // What a real car writes, read back by the phone: always local.
+        assertTrue("차가 쓴 링크", pairingLinkIsLocal(parsePairingLink(good)!!))
+    }
+
+    @Test fun aPublicAddressAHostNameOrLoopbackIsNotLocal() {
+        val notLocal = mapOf(
+            "공인 주소" to linkTo("203.0.113.9:443"),
+            "사설과 공인이 섞임" to linkTo("10.0.2.15:9247", "203.0.113.9:443"),
+            "공인이 먼저" to linkTo("8.8.8.8:9247", "192.168.0.12:9247"),
+            "172.32.x" to linkTo("172.32.0.1:9247"),
+            "172.15.x" to linkTo("172.15.255.255:9247"),
+            "192.169.x" to linkTo("192.169.0.1:9247"),
+            "169.253.x" to linkTo("169.253.0.1:9247"),
+            "11.x" to linkTo("11.0.0.1:9247"),
+            "호스트 이름" to linkTo("car-7.fleet.local:9247"),
+            "사설처럼 보이는 이름" to linkTo("10.0.2.15.nip.io:9247"),
+            "localhost" to linkTo("localhost:9247"),
+            "루프백은 차가 아님" to linkTo("127.0.0.1:9247"),
+            "16진수 루프백" to linkTo("0x7f.0.0.1:9247"),
+            "0.0.0.0" to linkTo("0.0.0.0:9247"),
+            "세 칸" to linkTo("10.0.1:9247"),
+            "범위 밖" to linkTo("10.0.0.256:9247"),
+            "앞의 0" to linkTo("010.0.0.1:9247"),
+            "전각 숫자" to linkTo("１0.0.0.1:9247"),
+            "주소 없음" to PairingLink(emptyList(), "455426", key),
+        )
+        notLocal.forEach { (why, link) -> assertFalse(why, pairingLinkIsLocal(link)) }
+        // Through the parser: a public address and a host name are good links, and still not local.
+        assertFalse(pairingLinkIsLocal(parsePairingLink(link("v=1", "e=203.0.113.9:443", "c=123456", "k=$key"))!!))
+        assertFalse(pairingLinkIsLocal(parsePairingLink(link("v=1", "e=localhost:9247", "c=123456", "k=$key"))!!))
+    }
+
+    @Test fun onlyTheCamerasPictureOfALocalLinkPairsAtOnce() {
+        assertTrue("카메라 + 사설 주소: 바로 연결", scannedLinkPairsAtOnce(fromCamera = true, local = true))
+        assertFalse("카메라 + 다른 주소: 확인 후", scannedLinkPairsAtOnce(fromCamera = true, local = false))
+        assertFalse("사진 + 사설 주소: 확인 후", scannedLinkPairsAtOnce(fromCamera = false, local = true))
+        assertFalse("사진 + 다른 주소: 확인 후", scannedLinkPairsAtOnce(fromCamera = false, local = false))
     }
 
     @Test fun aLinkIsFiveHundredTwelveCharactersAtMost() {

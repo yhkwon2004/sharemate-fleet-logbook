@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -22,6 +23,7 @@ import java.net.Socket
 import java.net.SocketTimeoutException
 import java.security.KeyStore
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicReference
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLServerSocket
@@ -53,6 +55,8 @@ class SyncServer(context: Context, private val repository: TripLogRepository) {
     @Volatile private var pairingExpiresAt = 0L
     @Volatile private var pairFailures = 0
     @Volatile private var lastPhoneSeenAt = 0L
+    /** The publish that waits for the current code to run out ([refreshPairingCode]). */
+    private val expiry = AtomicReference<Job?>(null)
     private var socket: ServerSocket? = null
     private var acceptJob: Job? = null
     private var fingerprint = ""
@@ -84,11 +88,30 @@ class SyncServer(context: Context, private val repository: TripLogRepository) {
         repository.setSync(SyncInfo())
     }
 
-    fun refreshPairingCode() {
+    /**
+     * A new code, live for [SYNC_PAIR_TTL] (the only place a code is made: [start] and the car's 새 연결 번호 / 번호 다시
+     * 만들기). 2.15 fix (docs/design/DESIGN_2_15.md §9.6): [publish] drops an expired code, but it ran only on events (start,
+     * a refresh, /pair, an unpair, a paired phone's call), and on a first pairing nothing calls, so the state kept the dead
+     * code: the car drew its QR and 홈 its digits under "0:00 남음". So the server publishes once more when the code runs
+     * out, on its own scope ([stop] cancels it with the rest); a newer code cancels the older one's wait. The wait is on the
+     * wall clock that [publish] compares with, so a clock set back meanwhile only makes it wait longer, never publish early.
+     * Synchronized: the car's button (main thread) and [start] (the server's scope) may both make a code, and the wait that
+     * survives must be the last code's.
+     */
+    @Synchronized fun refreshPairingCode() {
+        val until = System.currentTimeMillis() + SYNC_PAIR_TTL
         pairingCode = newPairingCode()
-        pairingExpiresAt = System.currentTimeMillis() + SYNC_PAIR_TTL
+        pairingExpiresAt = until
         pairFailures = 0
         publish()
+        expiry.getAndSet(scope.launch {
+            while (true) {
+                val left = until - System.currentTimeMillis()
+                if (left < 0) break
+                delay(left + EXPIRY_MARGIN_MILLIS)
+            }
+            publish()
+        })?.cancel()
     }
 
     fun forgetPhones() {
@@ -246,6 +269,8 @@ class SyncServer(context: Context, private val repository: TripLogRepository) {
 
     companion object {
         private const val KEY_ALIAS = "sharemate-sync-tls-v2"
+        /** How long after a code's end the expiry publish runs, so the clock [publish] reads is surely past it. */
+        private const val EXPIRY_MARGIN_MILLIS = 250L
         /** The server owned by the running service, so the car screen can issue a new pairing code. */
         @Volatile var active: SyncServer? = null
             private set
