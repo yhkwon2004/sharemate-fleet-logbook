@@ -705,9 +705,10 @@ internal val NOW_TILE_PADDING = 20.dp
  * turns it back on, so nothing is ever cut. 2.15 (DESIGN_2_15 §3): it also ends where the page ends. The four tiles above
  * are 826 dp at their tallest (사용자 with a two-line question, 323, then 84 + 199 + 172 and three 16-dp gaps), and
  * [NowColumnLayout] gives 차량 what the 1,097-dp page leaves after its 16-dp gap and the 8-dp foot ([nowVehicleHeight]): 247
- * dp in that state, up to 280 where 사용자 is shorter, never under its least (210 dp at 1×, the drawing at 64). Where even
- * that does not fit, the tile keeps its least and the column scrolls as before. The page reaches the layout as the scroll's
- * minimum height, so [modifier] must fill the slot's height (the shell's does).
+ * dp in that state, 399 once the question is answered and 358 on a first run (§9.4: up to 400, so the column ends on the
+ * page's foot in every state, the room beyond the drawing holding a second row of figures), never under its least (210 dp at
+ * 1×, the drawing at 64). Where even that does not fit, the tile keeps its least and the column scrolls as before. The page
+ * reaches the layout as the scroll's minimum height, so [modifier] must fill the slot's height (the shell's does).
  */
 @Composable internal fun NowColumn(state: TripLogState, now: Long, driverCard: @Composable (Modifier) -> Unit, openVehicle: () -> Unit, openToday: () -> Unit,
     openMonth: () -> Unit, modifier: Modifier = Modifier) {

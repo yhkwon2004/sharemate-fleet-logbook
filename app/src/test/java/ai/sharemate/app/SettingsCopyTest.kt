@@ -104,4 +104,33 @@ class SettingsCopyTest {
         }
         assertTrue("한 번에 듣는 행은 보이는 줄을 다 말함", spoken.contains(line))
     }
+
+    /**
+     * 2.15 §9.5: the tiles before the first employee (a title over one line, three across a 1112-dp page, so a line has a
+     * destination card's room), the rows without trips, the card's tag before the first trip, and 비용 참고's limit bar, whose
+     * label shares a half card with its amount.
+     */
+    @Test fun theFillsOfNineFiveKeepTheRules() {
+        assertTrue(syllables(SettingsCopy.DRIVERS_INTRO) <= 8)
+        assertEquals(3, SettingsCopy.DRIVERS_INTRO_TILES.size)
+        assertEquals(SettingsCopy.DRIVERS_INTRO_TILES.size, SettingsCopy.SPOKEN_DRIVERS_INTRO_TILES.size)
+        SettingsCopy.DRIVERS_INTRO_TILES.zip(SettingsCopy.SPOKEN_DRIVERS_INTRO_TILES).forEach { (tile, long) ->
+            val (title, line) = tile
+            assertTrue("$title: 8음절 이하", syllables(title) <= 8)
+            assertOneLine(line, HOME_TILE_LINE_UNITS)
+            assertOneLine(long, Double.MAX_VALUE)
+            assertTrue("$line → $long", long.length > line.length)
+            // The spoken form names the tile as its title does, without the circled number.
+            assertTrue("$title → $long", long.contains(title.removePrefix("④ ")))
+            assertFalse(long.contains('④'))
+        }
+        assertEquals("④ 사용자 칸", SettingsCopy.DRIVERS_INTRO_TILES.first().first)
+        listOf(SettingsCopy.USAGE_NONE, SettingsCopy.USAGE_NO_TRIP_YET).forEach { assertTrue("$it: 8음절 이하", syllables(it) <= 8) }
+        assertEquals("Finance · Lee Minho, 10월 운행 없음", SettingsCopy.usageNoneSpoken("Finance · Lee Minho", "10월"))
+        assertEquals("Finance · Lee Minho, 운행 없음", SettingsCopy.usageNoneSpoken("Finance · Lee Minho", null))
+        // The bar's label beside its amount (about 150 dp) in a 500-dp half card, bodyMedium: about 21 units.
+        listOf(SettingsCopy.TAX_LIMIT, ReportCopy.TAX_WITHOUT_LOG, ReportCopy.TAX_WITH_LOG).forEach { assertOneLine(it, 20.0) }
+        assertEquals("기록부 없을 때 인정 한도 15,000,000원", SettingsCopy.taxBarSpoken(SettingsCopy.TAX_LIMIT, NO_LOGBOOK_CAP_WON))
+        assertFalse(SettingsCopy.SPOKEN_FACT_NONE.endsWith("."))
+    }
 }

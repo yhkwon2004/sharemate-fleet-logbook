@@ -67,6 +67,31 @@ internal object SettingsCopy {
     /** One stop per row: the person, the line, the distance and what the bar shows, its share of the month's distance. */
     fun usageShareSpoken(name: String, line: String, total: String, month: String, percent: Int) =
         "$name, $line, 총 $total, $month 거리의 ${percent}퍼센트"
+    /**
+     * 2.15 §9.5: every registered employee has a row in 직원별 운행. One without trips in the month says so in its line, over an
+     * empty track, muted.
+     */
+    const val USAGE_NONE = "운행 없음"
+    /** The card's tag before the first finished trip, where the month's name would stand. */
+    const val USAGE_NO_TRIP_YET = "아직 운행 없음"
+    /** What TalkBack hears for a row without trips: the person, then the month (when there is one) without trips. */
+    fun usageNoneSpoken(name: String, month: String?) = "$name, ${listOfNotNull(month, USAGE_NONE).joinToString(" ")}"
+    /** A fact of the month the card cannot give yet (the ratio before any distance), for TalkBack in place of "–". */
+    const val SPOKEN_FACT_NONE = "없음"
+    /**
+     * 직원 before the first employee (2.15 §9.5): the small heading on the scene under the manager, over three tiles in the empty
+     * hero's look that say what registering does. They explain and lead nowhere.
+     */
+    const val DRIVERS_INTRO = "직원을 등록하면"
+    /** The three tiles, each a title over one line: ④ is the logbook form's own column number. */
+    val DRIVERS_INTRO_TILES = listOf("④ 사용자 칸" to "운행기록부에 이름이 들어가요", "출발 전 확인" to "하루 한 번 운전자를 물어요",
+        "유류비 정산" to "직원별로 계산해요")
+    /** What TalkBack hears for each tile, one stop each: the long form, the column number in words. */
+    val SPOKEN_DRIVERS_INTRO_TILES = listOf(
+        "운행기록부 4번 사용자 칸, 직원의 부서와 성명이 운행기록부에 들어가요",
+        "출발 전 확인, 직원이 2명 이상이면 하루 한 번 지금 운전하는 직원이 맞는지 물어요",
+        "유류비 정산, km당 단가를 입력하면 직원별 업무 거리로 정산액을 계산해요",
+    )
 
     // ───────────────────────── 정산·세무 ─────────────────────────
 
@@ -83,6 +108,13 @@ internal object SettingsCopy {
      * nothing says here. 비용 참고 beside it applies the same year's ratio ([taxBasis]: 올해 업무사용비율 기준).
      */
     fun ratioYearTag(year: Int) = "${year}년"
+    /**
+     * 비용 참고 in 정산·세무 (2.15 §9.5, [taxBars]): before the comparison can be made (no yearly cost, or no trip this year), one
+     * bar stands for the most a car without a logbook is granted a year, with [ReportCopy.TAX_CAP_NOTE] as its line.
+     */
+    const val TAX_LIMIT = "기록부 없을 때 인정 한도"
+    /** One bar as TalkBack hears it in the comparison's one stop: the label and the amount ("기록부 없을 때 15,000,000원"). */
+    fun taxBarSpoken(label: String, won: Long) = "$label ${formatWon(won)}"
 
     // ───────────────────────── 기록 ─────────────────────────
 

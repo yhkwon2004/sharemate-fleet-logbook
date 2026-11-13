@@ -134,6 +134,35 @@ internal object VehicleCopy {
     /** The car drawing's description: a staged picture, never the car's real model (the 차량 page's card says the same). */
     const val DRAWING = "연출용 차량 이미지 · 실제 차종과 다를 수 있음"
 
+    // The tile's second row (2.15 §9.4, nowVehicleCare / nowVehicleCharge / nowVehiclePhone): 관리 · 충전 · 휴대폰, where the
+    // tile has room beyond its picture. Each value fits a mini stat, a third of the tile; TalkBack hears the long forms.
+    const val NOW_CARE = "관리"
+    const val NOW_CHARGE = "충전"
+    const val NOW_PHONE = "휴대폰"
+    const val NOW_CHARGING = "충전 중"
+    /** The phone link switched off, drawn quietly. */
+    const val NOW_PHONE_OFF = "꺼짐"
+    /** The link on and listening, before a phone pairs or while the server starts. */
+    const val NOW_PHONE_WAITING = "대기"
+    /** The server stopped on an error: the 휴대폰 연결 card's own tag ([phoneLinkTag]). */
+    const val NOW_PHONE_ERROR = "서버 오류"
+    /** Phones paired with the running server, as the 휴대폰 연결 card's 연결 figure counts them. */
+    fun nowPhoneLinked(count: Int) = "연결 ${count}대"
+    /** The next dated deadline as a D-day: "D-7", 오늘, "3일 지남" (the 차량 관리 rows' own words for today and past). */
+    fun nowCareDays(days: Long) = when {
+        days > 0 -> "D-$days"
+        days == 0L -> "오늘"
+        else -> "${-days}일 지남"
+    }
+    /** What TalkBack hears for [nowCareDays], with the deadline's kind: "정기검사까지 7일", "보험 만기 오늘", "리스·렌트 만기 3일 지남". */
+    fun spokenNowCare(kind: String, days: Long) = when {
+        days > 0 -> "${kind}까지 ${days}일"
+        days == 0L -> "$kind 오늘"
+        else -> "$kind ${-days}일 지남"
+    }
+    const val SPOKEN_NOW_NO_CARE = "등록된 기한 없음"
+    const val SPOKEN_NOT_CHARGING = "충전 중 아님"
+
     // 차량 관리 (deadlines) and 정비 기록
     const val CARE_TITLE = "차량 관리"
     const val CARE_EMPTY = "등록된 기한이 없어요"
