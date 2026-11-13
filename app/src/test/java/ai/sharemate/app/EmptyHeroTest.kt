@@ -52,7 +52,11 @@ class EmptyHeroTest {
         assertEquals(listOf(1, 2, 3), hero.tiles.map { it.step })
         assertEquals(listOf(HeroGlyph.DRIVE, HeroGlyph.PARK, HeroGlyph.PURPOSE), hero.tiles.map { it.glyph })
         assertTrue("단계는 버튼이 아님", hero.tiles.all { it.action == null && it.clickLabel == null })
-        assertEquals("1단계, D로 출발, 기록이 시작돼요", hero.tiles.first().spoken)
+        // The same steps as 홈's idle card without a trip, in its words and heard as it is heard (2.15 §4).
+        assertEquals("1단계, D로 출발, 기어를 P에서 D로 바꾸면 운행 기록이 자동으로 시작돼요", hero.tiles.first().spoken)
+        assertEquals(HomeCopy.IDLE_STEPS.mapIndexed { index, step -> HomeCopy.spokenIdleStep(index + 1, step) }, hero.tiles.map { it.spoken })
+        assertEquals(HomeCopy.IDLE_EMPTY, hero.title)
+        assertEquals(HomeCopy.IDLE_DEMO, hero.actions.first().label)
         assertEquals(listOf(HeroButton("시연 체험 보기", HeroAction.TUTORIAL, primary = true), HeroButton("시연 모드 켜러 가기", HeroAction.DEMO_SETTING)), hero.actions)
         // A recording first trip is not a trip of the list yet.
         val recording = TripLogData(open = Trip(id("open"), at(2026, 11, 13, 9), null, 100.0, 103.0))

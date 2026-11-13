@@ -2149,7 +2149,7 @@ internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = Se
  * screen ([reportCloseStatus], [ReportCloseCard]) across the page, the four views as 56-dp tabs across the page (2.12, as
  * the mock's sub-tabs), the range as a tag ([reportRangeLabel]) and the view. The label, the card, the views, the preview, every Excel 저장 and its
  * file name, and 정리하러 가기 all read the one range [reportRange] gives. The pane opens on [initialMonth] when a button
- * hands it one, else where the home card, the banner and the tab badge point ([reportLandingMonth]); after that only the
+ * hands it one, else where the home card, the banner and the tab badge point ([carReportLandingMonth], 2.15); after that only the
  * driver moves it. The Excel view fills the page like the month-close card: the preview in a card of its own, folded at
  * [excelPreviewHeight] (560 at least), with its lighter sheet tabs, its table paging to the rows that fit and its caveat as an
  * ⓘ row under it, which lengthens the card when opened instead of squeezing the table; and the save bar (72 dp) pinned to

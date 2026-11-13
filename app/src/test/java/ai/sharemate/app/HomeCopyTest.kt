@@ -86,8 +86,12 @@ class HomeCopyTest {
             assertTrue("${step.spokenLine} ⊄ ${step.line}", step.spokenLine.length > step.line.length)
             assertTrue("읽는 말도 마침표 없음: ${step.spokenLine}", !step.spokenLine.endsWith('.'))
         }
-        assertEquals("1단계 D로 출발, 기어를 P에서 D로 바꾸면 운행 기록이 자동으로 시작돼요", HomeCopy.spokenIdleStep(1, HomeCopy.IDLE_STEPS[0]))
-        assertEquals("3단계 목적 확인, ${HomeCopy.SPOKEN_IDLE_STEP_PURPOSE_LINE}", HomeCopy.spokenIdleStep(3, HomeCopy.IDLE_STEPS[2]))
+        assertEquals("1단계, D로 출발, 기어를 P에서 D로 바꾸면 운행 기록이 자동으로 시작돼요", HomeCopy.spokenIdleStep(1, HomeCopy.IDLE_STEPS[0]))
+        assertEquals("3단계, 목적 확인, ${HomeCopy.SPOKEN_IDLE_STEP_PURPOSE_LINE}", HomeCopy.spokenIdleStep(3, HomeCopy.IDLE_STEPS[2]))
+        // 운행기록's first-run hero shows the same steps and the same way on (§2.2 FIRST is §4's no-trip card).
+        assertEquals(HomeCopy.IDLE_STEPS.map { it.title to it.line }, LogCopy.HERO_FIRST_STEPS)
+        assertEquals(HomeCopy.IDLE_DEMO, LogCopy.HERO_TUTORIAL)
+        assertEquals(HomeCopy.IDLE_EMPTY, LogCopy.HERO_FIRST)
     }
 
     @Test fun cardLinesFitBesideTheirButtons() {

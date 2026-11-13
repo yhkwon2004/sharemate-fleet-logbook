@@ -175,7 +175,7 @@ private fun VehicleHero(state: TripLogState, fresh: Boolean, drawingHeight: Dp, 
                 Text(copy.gear, style = MaterialTheme.typography.titleLarge, color = if (fresh) Scene.glow else Scene.textMuted)
             }
         }
-        if (drawingHeight > 0.dp) Image(painterResource(R.drawable.sharemate_silver_car), "연출용 차량 이미지 · 실제 차종과 다를 수 있음",
+        if (drawingHeight > 0.dp) Image(painterResource(R.drawable.sharemate_silver_car), VehicleCopy.DRAWING,
             Modifier.fillMaxWidth().height(drawingHeight), contentScale = ContentScale.Fit)
         CarInfoRow(copy.footer)
     }

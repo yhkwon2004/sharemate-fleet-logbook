@@ -181,7 +181,9 @@ internal fun logEmptyHero(filter: Int, month: YearMonth, data: TripLogData, empl
                 actions = listOf(clear.copy(primary = true), previous))
         }
         trips.isEmpty() -> {
+            // 홈's no-trip steps, heard as 홈 says them ([HomeCopy.spokenIdleStep]).
             val tiles = steps(LogCopy.HERO_FIRST_STEPS, listOf(HeroGlyph.DRIVE, HeroGlyph.PARK, HeroGlyph.PURPOSE))
+                .mapIndexed { index, tile -> tile.copy(spoken = HomeCopy.spokenIdleStep(index + 1, HomeCopy.IDLE_STEPS[index])) }
             val ways = if (data.profile.demoMode) listOf(HeroButton(LogCopy.HERO_DEMO_DRIVE, HeroAction.DEMO_DRIVE, primary = true))
                 else listOf(HeroButton(LogCopy.HERO_TUTORIAL, HeroAction.TUTORIAL, primary = true), HeroButton(LogCopy.HERO_DEMO_SETTING, HeroAction.DEMO_SETTING))
             EmptyHero(EmptyHeroCase.FIRST, LogCopy.HERO_FIRST, LogCopy.HERO_FIRST, LogCopy.HERO_START, tiles, ways + listOfNotNull(clear.takeIf { narrowed }))

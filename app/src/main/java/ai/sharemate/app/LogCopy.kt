@@ -48,14 +48,16 @@ internal object LogCopy {
 
     // An empty list (2.15, CarEmptyHero, docs/design/DESIGN_2_15.md §2.2): the title on the scene, at most one line under it,
     // the tiles and the ways on ([logEmptyHero]). A title that leaves out the month or the employee keeps them for TalkBack.
-    const val HERO_FIRST = "아직 운행이 없어요"
+    // FIRST says what 홈's idle card says without a trip (§4), in the same words: its title, its steps and its way on are
+    // HomeCopy's.
+    const val HERO_FIRST = HomeCopy.IDLE_EMPTY
     /** The line under FIRST and under this month's MONTH title. */
     const val HERO_START = "출발하면 자동으로 기록해요"
     const val EMPTY_ISSUES = "점검할 운행이 없어요"
     const val EMPTY_ISSUES_LINE = "계기판 누적거리가 끊김 없이 이어져요"
     const val EMPTY_MATCHED = "자동으로 들어간 카드 결제가 없어요"
-    /** FIRST's three steps, each a title over its line. */
-    val HERO_FIRST_STEPS = listOf("D로 출발" to "기록이 시작돼요", "P로 주차" to "거리와 시간이 저장돼요", "목적 확인" to "홈에서 한 번 눌러요")
+    /** FIRST's three steps, each a title over its line: 홈's no-trip steps ([HomeCopy.IDLE_STEPS]). */
+    val HERO_FIRST_STEPS = HomeCopy.IDLE_STEPS.map { it.title to it.line }
     /** MATCHED's three steps: how a card payment reaches a trip by itself. */
     val HERO_CARD_STEPS = listOf("카드 등록" to "끝 4자리만 적어요", "결제 알림" to "휴대폰 앱이 읽어요", "자동 반영" to "운행 비용에 들어가요")
     // ISSUES's three facts of the month: the figure is the tile's title, these its line.
@@ -69,8 +71,8 @@ internal object LogCopy {
     const val PREVIOUS_MONTH = "이전 달 보기"
     const val CLEAR_FILTER = "필터 해제"
     const val SHOW_ALL = "전체 보기"
-    /** FIRST's way on: the header's 시연 체험 walkthrough. */
-    const val HERO_TUTORIAL = "시연 체험 보기"
+    /** FIRST's way on: the header's 시연 체험 walkthrough, in 홈's idle card's words. */
+    const val HERO_TUTORIAL = HomeCopy.IDLE_DEMO
     /** FIRST's way to the demo switch, which the hero never flips itself: on a real car it stops real recording. */
     const val HERO_DEMO_SETTING = "시연 모드 켜러 가기"
     /** FIRST in demo mode: the demo drive starts on 홈's strip. */
@@ -96,7 +98,10 @@ internal object LogCopy {
     /** A month tile's line: "9건 · 54.0 km · 업무 80%". */
     fun monthTileLine(totals: LogbookTotals): String = "${totals.trips}건 · ${kmText(totals.totalKm)} · 업무 ${ratioText(totals.ratio)}"
 
-    /** A step tile as TalkBack hears it, the way 월 마감's steps say theirs: "1단계, D로 출발, 기록이 시작돼요". */
+    /**
+     * A step tile as TalkBack hears it, the way 월 마감's steps say theirs: "1단계, 결제 알림, 휴대폰 앱이 읽어요". FIRST's steps
+     * pass their longer spoken lines, as 홈's do ([HomeCopy.spokenIdleStep]).
+     */
     fun heroStepSpoken(step: Int, title: String, line: String): String = "${step}단계, $title, $line"
 
     // 자동 반영 (MatchedTripList)

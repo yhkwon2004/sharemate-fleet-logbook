@@ -660,7 +660,7 @@ private val SETUP_TILES_STACK_UNDER = 560.dp
             PairingLine(VehicleCopy.PHONE_KEY, key, VehicleCopy.SPOKEN_PHONE_KEY)
         } } else null,
         start = { CarLine(VehicleCopy.PHONE_NOTE) },
-        actions = if (info.running) { { QuietAction(if (code == null) "새 연결 번호" else "번호 다시 만들기") { SyncServer.active?.refreshPairingCode() } } } else null)
+        actions = if (info.running) { { QuietAction(if (code == null) VehicleCopy.PHONE_NEW_CODE else VehicleCopy.PHONE_RENEW_CODE) { SyncServer.active?.refreshPairingCode() } } } else null)
 }
 
 /** One thing the phone types, its name beside it; the value wraps and is never cut. One stop for TalkBack. */

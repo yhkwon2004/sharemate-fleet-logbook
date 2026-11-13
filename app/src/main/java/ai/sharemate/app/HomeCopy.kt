@@ -66,7 +66,10 @@ internal object HomeCopy {
     const val SPOKEN_IDLE_TAG = "지금 확인할 일이 없어요"
     const val IDLE_ACTION = "운행기록 보기"
     const val IDLE_EMPTY = "아직 운행이 없어요"
-    /** Without any trip (2.15 §4): the three steps of 운행기록's first-run hero (§2.2's FIRST case), as tiles, then the walkthrough. */
+    /**
+     * Without any trip (2.15 §4): the three steps of 운행기록's first-run hero (§2.2's FIRST case), as tiles, then the walkthrough.
+     * The hero reads its title, steps and way on from here ([LogCopy.HERO_FIRST], [LogCopy.HERO_FIRST_STEPS], [LogCopy.HERO_TUTORIAL]).
+     */
     const val IDLE_STEP_DRIVE = "D로 출발"
     const val IDLE_STEP_DRIVE_LINE = "기록이 시작돼요"
     const val SPOKEN_IDLE_STEP_DRIVE_LINE = "기어를 P에서 D로 바꾸면 운행 기록이 자동으로 시작돼요"
@@ -80,8 +83,11 @@ internal object HomeCopy {
     val IDLE_STEPS = listOf(IdleStep(IDLE_STEP_DRIVE, IDLE_STEP_DRIVE_LINE, SPOKEN_IDLE_STEP_DRIVE_LINE),
         IdleStep(IDLE_STEP_PARK, IDLE_STEP_PARK_LINE, SPOKEN_IDLE_STEP_PARK_LINE), IdleStep(IDLE_STEP_PURPOSE, IDLE_STEP_PURPOSE_LINE, SPOKEN_IDLE_STEP_PURPOSE_LINE))
 
-    /** What TalkBack hears for a step tile, its one stop: "1단계 D로 출발, 기어를 P에서 D로 바꾸면 …". */
-    fun spokenIdleStep(number: Int, step: IdleStep) = "${number}단계 ${step.title}, ${step.spokenLine}"
+    /**
+     * What TalkBack hears for a step tile, its one stop: "1단계, D로 출발, 기어를 P에서 D로 바꾸면 …", in the hero's form
+     * ([LogCopy.heroStepSpoken]), so the same step sounds the same on 홈 and in 운행기록.
+     */
+    fun spokenIdleStep(number: Int, step: IdleStep) = LogCopy.heroStepSpoken(number, step.title, step.spokenLine)
 
     // ───── the pager
     const val PAGER_PREVIOUS = "이전 할 일"
