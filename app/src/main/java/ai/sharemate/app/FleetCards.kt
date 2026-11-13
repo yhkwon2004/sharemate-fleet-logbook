@@ -593,11 +593,11 @@ private const val PAIRING_FOLD_MS = 200
             }
             Spacer(Modifier.width(PAIRING_STEPS_GAP))
             // The hairline is drawn at the steps' own start edge, as tall as they are: no intrinsic measurement of the row.
-            PairingSteps(info, code, reasonBeside = true, modifier = Modifier.weight(1f).drawBehind {
+            PairingSteps(info, code, Modifier.weight(1f).drawBehind {
                 val stroke = 1.dp.toPx()
                 val x = if (layoutDirection == LayoutDirection.Rtl) size.width - stroke / 2 else stroke / 2
                 drawLine(rule, Offset(x, 0f), Offset(x, size.height), stroke)
-            }.padding(start = PAIRING_STEPS_GAP))
+            }.padding(start = PAIRING_STEPS_GAP), reasonBeside = true)
         }
         return
     }
@@ -668,7 +668,7 @@ private const val PAIRING_FOLD_MS = 200
  * digits' place with a muted [VehicleCopy.PHONE_CODE_NONE] (TalkBack hears the reason): the card does not change height
  * every time a code runs out.
  */
-@Composable private fun PairingSteps(info: SyncInfo, code: String?, reasonBeside: Boolean = false, modifier: Modifier = Modifier) {
+@Composable private fun PairingSteps(info: SyncInfo, code: String?, modifier: Modifier = Modifier, reasonBeside: Boolean = false) {
     val key = info.fingerprint.chunked(8).joinToString(" ")
     val addresses = if (info.addresses.isEmpty()) VehicleCopy.PHONE_ADDRESS_PENDING else info.addresses.joinToString("  ·  ") { "$it:${info.port}" }
     val reason = if (info.pairedPhones > 0) VehicleCopy.PHONE_ANOTHER else VehicleCopy.PHONE_EXPIRED
