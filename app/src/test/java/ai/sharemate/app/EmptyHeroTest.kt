@@ -96,10 +96,15 @@ class EmptyHeroTest {
         assertEquals(EmptyHeroCase.MONTH, hero.case)
         assertEquals("11월 운행이 아직 없어요", hero.title); assertEquals(hero.title, hero.spoken)
         assertEquals("출발하면 자동으로 기록해요", hero.line)
-        assertEquals(listOf("10월", "9월", "8월"), hero.tiles.map { it.title })
-        assertEquals(listOf(october, YearMonth.of(2026, 9), YearMonth.of(2026, 8)), hero.tiles.map { it.month })
-        assertTrue(hero.tiles.all { it.action == HeroAction.OPEN_MONTH && it.glyph == HeroGlyph.MONTH && it.clickLabel == "이 달 운행 보기" && it.step == null })
-        val (oct, sep, aug) = hero.tiles
+        // This month shows how a trip is recorded as its three steps across, with their pictures, and the months under them.
+        assertEquals(listOf("D로 출발", "P로 주차", "목적 확인"), hero.tiles.map { it.title })
+        assertEquals(listOf(HeroOrnament.GEAR_DRIVE, HeroOrnament.GEAR_PARK, HeroOrnament.PURPOSES), hero.tiles.map { it.ornament })
+        assertEquals(listOf(1, 2, 3), hero.tiles.map { it.step })
+        assertFalse("단계는 가로로", hero.rows)
+        assertEquals(listOf("10월", "9월", "8월"), hero.below.map { it.title })
+        assertEquals(listOf(october, YearMonth.of(2026, 9), YearMonth.of(2026, 8)), hero.below.map { it.month })
+        assertTrue(hero.below.all { it.action == HeroAction.OPEN_MONTH && it.glyph == HeroGlyph.MONTH && it.clickLabel == "이 달 운행 보기" && it.step == null })
+        val (oct, sep, aug) = hero.below
         assertEquals("5건 · 50.0 km · 업무 80%", oct.line)
         assertEquals("10월, 5건, 50.0 km, 업무 80%", oct.spoken)
         assertNull(oct.tag)
@@ -108,8 +113,7 @@ class EmptyHeroTest {
         assertEquals("1건 · 10.0 km · 업무 100%", aug.line)
         assertEquals(listOf(HeroButton("이전 달 보기", HeroAction.PREVIOUS_MONTH)), hero.actions)
         // 2.15 §9.1: months never stretch across: they stand as the stacked rows, with no picture.
-        assertTrue("달은 줄로", hero.rows)
-        assertTrue(hero.tiles.all { it.ornament == null && it.driverId == null })
+        assertTrue(hero.below.all { it.ornament == null && it.driverId == null })
     }
 
     @Test fun aPastMonthWithoutTripsSaysSoWithoutALine() {
@@ -118,6 +122,8 @@ class EmptyHeroTest {
         assertEquals("7월 운행 기록이 없어요", july.title)
         assertNull("지난 달에는 줄이 없음", july.line)
         assertEquals("가까운 달부터", listOf("8월", "9월", "10월"), july.tiles.map { it.title })
+        assertTrue("지난 달은 달 줄만", july.rows); assertTrue(july.below.isEmpty())
+        assertTrue(july.tiles.all { it.ornament == null })
         val lastYear = TripLogData(drivers = listOf(kim), trips = listOf(trip("y", 11, 20, year = 2025)))
         val december = logEmptyHero(0, YearMonth.of(2025, 12), lastYear, null, today, zone)
         assertEquals("2025년 12월 운행 기록이 없어요", december.title)
@@ -131,7 +137,8 @@ class EmptyHeroTest {
         assertEquals("11월 영업 · 권 님의 운행이 아직 없어요", kwons.spoken)
         // 2.15 §9.1: no hero without tiles. 권 has no trip anywhere, so the tiles are who drove in the nearest month with trips;
         // a tap filters by that person and opens that month.
-        val kimTile = kwons.tiles.single()
+        assertEquals(listOf("D로 출발", "P로 주차", "목적 확인"), kwons.tiles.map { it.title })
+        val kimTile = kwons.below.single()
         assertEquals("Kim Jiwoo", kimTile.title)
         assertEquals("10월 · 5건 · 50.0 km", kimTile.line)
         assertEquals("Sales · Kim Jiwoo, 10월, 5건, 50.0 km", kimTile.spoken)
@@ -139,12 +146,12 @@ class EmptyHeroTest {
         assertEquals(HeroAction.PICK_EMPLOYEE, kimTile.action)
         assertEquals(kim.id, kimTile.driverId); assertEquals(october, kimTile.month)
         assertEquals("이 직원 운행 보기", kimTile.clickLabel)
-        assertFalse("사람은 타일로", kwons.rows)
+        assertFalse("단계는 가로로, 사람은 그 아래 줄로", kwons.rows)
         assertEquals(listOf(HeroAction.PREVIOUS_MONTH, HeroAction.CLEAR_FILTER), kwons.actions.map { it.action })
         assertFalse(kwons.actions.any { it.primary })
         val kims = logEmptyHero(0, november, log(), kim.id, today, zone)
-        assertEquals("목록에 나올 운행의 달", listOf("10월", "9월", "8월"), kims.tiles.map { it.title })
-        assertTrue(kims.rows)
+        assertEquals("목록에 나올 운행의 달", listOf("10월", "9월", "8월"), kims.below.map { it.title })
+        assertEquals(listOf(1, 2, 3), kims.tiles.map { it.step })
         assertEquals("11월 Sales · Kim Jiwoo 님의 운행이 아직 없어요", kims.spoken)
         val issues = logEmptyHero(1, november, log(), null, today, zone)
         assertEquals("운행 없는 달의 점검 필요", EmptyHeroCase.MONTH, issues.case)
@@ -176,7 +183,7 @@ class EmptyHeroTest {
         val person = newcomer.tiles.single()
         assertEquals("권", person.title); assertEquals("5건 · 50.0 km", person.line); assertEquals("영업 · 권, 5건, 50.0 km", person.spoken)
         assertEquals(HeroAction.PICK_EMPLOYEE, person.action); assertEquals(kwon.id, person.driverId); assertNull("화면의 달 그대로", person.month)
-        assertFalse(newcomer.rows)
+        assertTrue("사람도 줄로: 하나가 페이지 폭으로 늘어나지 않음", newcomer.rows)
         assertEquals("지워진 직원도 같음", listOf(kwon.id), gone.tiles.map { it.driverId })
     }
 
@@ -200,11 +207,15 @@ class EmptyHeroTest {
         assertEquals(listOf("3건", "30.0 km"), shown.tiles.take(2).map { it.title })
         assertTrue("사실 타일은 버튼이 아님", shown.tiles.all { it.action == null })
         assertFalse(shown.rows)
-        // The same employee on a month without trips: the nearest month's facts.
-        val empty = logEmptyHero(0, november, data, kim.id, today, zone)
+        // The same employee on a past month without trips: the nearest month's facts.
+        val empty = logEmptyHero(0, YearMonth.of(2026, 9), data, kim.id, today, zone)
         assertEquals(EmptyHeroCase.MONTH, empty.case)
         assertEquals(monthFacts(unassigned).map { it.figure }, empty.tiles.map { it.title })
         assertTrue(empty.tiles.all { it.action == null })
+        assertFalse(empty.rows)
+        // On this month the steps stand anyway, with nobody to list under them.
+        val now = logEmptyHero(0, november, data, kim.id, today, zone)
+        assertEquals(listOf(1, 2, 3), now.tiles.map { it.step }); assertTrue(now.below.isEmpty())
     }
 
     @Test fun nothingToCheckShowsTheMonthsThreeFactsAndLeadsToItsClose() {
@@ -256,7 +267,9 @@ class EmptyHeroTest {
                     assertTrue(hero.actions.drop(1).none { it.primary })
                     assertTrue("타일은 세 개까지", hero.tiles.size <= 3)
                     assertTrue("타일 없는 히어로는 없음 (§9.1): $filter $employee $month", hero.tiles.isNotEmpty())
-                    assertTrue("그림은 첫 운행 단계에만", hero.case == EmptyHeroCase.FIRST || hero.tiles.all { it.ornament == null })
+                    assertTrue("그림은 첫 운행 단계에만", hero.tiles.all { (it.ornament != null) == (it.step != null && it.title in LogCopy.HERO_FIRST_STEPS.map { step -> step.first }) })
+                    assertTrue("아래 줄은 세 개까지, 여는 것만", hero.below.size <= 3 && hero.below.all { it.action != null && it.ornament == null })
+                    assertTrue("줄로 서는 타일 아래에는 줄을 또 두지 않음", !hero.rows || hero.below.isEmpty())
                     assertTrue("TalkBack은 제목보다 짧게 듣지 않음", hero.spoken.orEmpty().length >= hero.title.orEmpty().length)
                     assertTrue("운행기록의 히어로는 제목이 있음", hero.title != null)
                 }
@@ -335,6 +348,23 @@ class EmptyHeroTest {
         }
         // Three month rows (never stretched) and their chrome fit as well: 182 + 3 × 104 + 2 × 16 = 526.
         assertTrue(heroChrome(40.dp, 30.dp, true, true) + HERO_TILE_COMPACT * 3 + 32.dp <= tagged)
+        // This month: the three steps across with one to three rows under them. The rows come out of the room first.
+        assertEquals(0f, heroRowsHeight(0).value, .01f)
+        assertEquals(104f, heroRowsHeight(1).value, .01f)
+        assertEquals(344f, heroRowsHeight(3).value, .01f)
+        val chrome = heroChrome(40.dp, 30.dp, true, true)
+        (1..3).forEach { rows ->
+            listOf(region, tagged).forEach { room ->
+                val below = HERO_BLOCK_GAP + heroRowsHeight(rows)
+                val tiles = heroTileHeight(room, chrome + below)
+                // A step with its picture needs about 246 dp, so a tile at its least still grows to that.
+                val drawn = maxOf(tiles, 246.dp)
+                assertTrue("줄 ${rows}개, 방 ${room}: ${chrome} + ${drawn} + ${below}", chrome + drawn + below <= room)
+            }
+        }
+        assertEquals("줄 하나면 타일은 가장 높게", HERO_TILE_MAX, heroTileHeight(region, chrome + HERO_BLOCK_GAP + heroRowsHeight(1)))
+        // 1015 − (182 + 24 + 344) − 200 = 265.
+        assertEquals("줄 셋이면 남는 만큼", 265f, heroTileHeight(region, chrome + HERO_BLOCK_GAP + heroRowsHeight(3)).value, .01f)
     }
 
     /** 2.15 §9.2 (C3): the hero takes both panes only while no trip is shown; under a pinned trip it keeps the list column. */
@@ -385,13 +415,20 @@ class EmptyHeroTest {
         val hero = reportEmptyHero(log(), ReportPeriod(november, yearly = false), today, zone)!!
         assertEquals(EmptyHeroCase.MONTH, hero.case)
         assertNull(hero.title)
-        assertTrue("달은 줄로", hero.rows)
-        assertEquals(listOf("10월", "9월", "8월"), hero.tiles.map { it.title })
-        assertEquals(listOf(october, YearMonth.of(2026, 9), YearMonth.of(2026, 8)), hero.tiles.map { it.month })
-        assertEquals("5건 · 50.0 km · 업무 80%", hero.tiles.first().line)
-        assertEquals(listOf(null, "마감됨", null), hero.tiles.map { it.tag })
-        assertTrue(hero.tiles.all { it.action == HeroAction.OPEN_MONTH && it.clickLabel == "이 달 보기" })
-        assertEquals(listOf(HeroButton("이전 달 보기", HeroAction.PREVIOUS_MONTH)), hero.actions)
+        // This month: the steps of a month across, the months to open under them; the close card above has 이전 달 보기.
+        assertEquals(listOf("목적 확인", "월 마감", "Excel 저장"), hero.tiles.map { it.title })
+        assertFalse(hero.rows)
+        assertEquals(listOf("10월", "9월", "8월"), hero.below.map { it.title })
+        assertEquals(listOf(october, YearMonth.of(2026, 9), YearMonth.of(2026, 8)), hero.below.map { it.month })
+        assertEquals("5건 · 50.0 km · 업무 80%", hero.below.first().line)
+        assertEquals(listOf(null, "마감됨", null), hero.below.map { it.tag })
+        assertTrue(hero.below.all { it.action == HeroAction.OPEN_MONTH && it.clickLabel == "이 달 보기" })
+        assertTrue("이전 달 보기는 위의 월 마감 카드에", hero.actions.isEmpty())
+        // A past month: its rows alone, and the step back.
+        val july = reportEmptyHero(log(), ReportPeriod(YearMonth.of(2026, 7), yearly = false), today, zone)!!
+        assertTrue("달은 줄로", july.rows); assertTrue(july.below.isEmpty())
+        assertEquals(listOf("8월", "9월", "10월"), july.tiles.map { it.title })
+        assertEquals(listOf(HeroButton("이전 달 보기", HeroAction.PREVIOUS_MONTH)), july.actions)
         assertNull("운행이 있는 기간은 두 카드 그대로", reportEmptyHero(log(), ReportPeriod(october, yearly = false), today, zone))
         assertNull(reportEmptyHero(log(), ReportPeriod(november, yearly = true), today, zone))
         // 연간 without a trip in the year: the nearest months of other years, and the step back by a year.

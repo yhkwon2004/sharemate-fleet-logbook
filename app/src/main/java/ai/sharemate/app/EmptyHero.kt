@@ -87,6 +87,9 @@ internal val HERO_CITY_BAND = 200.dp
 /** The gap between the hero's blocks: the title with its line, the tiles, the actions. */
 internal val HERO_BLOCK_GAP = 24.dp
 
+/** The gap between two stacked tiles or rows. */
+internal val HERO_ROW_GAP = 16.dp
+
 /** The gap between the title and its line. */
 internal val HERO_LINE_GAP = 8.dp
 
@@ -135,6 +138,12 @@ internal fun heroChrome(title: Dp?, line: Dp?, tiles: Boolean, actions: Boolean)
 internal fun heroTileHeight(room: Dp, chrome: Dp): Dp =
     if (room.isUnspecified || !room.isFinite) HERO_TILE_TALL else (room - chrome - HERO_CITY_BAND).coerceIn(HERO_TILE_TALL, HERO_TILE_MAX)
 
+/**
+ * The height of [count] rows under the tiles ([EmptyHero.below]; pure, unit-tested): each a stacked COMPACT row, [HERO_ROW_GAP]
+ * apart. The tiles across give this up, and one block gap, before they grow (the chrome [heroTileHeight] takes).
+ */
+internal fun heroRowsHeight(count: Int): Dp = if (count <= 0) 0.dp else HERO_TILE_COMPACT * count + HERO_ROW_GAP * (count - 1)
+
 /** Whether a tile across of [height] takes the larger square and headlineSmall (pure, unit-tested): from [HERO_TILE_LARGE_FROM]. */
 internal fun heroTileLarge(height: Dp): Boolean = height >= HERO_TILE_LARGE_FROM
 
@@ -182,11 +191,15 @@ internal data class HeroButton(val label: String, val action: HeroAction, val pr
  * What the hero says ([logEmptyHero], [reportEmptyHero]): the [case], the [title] and the long form TalkBack hears for it
  * ([spoken], with the month and the employee the title leaves out), at most one [line], the [tiles] (three at most) and the
  * [actions] in order, the primary one first. 월간·Excel's hero has no title (2.15 §9.3): the month-close card above it says
- * the month is empty. [rows]: the tiles are months, which always stand as the stacked COMPACT rows, whatever the width (§9.1).
+ * the month is empty. [rows]: the tiles are months or people, things to open, which always stand as the stacked COMPACT rows,
+ * whatever the width (§9.1); only sets of three, steps and facts, stand across. [below]: rows under tiles that stand across:
+ * this month without a trip shows how a trip is recorded as its three steps and, under them, the months that have trips, so
+ * the page is filled and the way on is still one tap.
  */
 @Immutable
 internal data class EmptyHero(val case: EmptyHeroCase, val title: String?, val spoken: String?, val line: String? = null,
-    val tiles: List<HeroTile> = emptyList(), val actions: List<HeroButton> = emptyList(), val rows: Boolean = false)
+    val tiles: List<HeroTile> = emptyList(), val actions: List<HeroButton> = emptyList(), val rows: Boolean = false,
+    val below: List<HeroTile> = emptyList())
 
 /**
  * The months nearest [month] that have finished trips among [trips] (pure, unit-tested), for MONTH's tiles: never [month] itself
@@ -272,6 +285,12 @@ internal fun logEmptyHero(filter: Int, month: YearMonth, data: TripLogData, empl
     val steps: (List<Pair<String, String>>, List<HeroGlyph>) -> List<HeroTile> = { words, glyphs ->
         words.mapIndexed { index, (title, line) -> HeroTile(title, line, glyphs[index], LogCopy.heroStepSpoken(index + 1, title, line), step = index + 1) }
     }
+    // How a trip is recorded, the no-trip steps of 홈 as 홈 says them ([HomeCopy.spokenIdleStep]), each with its picture (§9.1).
+    val firstSteps: () -> List<HeroTile> = {
+        val ornaments = listOf(HeroOrnament.GEAR_DRIVE, HeroOrnament.GEAR_PARK, HeroOrnament.PURPOSES)
+        steps(LogCopy.HERO_FIRST_STEPS, listOf(HeroGlyph.DRIVE, HeroGlyph.PARK, HeroGlyph.PURPOSE))
+            .mapIndexed { index, tile -> tile.copy(spoken = HomeCopy.spokenIdleStep(index + 1, HomeCopy.IDLE_STEPS[index]), ornament = ornaments[index]) }
+    }
     // The nearest months with the list's trips, as rows that open them (the employee filter kept).
     val monthRows = nearestTripMonths(listed, month, today, zone).map { monthTile(listed, it, data, today, zone, LogCopy.HERO_OPEN_MONTH) }
     return when {
@@ -293,15 +312,13 @@ internal fun logEmptyHero(filter: Int, month: YearMonth, data: TripLogData, empl
             val title = LogCopy.employeeEmptyTitle(driver?.let { it.name.ifBlank { it.label } })
             // 2.15 §9.1: never a hero without tiles: the employee's own months, or who did drive this month, or, when every trip
             // of the month has no person to filter by (사용자 미지정), the month's three facts, which lead nowhere.
-            val people = if (monthRows.isEmpty()) peopleTiles(monthAll, data.drivers, null, today).ifEmpty { factTiles(monthAll) } else emptyList()
-            EmptyHero(EmptyHeroCase.EMPLOYEE, title, if (driver != null) "$name$who 운행이 없어요" else "$name $title", tiles = monthRows.ifEmpty { people },
-                actions = listOf(clear.copy(primary = true), previous), rows = monthRows.isNotEmpty())
+            val open = monthRows.ifEmpty { peopleTiles(monthAll, data.drivers, null, today) }
+            EmptyHero(EmptyHeroCase.EMPLOYEE, title, if (driver != null) "$name$who 운행이 없어요" else "$name $title", tiles = open.ifEmpty { factTiles(monthAll) },
+                actions = listOf(clear.copy(primary = true), previous), rows = open.isNotEmpty())
         }
         trips.isEmpty() -> {
             // 홈's no-trip steps, heard as 홈 says them ([HomeCopy.spokenIdleStep]), each with its picture (§9.1).
-            val ornaments = listOf(HeroOrnament.GEAR_DRIVE, HeroOrnament.GEAR_PARK, HeroOrnament.PURPOSES)
-            val tiles = steps(LogCopy.HERO_FIRST_STEPS, listOf(HeroGlyph.DRIVE, HeroGlyph.PARK, HeroGlyph.PURPOSE))
-                .mapIndexed { index, tile -> tile.copy(spoken = HomeCopy.spokenIdleStep(index + 1, HomeCopy.IDLE_STEPS[index]), ornament = ornaments[index]) }
+            val tiles = firstSteps()
             val ways = if (data.profile.demoMode) listOf(HeroButton(LogCopy.HERO_DEMO_DRIVE, HeroAction.DEMO_DRIVE, primary = true))
                 else listOf(HeroButton(LogCopy.HERO_TUTORIAL, HeroAction.TUTORIAL, primary = true), HeroButton(LogCopy.HERO_DEMO_SETTING, HeroAction.DEMO_SETTING))
             EmptyHero(EmptyHeroCase.FIRST, LogCopy.HERO_FIRST, LogCopy.HERO_FIRST, LogCopy.HERO_START, tiles, ways + listOfNotNull(clear.takeIf { narrowed }))
@@ -312,12 +329,14 @@ internal fun logEmptyHero(filter: Int, month: YearMonth, data: TripLogData, empl
             val spoken = if (current) "$name$who 운행이 아직 없어요" else "$name$who 운행 기록이 없어요"
             // An employee without any trip has no months of their own: who drove in the nearest month that has trips (§9.1).
             // Where that month's trips have no person either, its three facts stand in, so the hero is never bare.
-            val people = if (employeeId != null && listed.isEmpty()) nearestTripMonths(trips, month, today, zone, limit = 1).firstOrNull()?.let { nearest ->
-                val nearestTrips = tripsIn(trips, nearest.atDay(1), nearest.atEndOfMonth(), zone)
-                peopleTiles(nearestTrips, data.drivers, nearest, today).ifEmpty { factTiles(nearestTrips) }
-            }.orEmpty() else emptyList()
-            EmptyHero(EmptyHeroCase.MONTH, title, spoken, LogCopy.HERO_START.takeIf { current }, monthRows.ifEmpty { people },
-                listOfNotNull(previous, clear.takeIf { narrowed }), rows = monthRows.isNotEmpty())
+            val nearest = if (employeeId != null && listed.isEmpty()) nearestTripMonths(trips, month, today, zone, limit = 1).firstOrNull() else null
+            val nearestTrips = nearest?.let { tripsIn(trips, it.atDay(1), it.atEndOfMonth(), zone) }.orEmpty()
+            val open = monthRows.ifEmpty { peopleTiles(nearestTrips, data.drivers, nearest, today) }
+            val ways = listOfNotNull(previous, clear.takeIf { narrowed })
+            // This month: how a trip is recorded as its three steps, and the ways to earlier trips as rows under them, so the
+            // page is filled by what happens next. A past month has nothing to come: its rows alone.
+            if (current) EmptyHero(EmptyHeroCase.MONTH, title, spoken, LogCopy.HERO_START, firstSteps(), ways, below = open)
+            else EmptyHero(EmptyHeroCase.MONTH, title, spoken, null, open.ifEmpty { factTiles(nearestTrips) }, ways, rows = open.isNotEmpty())
         }
     }
 }
@@ -334,16 +353,19 @@ internal fun reportEmptyHero(data: TripLogData, period: ReportPeriod, today: Loc
     val trips = data.trips.filter { it.demo == data.profile.demoMode && !it.open }
     val (from, to) = reportRange(period, today)
     if (tripsIn(trips, from, to, zone).isNotEmpty()) return null
+    // How a month goes, as three steps: for an empty log, and for this month before its first trip.
+    val glyphs = listOf(HeroGlyph.PURPOSE, HeroGlyph.CLOSE, HeroGlyph.EXCEL)
+    val tiles = ReportCopy.HERO_STEPS.mapIndexed { index, (title, line) ->
+        HeroTile(title, line, glyphs[index], LogCopy.heroStepSpoken(index + 1, title, line), step = index + 1)
+    }
     if (trips.isEmpty()) {
-        val glyphs = listOf(HeroGlyph.PURPOSE, HeroGlyph.CLOSE, HeroGlyph.EXCEL)
-        val tiles = ReportCopy.HERO_STEPS.mapIndexed { index, (title, line) ->
-            HeroTile(title, line, glyphs[index], LogCopy.heroStepSpoken(index + 1, title, line), step = index + 1)
-        }
         val way = if (data.profile.demoMode) HeroButton(LogCopy.HERO_DEMO_DRIVE, HeroAction.DEMO_DRIVE, primary = true)
             else HeroButton(LogCopy.HERO_TUTORIAL, HeroAction.TUTORIAL, primary = true)
         return EmptyHero(EmptyHeroCase.FIRST, null, null, tiles = tiles, actions = listOf(way))
     }
     val rows = nearestTripMonths(trips, period.month, today, zone).map { monthTile(trips, it, data, today, zone, ReportCopy.HERO_OPEN_MONTH) }
+    // This month under 월간: the steps of a month with the months to open under them; the close card above already offers 이전 달 보기.
+    if (!period.yearly && period.month == YearMonth.from(today)) return EmptyHero(EmptyHeroCase.MONTH, null, null, tiles = tiles, below = rows)
     val back = HeroButton(if (period.yearly) ReportCopy.HERO_PREVIOUS_YEAR else LogCopy.PREVIOUS_MONTH, HeroAction.PREVIOUS_MONTH)
     return EmptyHero(EmptyHeroCase.MONTH, null, null, tiles = rows, actions = listOf(back), rows = true)
 }
@@ -374,7 +396,10 @@ internal fun reportEmptyHero(data: TripLogData, period: ReportPeriod, today: Loc
             heroChrome(hero.title?.let { typography.headlineMedium.lineHeight.toDp() }, hero.line?.let { typography.bodyLarge.lineHeight.toDp() },
                 hero.tiles.isNotEmpty(), hero.actions.isNotEmpty())
         }
-        val tileHeight = if (across) heroTileHeight(if (bounded) maxHeight else Dp.Infinity, chrome) else HERO_TILE_COMPACT
+        // The rows under them come out of the same room first, with their own block gap.
+        val below = if (hero.below.isEmpty()) 0.dp else HERO_BLOCK_GAP + heroRowsHeight(hero.below.size)
+        val tileHeight = if (across) heroTileHeight(if (bounded) maxHeight else Dp.Infinity, chrome + below) else HERO_TILE_COMPACT
+        val tap: (HeroTile) -> (() -> Unit)? = { tile -> tile.action?.let { action -> { onAction(action, tile) } } }
         Column(Modifier.fillMaxWidth().then(if (bounded) Modifier.fillMaxHeight().verticalScroll(scroll) else Modifier).semantics { isTraversalGroup = true },
             verticalArrangement = Arrangement.spacedBy(HERO_BLOCK_GAP)) {
             hero.title?.let { title ->
@@ -387,14 +412,17 @@ internal fun reportEmptyHero(data: TripLogData, period: ReportPeriod, today: Loc
                 }
             }
             if (hero.tiles.isNotEmpty()) {
-                val tap: (HeroTile) -> (() -> Unit)? = { tile -> tile.action?.let { action -> { onAction(action, tile) } } }
                 // Equal heights across: a tile is a CarCard over boxes, rows, flow rows, icons and text, with no SubcomposeLayout,
                 // BoxWithConstraints or lazy list inside, so the row may ask its tiles for their intrinsic height.
                 if (across) Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     hero.tiles.forEach { tile -> HeroTileCard(tile, tall = true, tileHeight, Modifier.weight(1f).fillMaxHeight(), tap(tile)) }
-                } else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                } else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(HERO_ROW_GAP)) {
                     hero.tiles.forEach { tile -> HeroTileCard(tile, tall = false, HERO_TILE_COMPACT, Modifier.fillMaxWidth(), tap(tile)) }
                 }
+            }
+            // The rows under the tiles ([EmptyHero.below]): things to open, always in the stacked look.
+            if (hero.below.isNotEmpty()) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(HERO_ROW_GAP)) {
+                hero.below.forEach { tile -> HeroTileCard(tile, tall = false, HERO_TILE_COMPACT, Modifier.fillMaxWidth(), tap(tile)) }
             }
             if (hero.actions.isNotEmpty()) {
                 FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp),

@@ -305,3 +305,20 @@ TalkBack stop names them too. The budget test covers the three driver-card state
 ### 9.7 홈
 
 - A closed month of another year reads "2026년 12월 운행기록부 · Excel 저장", which fits the tall card's line.
+
+### 9.8 This month without a trip (replaces the month rows of §9.1 and §9.3 for the month in progress)
+
+Looked at again on the emulator, an empty current month with one month row was still a title over one row. Only sets of
+three stand across (steps and facts); things to open (months, people) are always rows, so a single month or a single
+person never stretches into one page-wide tile.
+
+- **운행기록, this month:** under the title and its line, the three first-trip steps across with their pictures, as on a
+  clean install, and under them the rows that lead to earlier trips (the nearest months, or the people who drove when an
+  employee without trips is chosen), then 이전 달 보기. The tiles give the rows their room first (`heroRowsHeight`): 360 dp
+  with one row, 265 with three, in the FULL window. A past month keeps its rows alone.
+- **월간·Excel, this month:** the three steps of a month across (목적 확인, 월 마감, Excel 저장) with the month rows under
+  them, and no button: the month-close card above already offers 이전 달 보기. A past month and 연간 keep the rows and the
+  step back.
+- **People are rows** in EMPLOYEE too. Where the month's trips have no person at all, its three facts stand in.
+- On the 지금 column's 차량 tile, 신호 reads 시연 신호 in demo mode and 휴대폰 reads 준비 중 / 연결 전 / 연결 N대 / 서버 오류 /
+  꺼짐, the 차량 page's own words. A link that waits on the phone names its first address that is not local.
