@@ -98,7 +98,7 @@ class HomeFrameTest {
     @Test fun theCardMaximaAreTheSpecsAnatomy() {
         val withPager = mapOf(AttentionKind.INCIDENT to 477, AttentionKind.PERMISSION to 242, AttentionKind.RECLASSIFY to 375, AttentionKind.PURPOSE to 375,
             AttentionKind.CARD_REVIEW to 287, AttentionKind.CHARGE to 414, AttentionKind.FINISHED to 264, AttentionKind.MATCHED to 264, AttentionKind.SETUP to 259,
-            AttentionKind.PAIRING to 346, AttentionKind.MONTH_CLOSE to 264, AttentionKind.CARE to 242, AttentionKind.CLOSE_REMINDER to 219,
+            AttentionKind.PAIRING to 376, AttentionKind.MONTH_CLOSE to 264, AttentionKind.CARE to 242, AttentionKind.CLOSE_REMINDER to 219,
             AttentionKind.CHARGE_WAITING to 304)
         assertEquals(AttentionKind.entries.toSet(), withPager.keys)
         withPager.forEach { (kind, max) ->
@@ -157,6 +157,84 @@ class HomeFrameTest {
                 assertTrue("$rows demo=$demo: ${frame.total}", frame.total <= homeFrame(null, pager = false, demo = demo, forms = forms).total)
             }
         }
+    }
+
+    /**
+     * 2.15.1 (docs/design/DESIGN_2_15.md §10): 홈's 휴대폰 연결 card is the title row and one row, the QR and its column, with no
+     * headline row and no action row of its own. The usual QR makes it 324 dp (348 with the pager); the frame budgets the
+     * largest QR a car's link needs, 260, so 352 (376), and every state still keeps both tall forms: 956 dp, 1,052 with the
+     * demo strip.
+     */
+    @Test fun thePairingCardIsTheTitleRowAndTheQrsRow() {
+        val anatomy = attentionAnatomy(AttentionKind.PAIRING)
+        assertFalse("머리말 줄 없음", anatomy.headline)
+        assertEquals("카드 자체의 버튼 줄 없음", null, anatomy.row)
+        assertEquals(PAIRING_QR_MAX, anatomy.body)
+        assertEquals(260.dp, PAIRING_QR_MAX)
+        // 48 + 32 + 12 + the QR, 24 more with the pager's 56-dp title row.
+        assertEquals(48.dp + 32.dp + 12.dp + QR_MIN_SIDE, pairingCardHeight(QR_MIN_SIDE, pager = false))
+        assertEquals(324.dp, pairingCardHeight(QR_MIN_SIDE, pager = false))
+        assertEquals(348.dp, pairingCardHeight(QR_MIN_SIDE, pager = true))
+        assertEquals(352.dp, attentionCardMax(AttentionKind.PAIRING, pager = false))
+        assertEquals(376.dp, attentionCardMax(AttentionKind.PAIRING, pager = true))
+        assertEquals(pairingCardHeight(PAIRING_QR_MAX, pager = true), attentionCardMax(AttentionKind.PAIRING, pager = true))
+        // Every QR between the two fits what the frame counts.
+        listOf(QR_MIN_SIDE, 244.dp, PAIRING_QR_MAX).forEach { side ->
+            listOf(false, true).forEach { pager -> assertTrue("$side $pager", pairingCardHeight(side, pager) <= attentionCardMax(AttentionKind.PAIRING, pager)) }
+        }
+        // The frame with it: both tall forms, 160 + 24 + 208 + 24 + 376 + 24 + 140 = 956, and 1,052 with the demo strip.
+        listOf(false, true).forEach { pager ->
+            listOf(false, true).forEach { demo -> assertEquals("pager=$pager demo=$demo", tall, homeForms(AttentionKind.PAIRING, pager, demo)) }
+        }
+        assertEquals(956.dp, homeFrame(AttentionKind.PAIRING, pager = true, demo = false, tall).total)
+        assertEquals(1052.dp, homeFrame(AttentionKind.PAIRING, pager = true, demo = true, tall).total)
+        assertEquals(932.dp, homeFrame(AttentionKind.PAIRING, pager = false, demo = false, tall).total)
+        assertTrue(homeFrame(AttentionKind.PAIRING, pager = true, demo = true, tall).total <= HOME_PAGE_FULL)
+    }
+
+    /**
+     * The column beside the QR (§10) at FULL 1×: the headline 31 + 16 + three 29-dp lines 8 apart (103) + 16 + the action row 56
+     * is 222 dp, under the QR's 232, so the QR sets the row's height and the spare goes between the column's blocks. Under 536 dp
+     * of content (232 + 24 + 280) the QR stands above the column; the FULL card's content is 1,064 dp.
+     */
+    @Test fun theColumnBesideTheQrFitsItsHeight() {
+        assertEquals(103.dp, PAIRING_LINES)
+        assertEquals(PAIRING_LINE * 3 + PAIRING_LINE_GAP * 2, PAIRING_LINES)
+        assertEquals(ATTENTION_HEADLINE + 16.dp + PAIRING_LINES + 16.dp + ATTENTION_ROW, PAIRING_COLUMN)
+        assertEquals(222.dp, PAIRING_COLUMN)
+        assertTrue("${PAIRING_COLUMN} ≤ ${QR_MIN_SIDE}", PAIRING_COLUMN <= QR_MIN_SIDE)
+        assertEquals("QR이 높이를 정함", QR_MIN_SIDE, pairingAnatomy(QR_MIN_SIDE).body)
+        // The QR stands beside the column from 536 dp of content.
+        assertEquals(536.dp, QR_MIN_SIDE + PAIRING_QR_GAP + PAIRING_COLUMN_MIN)
+        assertFalse("FULL 카드의 1,064 dp", pairingQrAbove(1064.dp, QR_MIN_SIDE))
+        assertFalse("딱 536", pairingQrAbove(536.dp, QR_MIN_SIDE))
+        assertTrue("535는 위아래로", pairingQrAbove(535.dp, QR_MIN_SIDE))
+        assertTrue("큰 QR은 열 자리도 함께 늘어남", pairingQrAbove(563.dp, PAIRING_QR_MAX))
+        assertFalse(pairingQrAbove(564.dp, PAIRING_QR_MAX))
+        // At FULL the column is 1,064 − 232 − 24 = 808 dp wide, well over its least.
+        assertTrue(1064.dp - QR_MIN_SIDE - PAIRING_QR_GAP >= PAIRING_COLUMN_MIN)
+    }
+
+    /**
+     * The budget's QR (§10): the longest link a car can publish, four IPv4 addresses at their longest with five-digit ports, a
+     * six-digit code and the 64-hex key, draws at [PAIRING_QR_MAX] at the most; the usual link of one or two addresses, even
+     * at their longest, stays at the least side, 232.
+     */
+    @Test fun theLongestLinkACarPublishesFitsTheBudgetsQr() {
+        val key = "f".repeat(64)
+        val longest = pairingLinkText((252..255).map { "255.255.255.$it:65535" }, "999999", key)!!
+        assertEquals("주소 네 개가 다 들어감", 4, parsePairingLink(longest)!!.endpoints.size)
+        assertEquals(192, longest.length)
+        val side = qrTileSide(qrMatrix(longest))
+        assertTrue("$side ≤ $PAIRING_QR_MAX", side <= PAIRING_QR_MAX)
+        assertEquals("예산은 가장 긴 링크에 딱 맞음", PAIRING_QR_MAX, side)
+        // The usual links: the emulator's two addresses on the car's port, a phone hotspot beside Wi-Fi, two at their longest.
+        listOf(listOf("10.0.2.15:9247", "10.0.2.16:9247"), listOf("192.168.43.1:9247", "10.0.2.15:9247"), listOf("192.168.0.23:9247"),
+            listOf("255.255.255.254:65535", "255.255.255.255:65535")).forEach { endpoints ->
+            val link = pairingLinkText(endpoints, "455426", key)!!
+            assertEquals("$endpoints", QR_MIN_SIDE, qrTileSide(qrMatrix(link)))
+        }
+        assertEquals("QR이 없으면 자리만", QR_MIN_SIDE, qrTileSide(null))
     }
 
     @Test fun theNowColumnFitsBesideIt() {

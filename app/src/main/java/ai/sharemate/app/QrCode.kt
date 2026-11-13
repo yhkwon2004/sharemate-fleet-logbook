@@ -71,6 +71,13 @@ internal fun qrMatrix(text: String): QrMatrix? {
 internal fun qrSide(modules: Int, minSide: Dp = QR_MIN_SIDE): Dp = max(minSide.value, ((modules + 2 * QR_QUIET_MODULES) * QR_MIN_MODULE.value)).dp
 
 /**
+ * The side [QrCode] draws [matrix] at when asked for [minSide] (pure; 2.15.1, docs/design/DESIGN_2_15.md §10): [qrSide] of its
+ * modules, or [minSide] itself without a matrix (the tile left empty). 홈's pairing column takes the QR's height from this, the
+ * same figure the tile takes, so the two never disagree.
+ */
+internal fun qrTileSide(matrix: QrMatrix?, minSide: Dp = QR_MIN_SIDE): Dp = qrSide(matrix?.size ?: 0, minSide)
+
+/**
  * Where the modules go on a tile [sidePx] pixels square (pure): the module size in whole pixels, so neighbouring modules
  * meet without seams, and the start of the first module, centred. The quiet zone is what is left around them, never less
  * than [QR_QUIET_MODULES] modules. A module is one pixel at the least.
@@ -103,8 +110,16 @@ internal fun qrRuns(matrix: QrMatrix): List<Triple<Int, Int, Int>> = buildList {
  */
 @Composable internal fun QrCode(text: String, size: Dp, modifier: Modifier = Modifier) {
     val matrix = remember(text) { qrMatrix(text) }
+    QrCode(matrix, size, modifier)
+}
+
+/**
+ * The tile of a [matrix] the caller already encoded (2.15.1, §10): 홈's pairing card encodes its link once to know the tile's
+ * side ([qrTileSide]) before it lays the column beside it, and draws that same matrix here rather than encoding it twice.
+ */
+@Composable internal fun QrCode(matrix: QrMatrix?, size: Dp, modifier: Modifier = Modifier) {
     val runs = remember(matrix) { matrix?.let(::qrRuns).orEmpty() }
-    val side = qrSide(matrix?.size ?: 0, size)
+    val side = qrTileSide(matrix, size)
     val draw = remember(matrix, runs) {
         Modifier.drawWithCache {
             val corner = CornerRadius(16.dp.toPx())

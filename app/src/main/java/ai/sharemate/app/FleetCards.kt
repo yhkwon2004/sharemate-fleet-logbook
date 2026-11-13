@@ -102,9 +102,21 @@ internal fun recentIncidents(data: TripLogData, limit: Int = 12): List<Incident>
 /** Pairing code shown as "123 456" so it reads at arm's length and over a phone call. */
 internal fun pairingDisplay(code: String) = code.chunked(3).joinToString(" ")
 
+/** The whole seconds the live code has left, or null without a live code: the one count both forms of the countdown read. */
+private fun pairingSecondsLeft(info: SyncInfo, now: Long): Long? =
+    livePairingCode(info, now)?.let { ((info.pairingExpiresAt - now) / 1000).coerceAtLeast(0) }
+
 /** The live code's countdown as "m:ss", or null without a live code (2.15 fix, §9.6: an expired code has none, not "0:00"). */
 internal fun pairingRemaining(info: SyncInfo, now: Long): String? =
-    livePairingCode(info, now)?.let { ((info.pairingExpiresAt - now) / 1000).coerceAtLeast(0) }?.let { "%d:%02d".format(it / 60, it % 60) }
+    pairingSecondsLeft(info, now)?.let { "%d:%02d".format(it / 60, it % 60) }
+
+/**
+ * What TalkBack hears for the countdown tag (pure, unit-tested; 2.15.1, docs/design/DESIGN_2_15.md §10): "4분 59초 남음", "59초
+ * 남음" under a minute ([VehicleCopy.spokenPhoneRemaining]), so "4:59" is never heard as a time of day; null exactly where
+ * [pairingRemaining] is. The tag is not a live region: it ticks every second and stays silent. 홈's card and the 차량 page's
+ * both use it.
+ */
+internal fun pairingRemainingSpoken(info: SyncInfo, now: Long): String? = pairingSecondsLeft(info, now)?.let(VehicleCopy::spokenPhoneRemaining)
 
 /** The car caps a staggered entrance at five rows (spec C); later rows are simply there. */
 internal const val CAR_APPEAR_CAP = 5
@@ -472,7 +484,7 @@ internal fun phoneLinkTag(enabled: Boolean, running: Boolean, error: String?, on
 /**
  * 휴대폰 연결 on the vehicle page (2.12): the link's state as a live tag beside the title ([phoneLinkTag]); while the link is on,
  * three small figures (the record version, the phone's last call, the phones paired) and, while the server runs, the pairing
- * ([PhonePairing]): since 2.15 the QR a phone scans, with the three things a phone types folded under it. The home keeps its own pairing card (2.13: the 휴대폰 연결 attention card, HomeAttention.kt).
+ * ([PhonePairing]): since 2.15 the QR a phone scans, with the three things a phone types folded under it. The home keeps its own pairing card (2.13: the 휴대폰 연결 attention card, HomeAttention.kt; since 2.15.1 with the same QR).
  * What the link does sits behind ⓘ. Switched off (2.13), the card holds the switch itself, the same row as 설정 › 기록's
  * ([SettingsCopy.PHONE_SYNC_TITLE]), where 2.12 only said where to find it. 2.15 fix (docs/design/DESIGN_2_15.md §9.6): the
  * card stands across the 차량 page under its two columns ([VehiclePane]), and where it is wide enough ([stepsBeside],
@@ -552,7 +564,8 @@ private const val PAIRING_FOLD_MS = 200
 /**
  * The pairing inside [PhoneSyncCard] (2.15, docs/design/DESIGN_2_15.md §6.2). The QR leads: the car's addresses, the live code
  * and the key in one link ([syncPairingLinkText]) on its white tile ([QrCode]); beside it what to do ([VehicleCopy.PHONE_QR]),
- * the countdown as a tag (it ticks in place, never announced) and the pill for a new code. Without a link a quiet tile keeps
+ * the countdown as a tag (it ticks in place, never announced; since 2.15.1 TalkBack hears it as "4분 59초 남음",
+ * [pairingRemainingSpoken]) and the pill for a new code. Without a link a quiet tile keeps
  * the QR's place, so the card keeps its form when a code runs out, and the column says why ([pairingQrHeadline]) with 새
  * 연결 번호. The QR is rebuilt only when the link's text changes ([QrCode] remembers it), never on the clock's tick that
  * recomposes this card.
@@ -580,7 +593,7 @@ private const val PAIRING_FOLD_MS = 200
         Column(place, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(pairingQrHeadline(link, code, info.pairedPhones), style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 2,
                 overflow = TextOverflow.Ellipsis)
-            if (code != null && remaining != null) CarTag("$remaining 남음")
+            if (code != null && remaining != null) CarTag("$remaining 남음", description = pairingRemainingSpoken(info, now))
             CarPillButton(if (code == null) VehicleCopy.PHONE_NEW_CODE else VehicleCopy.PHONE_RENEW_CODE, { SyncServer.active?.refreshPairingCode() })
         }
     }
@@ -620,12 +633,13 @@ private const val PAIRING_FOLD_MS = 200
 
 /**
  * The QR's place while there is no link (2.15): a tile of the QR's size on the chip fill inside the chip border, the phone
- * mark on its disc in the middle. Decorative: the column beside it says why.
+ * mark on its disc in the middle. Decorative: the column beside it says why. 2.15.1 (§10): 홈's pairing card holds the same
+ * tile in the same place, so it is shared, at [size] ([QR_MIN_SIDE] unless a caller keeps a larger QR's place).
  */
-@Composable private fun PairingQrPlaceholder() {
+@Composable internal fun PairingQrPlaceholder(size: Dp = QR_MIN_SIDE) {
     val skin = Car.skin
     val shape = RoundedCornerShape(16.dp)
-    Box(Modifier.size(QR_MIN_SIDE).clip(shape).background(skin.chipFill).border(1.dp, skin.chipBorder, shape).clearAndSetSemantics {},
+    Box(Modifier.size(size).clip(shape).background(skin.chipFill).border(1.dp, skin.chipBorder, shape).clearAndSetSemantics {},
         contentAlignment = Alignment.Center) {
         CarIconDisc(painterResource(R.drawable.ic_phone), size = 72.dp, iconSize = 36.dp)
     }

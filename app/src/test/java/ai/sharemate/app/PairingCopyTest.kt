@@ -37,6 +37,33 @@ class PairingCopyTest {
         }
     }
 
+    /**
+     * 2.15.1 (docs/design/DESIGN_2_15.md §10): 홈's pairing column. Its headline is one headlineSmall line across the column in
+     * every state (pairingQrHeadline's words, or 휴대폰 연결을 준비하고 있어요 while the server is not running); the line at the
+     * action row's start is the spec's words and one line wherever the column stands beside the QR, beside one button; the
+     * three labelled lines keep the 차량 page's names; and the countdown is heard in minutes and seconds.
+     */
+    @Test fun theHomeColumnsWordsAreOneLineEach() {
+        with(VehicleCopy) {
+            assertEquals("같은 Wi-Fi나 핫스팟에서 찍어요", PHONE_QR_HOW)
+            assertOneLine(PHONE_QR_HOW, PAIRING_COLUMN_LINE_UNITS)
+            assertFalse("조사 앞 공백 없음", PHONE_QR_HOW.contains("Fi 나"))
+            listOf(PHONE_QR, PHONE_EXPIRED, PHONE_ANOTHER, PHONE_ADDRESS_PENDING, HomeCopy.PAIRING_PREPARING).forEach { assertOneLine(it, PAIRING_HEADLINE_UNITS) }
+            // The three names, in the phone's order, as the 차량 page's steps name them; each fits the 72-dp name column
+            // (labelMedium, 16 sp: 4.5 units are about 66 dp, so 연결 번호 keeps a gap before its digits).
+            listOf(PHONE_ADDRESS, PHONE_CODE, PHONE_KEY).forEach { assertTrue(it, oneLineUnits(it) <= 4.5) }
+            listOf(PHONE_NEW_CODE, PHONE_RENEW_CODE).forEach { assertOneLine(it, CARD_LINE_UNITS) }
+            assertEquals("4분 59초 남음", spokenPhoneRemaining(299))
+            assertEquals("5분 남음", spokenPhoneRemaining(300))
+            assertEquals("59초 남음", spokenPhoneRemaining(59))
+            assertEquals("0초 남음", spokenPhoneRemaining(0))
+            listOf(0L, 59L, 60L, 61L, 299L, 300L).map(VehicleCopy::spokenPhoneRemaining).forEach {
+                assertFalse("시각처럼 들리지 않음: $it", it.contains(':'))
+                assertFalse("마침표 없음: $it", it.endsWith('.'))
+            }
+        }
+    }
+
     @Test fun theColumnBesideTheQrSaysWhatToDoOrWhyThereIsNone() {
         assertEquals(VehicleCopy.PHONE_QR, pairingQrHeadline("sharemate://pair?…", "455426", 0))
         assertEquals("번호가 없고 연결된 휴대폰이 없음", VehicleCopy.PHONE_EXPIRED, pairingQrHeadline(null, null, 0))

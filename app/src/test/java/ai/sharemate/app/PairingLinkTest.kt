@@ -153,6 +153,37 @@ class PairingLinkTest {
         assertNull(syncPairingLinkText(SyncInfo(pairingCode = "455426"), now))
     }
 
+    /**
+     * 2.15.1 (docs/design/DESIGN_2_15.md §10): TalkBack hears the countdown tag in minutes and seconds, never "4:59" as a time
+     * of day, from the same count as the tag, and has nothing to say exactly where the tag is gone.
+     */
+    @Test fun theCountdownIsHeardInMinutesAndSeconds() {
+        val now = 1_790_000_000_000L
+        val info = SyncInfo(running = true, port = 9247, addresses = listOf("10.0.2.15"), pairingCode = "455426", pairingExpiresAt = now + SYNC_PAIR_TTL,
+            fingerprint = key)
+        assertEquals("4:59", pairingRemaining(info, now + 1_000))
+        assertEquals("4분 59초 남음", pairingRemainingSpoken(info, now + 1_000))
+        assertEquals("정각의 분은 초 없이", "5분 남음", pairingRemainingSpoken(info, now))
+        assertEquals("1분 남음", pairingRemainingSpoken(info, now + 240_000))
+        assertEquals("1분 아래는 초만", "59초 남음", pairingRemainingSpoken(info, now + 241_000))
+        assertEquals("0:00", pairingRemaining(info, now + SYNC_PAIR_TTL - 1))
+        assertEquals("0초 남음", pairingRemainingSpoken(info, now + SYNC_PAIR_TTL - 1))
+        assertEquals("1분 1초 남음", VehicleCopy.spokenPhoneRemaining(61))
+        // Null exactly where the tag is: at expiry, after it, and without a code.
+        listOf(now + SYNC_PAIR_TTL, now + SYNC_PAIR_TTL + 60_000).forEach { at -> assertNull("만료 후 ($at)", pairingRemainingSpoken(info, at)) }
+        assertNull(pairingRemainingSpoken(info.copy(pairingCode = null), now))
+        (0..SYNC_PAIR_TTL + 2_000 step 997).forEach { offset ->
+            val at = now + offset
+            assertEquals("$offset", pairingRemaining(info, at) == null, pairingRemainingSpoken(info, at) == null)
+            pairingRemainingSpoken(info, at)?.let { spoken ->
+                assertTrue(spoken, spoken.endsWith(" 남음") && !spoken.contains(':'))
+                // The spoken form says the tag's own minutes and seconds.
+                val (m, s) = pairingRemaining(info, at)!!.split(':').map { it.toInt() }
+                assertEquals(VehicleCopy.spokenPhoneRemaining(m * 60L + s), spoken)
+            }
+        }
+    }
+
     // ───────────────────────── how far a scanned link is trusted (§9.6) ─────────────────────────
 
     private fun linkTo(vararg endpoints: String) = PairingLink(endpoints.toList(), "455426", key)

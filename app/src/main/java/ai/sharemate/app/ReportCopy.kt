@@ -221,6 +221,24 @@ internal object VehicleCopy {
     /** The pill while no code is live, and while one is. */
     const val PHONE_NEW_CODE = "새 연결 번호"
     const val PHONE_RENEW_CODE = "번호 다시 만들기"
+    /**
+     * 2.15.1 (DESIGN_2_15 §10): the one line at the foot of 홈's pairing column, beside 번호 다시 만들기: where the phone must be
+     * for the QR to work. The 차량 page keeps [PHONE_HOW] under its typed code.
+     */
+    const val PHONE_QR_HOW = "같은 Wi-Fi나 핫스팟에서 찍어요"
+    /**
+     * What TalkBack hears for the countdown tag's "4:59 남음" (2.15.1 §10, [pairingRemainingSpoken]), so the figure is never
+     * heard as a time of day: "4분 59초 남음", "5분 남음" on the whole minute, "59초 남음" under a minute.
+     */
+    fun spokenPhoneRemaining(seconds: Long): String {
+        val minutes = seconds / 60
+        val rest = seconds % 60
+        return when {
+            minutes == 0L -> "${rest}초 남음"
+            rest == 0L -> "${minutes}분 남음"
+            else -> "${minutes}분 ${rest}초 남음"
+        }
+    }
 
     // 차량 예약 and 사고·특이사항
     const val RESERVATIONS_TITLE = "차량 예약"

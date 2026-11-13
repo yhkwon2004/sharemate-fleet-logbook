@@ -71,6 +71,21 @@ internal const val DOCK_LINE_UNITS = 13.0
 /** The header search bar's phrase, which must show whole from the bar's PHRASE width (280 dp). */
 internal const val BAR_PHRASE_UNITS = 12.0
 
+// 2.15.1 (docs/design/DESIGN_2_15.md §10): 홈's pairing card, the column beside the QR.
+
+/**
+ * The line at the start of the pairing column's action row, beside 번호 다시 만들기. At FULL the column is 808 dp and the line
+ * has some 600 dp beside the button; the narrowest column the QR keeps beside it is 280 dp ([PAIRING_COLUMN_MIN]), where the
+ * action row puts the line on its own row over the button (under 560 dp): about 19 units of bodySmall. Held to that, the
+ * line is one line wherever the column stands beside the QR.
+ */
+internal const val PAIRING_COLUMN_LINE_UNITS = 19.0
+
+/**
+ * The pairing column's headline (headlineSmall, 26 sp: a unit about 23.9 dp) across the 808-dp column at FULL: 33 units.
+ */
+internal const val PAIRING_HEADLINE_UNITS = 33.0
+
 /** The width of [text] in units: a Hangul syllable 1, whitespace .25, anything else .55. */
 internal fun oneLineUnits(text: String): Double = text.sumOf { ch ->
     when {

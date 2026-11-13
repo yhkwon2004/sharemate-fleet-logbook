@@ -20,7 +20,9 @@ import java.time.ZoneId
  * idle card holds the slot when the queue is empty), the sky, and the incident dock in a tall form at the foot. Both tall
  * forms have the 2.13 forms as their compact fallback, and [homeForms] picks, for each state, the largest pair that fits.
  * 2.15 (docs/design/DESIGN_2_15.md §4) fills the idle card: up to three rows of the newest trips ([homeIdle], [idleAnatomy]),
- * 334 dp at the most, so the idle frame is 914 dp (1,010 with the demo strip).
+ * 334 dp at the most, so the idle frame is 914 dp (1,010 with the demo strip). 2.15.1 (§10) puts the pairing QR on the
+ * 휴대폰 연결 card ([pairingAnatomy]): 352 dp at the most, 376 with the pager, so that frame is 956 dp (1,052 with the demo
+ * strip) and every state still keeps both tall forms but an open incident in demo mode.
  *
  * Heights are one text line as Asta Sans draws it (round(.952 s) + round(.241 s) dp: bodySmall 19, titleSmall and labelLarge
  * 23, bodyLarge 24, titleLarge 29, headlineSmall 31, displaySmall 53), which reproduces the shots to the pixel.
@@ -127,12 +129,62 @@ internal val CHARGE_CHIP_GAP = 8.dp
 
 /**
  * The purpose tiles ([PurposeOptions]), the setup steps (2.14: three tiles across, each the button for its step, 96 dp at
- * least: 16 + the 32-dp disc beside a title and a line + 16, with room to spare), the pairing card's two rows, the mini stats.
+ * least: 16 + the 32-dp disc beside a title and a line + 16, with room to spare), the mini stats.
  */
 internal val PURPOSE_TILES = 72.dp
 internal val SETUP_TILES = 96.dp
-internal val PAIRING_ROWS = 66.dp
 internal val MINI_STATS = 46.dp
+
+/**
+ * 홈's 휴대폰 연결 card (2.15.1, docs/design/DESIGN_2_15.md §10) is one row: the QR, then a column with the headline, the three
+ * labelled lines a phone types and the action row. Its body is budgeted at the QR's side for a car's own link at its longest:
+ * four IPv4 addresses with five-digit ports, a six-digit code and the 64-hex key need a version-10 QR, 57 modules, so
+ * (57 + 8) × 4 = 260 dp ([qrSide]; HomeFrameTest builds that link). The usual link, one or two addresses, draws at [QR_MIN_SIDE].
+ */
+internal val PAIRING_QR_MAX = 260.dp
+
+/** Between the QR and the column beside it. */
+internal val PAIRING_QR_GAP = 24.dp
+
+/** The narrowest the column beside the QR may get; narrower, the QR stands above it ([pairingQrAbove]). */
+internal val PAIRING_COLUMN_MIN = 280.dp
+
+/**
+ * One labelled line of the column (주소, 연결 번호, 인증키) stands in a slot 29 dp tall at least, 8 dp from the next: the code's
+ * titleMedium is 25 dp and the address and the key in bodyMedium 21, so the slot keeps the three at one pitch whatever their
+ * value's style. Three lines are 103 dp.
+ */
+internal val PAIRING_LINE = 29.dp
+internal val PAIRING_LINE_GAP = 8.dp
+internal const val PAIRING_LINE_COUNT = 3
+internal val PAIRING_LINES = PAIRING_LINE * PAIRING_LINE_COUNT + PAIRING_LINE_GAP * (PAIRING_LINE_COUNT - 1)
+
+/**
+ * The column's content at FULL 1× with one-line values (§10): the headline 31 + 16 + the three lines 103 + 16 + the action
+ * row 56 = 222 dp, under the QR's 232, so the QR sets the row's height and the spare goes between the column's blocks. An
+ * address list long enough to wrap there takes four long addresses, and those come with a QR of 260 ([PAIRING_QR_MAX]).
+ */
+internal val PAIRING_COLUMN = ATTENTION_HEADLINE + ATTENTION_BLOCK_GAP + PAIRING_LINES + ATTENTION_BLOCK_GAP + ATTENTION_ROW
+
+/**
+ * Whether the QR stands above the column instead of beside it (pure, unit-tested; §10): where the card's [content] width is
+ * under the [qr]'s side + 24 + [PAIRING_COLUMN_MIN], 536 dp for the usual 232-dp QR. That is outside the frame's budget (the
+ * FULL card's content is 1,064 dp), where the page scrolls when it must.
+ */
+internal fun pairingQrAbove(content: Dp, qr: Dp): Boolean = content < qr + PAIRING_QR_GAP + PAIRING_COLUMN_MIN
+
+/**
+ * 홈's pairing card with a QR of [side] (pure, unit-tested; §10): no headline row and no action row of its own (the column
+ * holds both), so the body follows the title row's 12 dp directly, as tall as the QR or the column, whichever is taller.
+ */
+internal fun pairingAnatomy(side: Dp): AttentionAnatomy = AttentionAnatomy(figure = false, lines = 0, body = maxOf(side, PAIRING_COLUMN), row = null,
+    headline = false)
+
+/**
+ * The pairing card's height at FULL 1× with a QR of [side] (pure, unit-tested): 48 + 32 (56 with the [pager]) + 12 + the
+ * side, 324 dp (348) for the usual 232-dp QR and 352 (376) for the budget's 260, which [attentionCardMax] counts.
+ */
+internal fun pairingCardHeight(side: Dp, pager: Boolean): Dp = attentionCardHeight(pairingAnatomy(side), pager)
 
 /** The month-close card's completion bar and the gap over it. */
 internal val CLOSE_BAR = 10.dp
@@ -228,8 +280,9 @@ internal fun attentionIndex(queue: List<AttentionItem>, pin: AttentionPin?): Int
 /**
  * How a card kind is built, for its height: a figure at the headline's end, the supporting lines, a block under the headline
  * ([under], the month-close bar), the body block, and the action row (none: [row] null, as on the setup card, whose tiles
- * are its buttons). Without a [headline] row (2.15: the idle card's rows) the body follows the title row's 12 dp directly,
- * with neither the headline, the block under it, the lines nor the 16 dp over the body.
+ * are its buttons). Without a [headline] row (2.15: the idle card's rows; 2.15.1: the pairing card, whose column beside the
+ * QR holds its own headline and action row) the body follows the title row's 12 dp directly, with neither the headline, the
+ * block under it, the lines nor the 16 dp over the body.
  */
 @Immutable internal data class AttentionAnatomy(val figure: Boolean, val lines: Int, val under: Dp = 0.dp, val body: Dp? = null, val row: Dp? = ATTENTION_ROW,
     val headline: Boolean = true)
@@ -246,7 +299,8 @@ internal fun idleAnatomy(rows: Int): AttentionAnatomy =
 
 /**
  * Each kind's anatomy at its tallest (§3.2's table), and the idle card's for null at its tallest (2.15: 최근 운행 with three
- * rows, 334 dp; without any trip it is 307); the composables draw the same blocks with the same constants.
+ * rows, 334 dp; without any trip it is 307); the composables draw the same blocks with the same constants. 2.15.1: the
+ * pairing card at the largest QR a car's link needs, 352 dp ([pairingAnatomy]; 324 with the usual 232-dp QR).
  */
 internal fun attentionAnatomy(kind: AttentionKind?): AttentionAnatomy = when (kind) {
     null -> idleAnatomy(IDLE_ROWS_MAX)
@@ -261,7 +315,8 @@ internal fun attentionAnatomy(kind: AttentionKind?): AttentionAnatomy = when (ki
     AttentionKind.FINISHED, AttentionKind.MATCHED -> AttentionAnatomy(figure = true, lines = 1)
     // 2.14: the three steps are tiles that open their own place, so the two buttons under them went.
     AttentionKind.SETUP -> AttentionAnatomy(figure = false, lines = 0, body = SETUP_TILES, row = null)
-    AttentionKind.PAIRING -> AttentionAnatomy(figure = true, lines = 1, body = PAIRING_ROWS)
+    // 2.15.1 (§10): the QR and its column in one row, budgeted at the QR's largest side; no headline row, no action row.
+    AttentionKind.PAIRING -> pairingAnatomy(PAIRING_QR_MAX)
     AttentionKind.MONTH_CLOSE -> AttentionAnatomy(figure = false, lines = 1, under = CLOSE_BAR_GAP + CLOSE_BAR)
     AttentionKind.CLOSE_REMINDER -> AttentionAnatomy(figure = false, lines = 0)
     AttentionKind.CHARGE_WAITING -> AttentionAnatomy(figure = false, lines = 1, body = MINI_STATS)
