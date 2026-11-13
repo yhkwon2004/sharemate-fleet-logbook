@@ -172,6 +172,16 @@ class PairingLinkTest {
         assertTrue("차가 쓴 링크", pairingLinkIsLocal(parsePairingLink(good)!!))
     }
 
+    @Test fun aWaitingLinkShowsTheAddressThatIsNotLocal() {
+        // A local decoy first and a foreign host behind it: the line must name where the code could really go (§9.6).
+        assertEquals("203.0.113.9:443", pairingLinkShownEndpoint(linkTo("10.255.255.1:9247", "203.0.113.9:443")))
+        assertEquals("car-7.fleet.local:9247", pairingLinkShownEndpoint(linkTo("192.168.0.12:9247", "10.0.0.2:9247", "car-7.fleet.local:9247")))
+        assertEquals("공인이 먼저면 그 주소", "8.8.8.8:9247", pairingLinkShownEndpoint(linkTo("8.8.8.8:9247", "192.168.0.12:9247")))
+        // An all-local link from the picker names its first address.
+        assertEquals("10.0.2.15:9247", pairingLinkShownEndpoint(linkTo("10.0.2.15:9247", "10.0.2.16:9247")))
+        assertEquals("10.0.2.15:9247", pairingLinkShownEndpoint(parsePairingLink(good)!!))
+    }
+
     @Test fun aPublicAddressAHostNameOrLoopbackIsNotLocal() {
         val notLocal = mapOf(
             "공인 주소" to linkTo("203.0.113.9:443"),

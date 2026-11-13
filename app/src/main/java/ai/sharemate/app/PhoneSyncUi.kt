@@ -171,7 +171,7 @@ internal fun reasonSteps(reason: String): List<String> = reason.split(" · ").ma
                 connect(link.endpointText, link.code, link.fingerprint)
             } else {
                 scanned = false
-                scanNotice = PhoneQrCopy.confirm(link.endpoints.first())
+                scanNotice = PhoneQrCopy.confirm(pairingLinkShownEndpoint(link))
             }
         }
     }

@@ -125,8 +125,11 @@ class NowVehicleTest {
         assertTrue(nowVehicleCharge(false).muted)
 
         assertEquals(NowFigure("꺼짐", "휴대폰 꺼짐", muted = true), nowVehiclePhone(enabled = false, running = false, error = null, paired = 2))
-        assertEquals(NowFigure("대기", "휴대폰 대기"), nowVehiclePhone(enabled = true, running = true, error = null, paired = 0))
-        assertEquals("서버가 뜨는 중에도 대기", "대기", nowVehiclePhone(enabled = true, running = false, error = null, paired = 1).value)
+        assertEquals(NowFigure("연결 전", "휴대폰 연결 전"), nowVehiclePhone(enabled = true, running = true, error = null, paired = 0))
+        assertEquals("서버가 뜨는 중에는 준비 중", "준비 중", nowVehiclePhone(enabled = true, running = false, error = null, paired = 1).value)
+        // One state, one word on the car's two places: the 차량 page's 휴대폰 연결 tag says the same before a phone pairs and while starting.
+        assertEquals(phoneLinkTag(true, true, null, false, 0).first, nowVehiclePhone(true, true, null, 0).value)
+        assertEquals(phoneLinkTag(true, false, null, false, 0).first, nowVehiclePhone(true, false, null, 0).value)
         assertEquals(NowFigure("연결 2대", "휴대폰 연결 2대"), nowVehiclePhone(enabled = true, running = true, error = null, paired = 2))
         assertEquals("차량 페이지의 태그 그대로", phoneLinkTag(true, false, "port", false, 0).first, nowVehiclePhone(true, false, "port", 0).value)
         assertFalse(nowVehiclePhone(true, true, null, 1).muted)
@@ -135,7 +138,11 @@ class NowVehicleTest {
     @Test fun theSignalSaysThePillsStateInOneShortWord() {
         assertEquals("수신 중", nowVehicleSignal(PillTone.READY))
         assertEquals("기록 중도 수신 중", "수신 중", nowVehicleSignal(PillTone.POSITIVE))
-        assertEquals("시연 신호도 수신 중", "수신 중", nowVehicleSignal(PillTone.DEMO))
+        assertEquals("시연 모드의 신호는 차량 페이지의 말 그대로", "시연 신호", nowVehicleSignal(PillTone.DEMO))
+        assertEquals("시연 주행을 기록하는 중에도", "시연 신호", nowVehicleSignal(PillTone.POSITIVE, demo = true))
+        assertEquals("시연 신호", nowVehicleSignal(PillTone.READY, demo = true))
+        assertEquals("저장 실패는 시연에서도 확인 필요", "확인 필요", nowVehicleSignal(PillTone.NEGATIVE, demo = true))
+        assertEquals(vehicleHeroCopy(demo = true, fresh = true, signal = SignalStatus.READY, gear = null).tag, nowVehicleSignal(PillTone.DEMO))
         assertEquals("연결 중", nowVehicleSignal(PillTone.QUIET))
         assertEquals("확인 필요", nowVehicleSignal(PillTone.NEGATIVE))
     }
@@ -179,7 +186,7 @@ class NowVehicleTest {
         assertEquals("충전 정보 없음", nowVehicleInfo(charging, now + 60_000, zone).charge.spoken)
         val demoSample = charging.copy(live = charging.live!!.copy(demo = true))
         assertEquals("—", nowVehicleInfo(demoSample, now, zone).charge.value)
-        assertEquals("대기", nowVehicleInfo(charging.copy(sync = SyncInfo(running = true)), now, zone).phone.value)
+        assertEquals("연결 전", nowVehicleInfo(charging.copy(sync = SyncInfo(running = true)), now, zone).phone.value)
     }
 
     @Test fun theSignalFollowsTheHeaderPill() {
@@ -191,7 +198,7 @@ class NowVehicleTest {
         val recording = TripLogState(loaded = true, signal = SignalStatus.RECORDING, live = sample.copy(gear = GearState.MOVING), data = TripLogData(open = open))
         assertEquals("기록 중", "수신 중", nowVehicleInfo(recording, now, zone).signal)
         val demo = TripLogState(loaded = true, signal = SignalStatus.DEMO, live = sample.copy(demo = true), data = TripLogData(profile = FleetProfile(demoMode = true)))
-        assertEquals("시연 신호", "수신 중", nowVehicleInfo(demo, now, zone).signal)
+        assertEquals("시연 모드는 차량 페이지의 말로", "시연 신호", nowVehicleInfo(demo, now, zone).signal)
         assertEquals("80%", nowVehicleInfo(demo, now, zone).battery)
     }
 
@@ -207,7 +214,7 @@ class NowVehicleTest {
 
     @Test fun theTilesWordsAreOneShortLineEach() {
         with(VehicleCopy) {
-            val values = listOf(NOW_RECEIVING, NOW_CONNECTING, CHECK, NOW_NONE, "100%", "D · R · N", NOW_CHARGING, NOW_PHONE_OFF, NOW_PHONE_WAITING,
+            val values = listOf(NOW_RECEIVING, NOW_CONNECTING, CHECK, NOW_NONE, "100%", "D · R · N", NOW_CHARGING, NOW_PHONE_OFF, NOW_PHONE_WAITING, NOW_PHONE_UNPAIRED, NOW_PHONE_STARTING, NOW_DEMO,
                 NOW_PHONE_ERROR, nowPhoneLinked(9), nowCareDays(7), nowCareDays(365), nowCareDays(0), nowCareDays(-365))
             values.forEach { assertOneLine(it, statUnits) }
             listOf(NOW_BATTERY, GEAR, NOW_SIGNAL, NOW_CARE, NOW_CHARGE, NOW_PHONE).forEach { assertOneLine(it, labelUnits) }

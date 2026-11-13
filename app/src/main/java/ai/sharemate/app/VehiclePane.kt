@@ -82,7 +82,7 @@ internal data class VehicleHeroCopy(val tag: String, val tone: PillTone, val gea
  */
 internal fun vehicleHeroCopy(demo: Boolean, fresh: Boolean, signal: SignalStatus, gear: GearState?): VehicleHeroCopy {
     val (tag, tone) = when {
-        demo -> "시연 신호" to PillTone.DEMO
+        demo -> VehicleCopy.NOW_DEMO to PillTone.DEMO
         signal == SignalStatus.STARTING -> "연결 중" to PillTone.QUIET
         signal in setOf(SignalStatus.DENIED, SignalStatus.UNSUPPORTED, SignalStatus.ERROR) -> signal.label to PillTone.NEGATIVE
         fresh -> "수신 중" to PillTone.POSITIVE

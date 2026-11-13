@@ -134,6 +134,8 @@ internal object VehicleCopy {
     /** 신호 in the header pill's terms ([nowVehicleSignal]): the samples arrive, or the link is still starting; otherwise [CHECK]. */
     const val NOW_RECEIVING = "수신 중"
     const val NOW_CONNECTING = "연결 중"
+    /** 신호 in demo mode, the 차량 page's own tag ([vehicleHeroCopy]): a demo signal is never said to arrive from the car. */
+    const val NOW_DEMO = "시연 신호"
     /** A figure the car does not report right now, and what TalkBack says in its place. */
     const val NOW_NONE = "—"
     const val SPOKEN_NOW_NONE = "정보 없음"
@@ -148,7 +150,10 @@ internal object VehicleCopy {
     const val NOW_CHARGING = "충전 중"
     /** The phone link switched off, drawn quietly: the 휴대폰 연결 card's tag too ([phoneLinkTag]). */
     const val NOW_PHONE_OFF = "꺼짐"
-    /** The link on and listening, before a phone pairs or while the server starts. */
+    /** The link on with no phone paired yet, and the server still starting: the 휴대폰 연결 card's own tags ([phoneLinkTag]). */
+    const val NOW_PHONE_UNPAIRED = "연결 전"
+    const val NOW_PHONE_STARTING = "준비 중"
+    /** Phones paired but none on the line right now: the 휴대폰 연결 card's tag ([phoneLinkTag]); the tile counts them instead. */
     const val NOW_PHONE_WAITING = "대기"
     /** The server stopped on an error: the 휴대폰 연결 card's own tag ([phoneLinkTag]). */
     const val NOW_PHONE_ERROR = "서버 오류"

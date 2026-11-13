@@ -125,6 +125,14 @@ internal fun pairingLinkIsLocal(link: PairingLink): Boolean =
     link.endpoints.isNotEmpty() && link.endpoints.all { hostIsLocalIpv4(it.substringBeforeLast(':')) }
 
 /**
+ * The address a waiting link shows the person (pure; §9.6): the first one that is not local, since that is where the code
+ * could go that typing would never have sent it; an all-local link shows its first address. A link that led with a local
+ * decoy and hid a foreign host behind it would otherwise wait under an address that looks like the car's own.
+ */
+internal fun pairingLinkShownEndpoint(link: PairingLink): String =
+    link.endpoints.firstOrNull { !hostIsLocalIpv4(it.substringBeforeLast(':')) } ?: link.endpoints.first()
+
+/**
  * Whether a scanned link pairs at once (pure; §9.6): only a picture the phone's camera just took ([fromCamera]) of a link
  * whose addresses are all local ([local], [pairingLinkIsLocal]): the person stands at the car that shows it. A picture from
  * the photo picker, or a link that names another host, fills the three fields and waits for 차량과 연결, as typing does, with

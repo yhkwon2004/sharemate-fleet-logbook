@@ -113,14 +113,16 @@ internal data class NowVehicleInfo(val plate: String?, val battery: String, val 
 
 /**
  * 신호 in the header pill's terms (pure, unit-tested): the tone [statusPillInfo] gives the pill, said in one short word that
- * fits a mini stat. Ready, recording and demo samples are 수신 중; a link still starting is 연결 중; a save failure, a signal
+ * fits a mini stat. Ready and recording samples are 수신 중; in [demo] mode they are 시연 신호, the 차량 page's own tag, so a
+ * demo signal is never said to arrive from the car; a link still starting is 연결 중; a save failure, a signal
  * that cannot record or a stale one is 확인 필요, the word the 차량 page uses. The pill's own labels ("마지막 수신 5분 전",
  * "기록 중 · 12.3 km") are longer than a third of the tile, and the 사용자 card above already shows them whole.
  */
-internal fun nowVehicleSignal(tone: PillTone): String = when (tone) {
-    PillTone.NEGATIVE -> VehicleCopy.CHECK
-    PillTone.QUIET -> VehicleCopy.NOW_CONNECTING
-    PillTone.READY, PillTone.POSITIVE, PillTone.DEMO -> VehicleCopy.NOW_RECEIVING
+internal fun nowVehicleSignal(tone: PillTone, demo: Boolean = false): String = when {
+    tone == PillTone.NEGATIVE -> VehicleCopy.CHECK
+    demo || tone == PillTone.DEMO -> VehicleCopy.NOW_DEMO
+    tone == PillTone.QUIET -> VehicleCopy.NOW_CONNECTING
+    else -> VehicleCopy.NOW_RECEIVING
 }
 
 /**
@@ -150,14 +152,15 @@ internal fun nowVehicleCharge(charging: Boolean?): NowFigure = when (charging) {
 /**
  * 휴대폰 (§9.4; pure, unit-tested): the phone link as the 차량 page's 휴대폰 연결 card counts it. 꺼짐 (drawn quietly) while
  * the link is off; "연결 2대" while the server runs with phones paired (the card's 연결 figure); 서버 오류, the card's own tag,
- * when the server stopped on an [error]; otherwise 대기, the server starting or listening for a first phone.
+ * when the server stopped on an [error]; 준비 중 while it starts and 연결 전 while it listens for a first phone, the card's
+ * tags again, so one state has one word on the car's two places.
  */
 internal fun nowVehiclePhone(enabled: Boolean, running: Boolean, error: String?, paired: Int): NowFigure {
     val value = when {
         !enabled -> VehicleCopy.NOW_PHONE_OFF
-        !running && error != null -> VehicleCopy.NOW_PHONE_ERROR
-        running && paired > 0 -> VehicleCopy.nowPhoneLinked(paired)
-        else -> VehicleCopy.NOW_PHONE_WAITING
+        !running -> if (error != null) VehicleCopy.NOW_PHONE_ERROR else VehicleCopy.NOW_PHONE_STARTING
+        paired > 0 -> VehicleCopy.nowPhoneLinked(paired)
+        else -> VehicleCopy.NOW_PHONE_UNPAIRED
     }
     return NowFigure(value, "${VehicleCopy.NOW_PHONE} $value", muted = !enabled)
 }
@@ -177,7 +180,7 @@ internal fun nowVehicleInfo(state: TripLogState, now: Long, zone: ZoneId): NowVe
     val battery = sample?.socPercent?.takeIf { it in 0..100 }?.let { "$it%" }
     val gear = vehicleHeroCopy(profile.demoMode, vehicleSampleFresh(state, now), state.signal, state.live?.gear).gear.takeUnless { it == VehicleCopy.CHECK }
     val overview = drivingOverviewInfo(state, now, true, zone)
-    val signal = nowVehicleSignal(statusPillInfo(state, overview.fresh, overview.status).second)
+    val signal = nowVehicleSignal(statusPillInfo(state, overview.fresh, overview.status).second, state.data.profile.demoMode)
     val spoken = listOf(
         listOfNotNull(VehicleCopy.NOW_TITLE, plate).joinToString(" "),
         "${VehicleCopy.NOW_BATTERY} ${battery ?: VehicleCopy.SPOKEN_NOW_NONE}",

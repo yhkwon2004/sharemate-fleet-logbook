@@ -231,6 +231,12 @@ private fun peopleTiles(trips: List<Trip>, drivers: List<Driver>, month: YearMon
 }
 
 /**
+ * The three facts of [trips] as hero tiles that lead nowhere (pure): the count, the distance and the ratio, worded as 설정 ›
+ * 직원 words them ([monthFacts]), so the same month reads the same on both pages.
+ */
+private fun factTiles(trips: List<Trip>): List<HeroTile> = monthFacts(trips).map { fact -> HeroTile(fact.figure, fact.label, fact.kind.glyph, fact.spoken) }
+
+/**
  * What 운행기록 shows where the list under [filter] (0 전체, 1 점검 필요, 2 자동 반영) is empty in [month] (2.15 §2.2 and §9.1;
  * pure, unit-tested for every branch). [data] is the data set on screen (its trips are kept to its demo flag here as well);
  * [employeeId] is the employee chip's filter. In order:
@@ -277,8 +283,7 @@ internal fun logEmptyHero(filter: Int, month: YearMonth, data: TripLogData, empl
                 actions = listOf(HeroButton(LogCopy.HERO_CARD_SETTING, HeroAction.CARD_SETTING, primary = true), showAll))
         }
         filter == 1 && monthListed.isNotEmpty() -> {
-            // The month's three facts as 설정 › 직원 says them ([monthFacts]): one wording for the count, the distance and the ratio.
-            val facts = monthFacts(monthListed).map { fact -> HeroTile(fact.figure, fact.label, fact.kind.glyph, fact.spoken) }
+            val facts = factTiles(monthListed)
             val close = HeroButton(LogCopy.closeMonthAction(month, today), HeroAction.CLOSE_MONTH, primary = true)
                 .takeIf { monthStatus(data, month, zone).ready }
             EmptyHero(EmptyHeroCase.ISSUES, LogCopy.EMPTY_ISSUES, "$name$who ${LogCopy.EMPTY_ISSUES}", LogCopy.EMPTY_ISSUES_LINE, facts,
@@ -286,8 +291,9 @@ internal fun logEmptyHero(filter: Int, month: YearMonth, data: TripLogData, empl
         }
         employeeId != null && monthAll.isNotEmpty() && monthListed.isEmpty() -> {
             val title = LogCopy.employeeEmptyTitle(driver?.let { it.name.ifBlank { it.label } })
-            // 2.15 §9.1: never a hero without tiles: the employee's own months, or who did drive this month.
-            val people = if (monthRows.isEmpty()) peopleTiles(monthAll, data.drivers, null, today) else emptyList()
+            // 2.15 §9.1: never a hero without tiles: the employee's own months, or who did drive this month, or, when every trip
+            // of the month has no person to filter by (사용자 미지정), the month's three facts, which lead nowhere.
+            val people = if (monthRows.isEmpty()) peopleTiles(monthAll, data.drivers, null, today).ifEmpty { factTiles(monthAll) } else emptyList()
             EmptyHero(EmptyHeroCase.EMPLOYEE, title, if (driver != null) "$name$who 운행이 없어요" else "$name $title", tiles = monthRows.ifEmpty { people },
                 actions = listOf(clear.copy(primary = true), previous), rows = monthRows.isNotEmpty())
         }
@@ -305,8 +311,10 @@ internal fun logEmptyHero(filter: Int, month: YearMonth, data: TripLogData, empl
             val title = LogCopy.emptyMonthTitle(month, today)
             val spoken = if (current) "$name$who 운행이 아직 없어요" else "$name$who 운행 기록이 없어요"
             // An employee without any trip has no months of their own: who drove in the nearest month that has trips (§9.1).
+            // Where that month's trips have no person either, its three facts stand in, so the hero is never bare.
             val people = if (employeeId != null && listed.isEmpty()) nearestTripMonths(trips, month, today, zone, limit = 1).firstOrNull()?.let { nearest ->
-                peopleTiles(tripsIn(trips, nearest.atDay(1), nearest.atEndOfMonth(), zone), data.drivers, nearest, today)
+                val nearestTrips = tripsIn(trips, nearest.atDay(1), nearest.atEndOfMonth(), zone)
+                peopleTiles(nearestTrips, data.drivers, nearest, today).ifEmpty { factTiles(nearestTrips) }
             }.orEmpty() else emptyList()
             EmptyHero(EmptyHeroCase.MONTH, title, spoken, LogCopy.HERO_START.takeIf { current }, monthRows.ifEmpty { people },
                 listOfNotNull(previous, clear.takeIf { narrowed }), rows = monthRows.isNotEmpty())

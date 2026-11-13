@@ -190,6 +190,23 @@ class EmptyHeroTest {
         assertEquals(listOf("3건 · 30.0 km", "2건 · 20.0 km"), hero.tiles.map { it.line })
     }
 
+    @Test fun aMonthWhoseTripsHaveNoPersonStillGivesTheHeroItsTiles() {
+        // A fleet that logged trips before it registered anyone: nobody to filter by, so the month's facts stand in (§9.1).
+        val unassigned = (1..3).map { day -> trip("u$day", 10, day, start = 100.0 + day * 10).copy(driverId = null) }
+        val data = TripLogData(drivers = listOf(kim), trips = unassigned)
+        val shown = logEmptyHero(0, october, data, kim.id, today, zone)
+        assertEquals(EmptyHeroCase.EMPLOYEE, shown.case)
+        assertEquals(monthFacts(unassigned).map { it.figure }, shown.tiles.map { it.title })
+        assertEquals(listOf("3건", "30.0 km"), shown.tiles.take(2).map { it.title })
+        assertTrue("사실 타일은 버튼이 아님", shown.tiles.all { it.action == null })
+        assertFalse(shown.rows)
+        // The same employee on a month without trips: the nearest month's facts.
+        val empty = logEmptyHero(0, november, data, kim.id, today, zone)
+        assertEquals(EmptyHeroCase.MONTH, empty.case)
+        assertEquals(monthFacts(unassigned).map { it.figure }, empty.tiles.map { it.title })
+        assertTrue(empty.tiles.all { it.action == null })
+    }
+
     @Test fun nothingToCheckShowsTheMonthsThreeFactsAndLeadsToItsClose() {
         val hero = logEmptyHero(1, october, log(), null, today, zone)
         assertEquals(EmptyHeroCase.ISSUES, hero.case)
