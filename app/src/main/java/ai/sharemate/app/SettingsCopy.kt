@@ -57,6 +57,16 @@ internal object SettingsCopy {
     const val DELETE_DRIVER = "직원 삭제"
     const val KEEP_DRIVER = "운행 기록이 있어 삭제할 수 없어요"
     const val SPOKEN_KEEP_DRIVER = "운행 기록이 있어 삭제할 수 없어요 · 부서와 성명은 고칠 수 있어요"
+    /**
+     * 직원별 운행 under the manager (2.15 §7, [EmployeeShareCard]): a row's line under the person, as 월간's card writes it, the
+     * count and the business distance.
+     */
+    fun usageLine(trips: Int, businessKm: Double) = "${trips}건 · 업무 ${kmText(businessKm)}"
+    /** What TalkBack hears for the card's month tag ("10월"): the month its rows count. */
+    fun usageMonthSpoken(month: String) = "$month 운행 기준"
+    /** One stop per row: the person, the line, the distance and what the bar shows, its share of the month's distance. */
+    fun usageShareSpoken(name: String, line: String, total: String, month: String, percent: Int) =
+        "$name, $line, 총 $total, $month 거리의 ${percent}퍼센트"
 
     // ───────────────────────── 정산·세무 ─────────────────────────
 
@@ -68,6 +78,11 @@ internal object SettingsCopy {
     const val COST_DONE = "정산·세무 기준을 저장했어요"
     /** The span 설정's settlement card covers, which the page around it does not say. */
     const val SETTLEMENT_PERIOD = "이번 달"
+    /**
+     * 업무사용비율's tag in 정산·세무 (2.15 §7), before its formula: the year its figures cover, which 월간's range tag says there and
+     * nothing says here. 비용 참고 beside it applies the same year's ratio ([taxBasis]: 올해 업무사용비율 기준).
+     */
+    fun ratioYearTag(year: Int) = "${year}년"
 
     // ───────────────────────── 기록 ─────────────────────────
 

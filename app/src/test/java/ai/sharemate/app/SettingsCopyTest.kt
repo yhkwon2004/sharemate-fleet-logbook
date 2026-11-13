@@ -83,4 +83,25 @@ class SettingsCopyTest {
         assertEquals("Kim Jiwoo 님을 지금 운전하는 직원으로 선택", SettingsCopy.makeDriverSpoken("Kim Jiwoo"))
         assertEquals("0명도 그대로", "직원 0명", SettingsCopy.driversTitle(0))
     }
+
+    /**
+     * 2.15 §7: 직원별 운행 under the manager writes its rows as 월간's card does and gives each one stop; 업무사용비율 in 정산·세무
+     * carries its year as a tag.
+     */
+    @Test fun theNewCardsOfTwoFifteenKeepTheRules() {
+        assertEquals("9건 · 업무 43.0 km", SettingsCopy.usageLine(9, 43.0))
+        // The longest a row's line gets: a full month of short trips over a long distance, across the card beside the avatar.
+        assertFits(SettingsCopy.usageLine(999, 99_999.9), CARD_LINE_UNITS)
+        assertEquals("2026년", SettingsCopy.ratioYearTag(2026))
+        assertTrue(syllables(SettingsCopy.ratioYearTag(2026)) <= 8)
+        val line = SettingsCopy.usageLine(9, 43.0)
+        val spoken = SettingsCopy.usageShareSpoken("Sales · Kim Jiwoo", line, "54.0 km", "10월", 100)
+        assertEquals("Sales · Kim Jiwoo, 9건 · 업무 43.0 km, 총 54.0 km, 10월 거리의 100퍼센트", spoken)
+        assertEquals("10월 운행 기준", SettingsCopy.usageMonthSpoken("10월"))
+        listOf(spoken, SettingsCopy.usageMonthSpoken("2025년 12월")).forEach { long ->
+            assertFalse("한 줄: $long", long.contains('\n'))
+            assertFalse("마침표 없음: $long", long.trimEnd().endsWith('.'))
+        }
+        assertTrue("한 번에 듣는 행은 보이는 줄을 다 말함", spoken.contains(line))
+    }
 }
