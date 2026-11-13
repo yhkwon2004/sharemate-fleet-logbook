@@ -2211,6 +2211,13 @@ internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = Se
         TaxCard(data.profile, yearTotals, taxBasis(shown.month.year, today), taxCardBlocker(data.profile.annualCostWon, yearTotals.ratio, shown.month.year, today), modifier, goSettings)
     }
     val settle: @Composable (Modifier) -> Unit = { modifier -> SettlementCard(trips, data, modifier, goSettings) }
+    // 운행 현황's second card (2.15 §9.9): 설정 › 직원's 직원별 운행 for the period on screen, every employee a row with its share
+    // bar, and the height it gains beside 업무사용비율 filled by the period's facts instead of left hollow.
+    val usage: @Composable (Modifier) -> Unit = { modifier ->
+        val shares = remember(trips, data.drivers) { employeeShares(trips, data.drivers) }
+        val facts = remember(trips) { periodFacts(trips, zone) }
+        EmployeeShareCard(shares, facts, if (shown.yearly) "${shown.month.year}년" else monthLabel(shown.month, today), modifier, showTag = false)
+    }
     // The header's three parts: the stepper (the same one as 운행기록), 월간 · 연간 and Excel 저장, placed per window below.
     val stepper: @Composable RowScope.() -> Unit = { PeriodStepper(reportStepperCopy(shown, today), reportCanGoForward(shown, today), { step(false) }) { step(true) } }
     val periodUnit: @Composable (Modifier) -> Unit = { modifier -> Segmented(listOf("월간", "연간"), period, modifier) { period = it } }
@@ -2287,7 +2294,7 @@ internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = Se
                     // Side by side, each pair ends on one line (2.13). None of these cards holds a BoxWithConstraints, a
                     // SubcomposeLayout or a lazy list, so the row may ask them for their intrinsic height.
                     when (page) {
-                        0 -> SideBySide(wide, layout.cardGap, equalHeight = true, first = ratio) { modifier -> EmployeeUsageCard(trips, data, modifier) }
+                        0 -> SideBySide(wide, layout.cardGap, equalHeight = true, first = ratio, second = usage)
                         1 -> SideBySide(wide, layout.cardGap, equalHeight = true, first = { modifier -> ExpenseOverview(trips, modifier) }, second = settle)
                         else -> {
                             // The two cards share the page from EXPANDED up; stacked, each keeps to a 760-dp measure.
@@ -2338,27 +2345,6 @@ internal fun settlementCopy(rateWon: Long, period: String?): SettlementCopy = Se
         Text(auditHeadline(trips.size, issues.size), style = MaterialTheme.typography.titleLarge, color = Scene.text)
         if (trips.isNotEmpty()) AuditRows(kinds, onOpen = if (yearly) null else { { goReview(month) } })
         CarInfoRow(ReportCopy.AUDIT_NOTE, more = ReportCopy.AUDIT_NOTE_MORE)
-    }
-}
-
-/**
- * 운행 현황's second card (2.12): each employee's trips in the period as rows (the count and the business distance under the
- * name, the total at the end), unassigned trips as 사용자 미지정 (2.13: the one word for a trip without its person, the issue's
- * own label, where 2.12 said 직원 미지정 here); where a past trip's employee is fixed sits behind ⓘ.
- */
-@Composable private fun EmployeeUsageCard(trips: List<Trip>, data: TripLogData, modifier: Modifier) {
-    CarCard(modifier, title = { CarSectionTitle(ReportCopy.USAGE_TITLE, icon = rememberVectorPainter(Icons.Outlined.Person)) }) {
-        val rows = employeeUsage(trips, data.drivers, data.profile.reimbursePerKmWon)
-        if (rows.isEmpty()) CarLine(ReportCopy.USAGE_EMPTY)
-        else Column {
-            rows.forEachIndexed { index, row ->
-                if (index > 0) CarDivider()
-                CarRow(row.driver?.label ?: IssueType.NO_DRIVER.label, line = "${row.totals.trips}건 · 업무 ${kmText(row.totals.businessKm)}", trailing = {
-                    Text(kmText(row.totals.totalKm), style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"), color = Scene.text, maxLines = 1)
-                })
-            }
-        }
-        CarInfoRow(ReportCopy.USAGE_NOTE)
     }
 }
 

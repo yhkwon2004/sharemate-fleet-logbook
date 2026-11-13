@@ -85,7 +85,7 @@ class ReportCopyTest {
 
     @Test fun everyLineOfTheReportPageIsOneLine() {
         with(ReportCopy) {
-            listOf(CLOSE_NOTHING, CLOSE_WAITING, USAGE_EMPTY, EXPENSE_EMPTY, PREVIEW_FAILED_LINE, PREVIEW_EMPTY_LINE, SAVE_BAR_LINE, AUDIT_LINE)
+            listOf(CLOSE_NOTHING, CLOSE_WAITING, EXPENSE_EMPTY, PREVIEW_FAILED_LINE, PREVIEW_EMPTY_LINE, SAVE_BAR_LINE, AUDIT_LINE)
                 .forEach { assertOneLine(it, CARD_LINE_UNITS) }
             listOf(CLOSE_NOTE, USAGE_NOTE, EXPENSE_NOTE, SETTLEMENT_NOTE, PREVIEW_NOTE, AUDIT_NOTE, TAX_CAP_NOTE, TAX_NOTE).forEach { assertOneLine(it, INFO_LINE_UNITS) }
             listOf(SETTLEMENT_ASK, PREVIEW_FAILED).forEach { assertOneLine(it, titleSmallLineUnits) }

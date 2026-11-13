@@ -78,6 +78,25 @@ class SettingsFillTest {
         assertFalse("운행은 있음", shares.first().none)
     }
 
+    @Test fun aPeriodsFactsSayWhatTheCardsAroundThemDoNot() {
+        // 월간·Excel's 직원별 운행 (§9.9): the days driven, a trip's average and the longest, never the count, the total or the ratio again.
+        val trips = listOf(trip("a", 3, 20.0, kim.id), trip("b", 3, 4.0, kim.id), trip("c", 7, 12.0, lee.id, TripPurpose.PERSONAL),
+            trip("o", 9, 50.0, kim.id, open = true))
+        val facts = periodFacts(trips, zone)
+        assertEquals(listOf("2일", "12.0 km", "20.0 km"), facts.map { it.figure })
+        assertEquals(listOf("운행한 날", "운행당 평균", "가장 긴 운행"), facts.map { it.label })
+        assertEquals(listOf(ShareFactKind.DAYS, ShareFactKind.AVERAGE, ShareFactKind.LONGEST), facts.map { it.kind })
+        assertEquals(listOf("운행한 날 2일", "운행당 평균 12.0 km", "가장 긴 운행 20.0 km"), facts.map { it.spoken })
+        assertEquals(listOf(HeroGlyph.MONTH, HeroGlyph.DISTANCE, HeroGlyph.DRIVE), facts.map { it.kind.glyph })
+        assertTrue("둘레의 카드가 이미 말하는 것은 다시 말하지 않음", facts.map { it.label }.intersect(monthFacts(trips).map { it.label }.toSet()).isEmpty())
+        // A period without a finished trip: 0일 and two dashes, heard as 없음.
+        val empty = periodFacts(listOf(trip("o", 9, 50.0, kim.id, open = true)), zone)
+        assertEquals(listOf("0일", "–", "–"), empty.map { it.figure })
+        assertEquals(listOf("운행한 날 0일", "운행당 평균 없음", "가장 긴 운행 없음"), empty.map { it.spoken })
+        // Each label is one short line under its figure in a third of the card.
+        facts.forEach { assertTrue(it.label, it.label.length <= 7) }
+    }
+
     @Test fun theFactsOfTheMonthAreItsCountDistanceAndRatio() {
         val facts = monthFacts(listOf(trip("a", 3, 20.0, kim.id), trip("b", 4, 10.0, lee.id, TripPurpose.PERSONAL), trip("o", 5, 5.0, kim.id, open = true)))
         assertEquals(listOf("2건", "30.0 km", "67%"), facts.map { it.figure })

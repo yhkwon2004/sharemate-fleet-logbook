@@ -50,6 +50,8 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import java.time.Instant
+import java.time.ZoneId
 import kotlin.math.roundToInt
 
 /*
@@ -133,14 +135,19 @@ internal fun employeeShares(trips: List<Trip>, drivers: List<Driver>): List<Usag
     return rows.map { UsageShare(it, if (month > 0) it.totals.totalKm / month else 0.0) }
 }
 
-/** Which fact of the month a tile shows. */
-internal enum class ShareFactKind { TRIPS, DISTANCE, RATIO }
+/** Which fact a tile shows: the month's three ([monthFacts]), or a period's three in 월간·Excel ([periodFacts]). */
+internal enum class ShareFactKind { TRIPS, DISTANCE, RATIO, DAYS, AVERAGE, LONGEST }
 
-/** A fact's glyph, the empty hero's for the same fact (its ISSUES tiles are these facts): a journal, a gauge, the report. */
+/**
+ * A fact's glyph, the empty hero's for the same fact (its ISSUES tiles are the month's facts): a journal, a gauge, the report;
+ * and for a period's facts a calendar (the days driven), the gauge (the average) and the car (the longest trip).
+ */
 internal val ShareFactKind.glyph: HeroGlyph get() = when (this) {
     ShareFactKind.TRIPS -> HeroGlyph.COUNT
-    ShareFactKind.DISTANCE -> HeroGlyph.DISTANCE
+    ShareFactKind.DISTANCE, ShareFactKind.AVERAGE -> HeroGlyph.DISTANCE
     ShareFactKind.RATIO -> HeroGlyph.RATIO
+    ShareFactKind.DAYS -> HeroGlyph.MONTH
+    ShareFactKind.LONGEST -> HeroGlyph.DRIVE
 }
 
 /** One fact of the month in 직원별 운행: the [figure] is the tile's title, the [label] its line, [spoken] its one TalkBack stop. */
@@ -162,6 +169,28 @@ internal fun monthFacts(trips: List<Trip>): List<ShareFact> {
         ShareFact(trip, LogCopy.FACT_TRIPS, ShareFactKind.TRIPS, "${LogCopy.FACT_TRIPS} $trip"),
         ShareFact(km, LogCopy.FACT_DISTANCE, ShareFactKind.DISTANCE, "${LogCopy.FACT_DISTANCE} $km"),
         ShareFact(ratio, LogCopy.FACT_RATIO, ShareFactKind.RATIO, "${LogCopy.FACT_RATIO} ${if (totals.ratio == null) SettingsCopy.SPOKEN_FACT_NONE else ratio}"),
+    )
+}
+
+/**
+ * The three facts of a period that fill 월간·Excel's 직원별 운행 beside 업무사용비율 (2.15 §9.9; pure, unit-tested): the days that
+ * had a trip / 운행한 날, a trip's distance on average / 운행당 평균, and the longest trip / 가장 긴 운행, of the finished trips in
+ * [trips]. They are not [monthFacts]: the ratio card beside them and the month-close card above already show the count, the
+ * distance and the ratio, and a card that repeated them would only look filled. A period without a trip reads 0일, – and –,
+ * the dashes heard as 없음.
+ */
+internal fun periodFacts(trips: List<Trip>, zone: ZoneId): List<ShareFact> {
+    val done = trips.filterNot { it.open }
+    val days = done.map { Instant.ofEpochMilli(it.startAt).atZone(zone).toLocalDate() }.distinct().size
+    // The average over the distances as the logbook rounds them, so it agrees with the total beside it.
+    val average = if (done.isEmpty()) null else kmText(logbookTotals(done).totalKm / done.size)
+    val longest = done.maxOfOrNull { it.distanceKm }?.let(::kmText)
+    val dash = ratioText(null)
+    val none = SettingsCopy.SPOKEN_FACT_NONE
+    return listOf(
+        ShareFact("${days}일", ReportCopy.FACT_DAYS, ShareFactKind.DAYS, "${ReportCopy.FACT_DAYS} ${days}일"),
+        ShareFact(average ?: dash, ReportCopy.FACT_AVERAGE, ShareFactKind.AVERAGE, "${ReportCopy.FACT_AVERAGE} ${average ?: none}"),
+        ShareFact(longest ?: dash, ReportCopy.FACT_LONGEST, ShareFactKind.LONGEST, "${ReportCopy.FACT_LONGEST} ${longest ?: none}"),
     )
 }
 
@@ -203,17 +232,21 @@ private val SHARE_TEXT_START = 40.dp + 12.dp
  * at its foot, and the height left under the rows holds the month's [facts] as three tiles ([shareFactsLook]). The card's body
  * ([ShareFillPolicy]) makes that call from the height it measures and hands it back, so the tiles are composed in the look that
  * fits and the decision never depends on them.
+ *
+ * 월간·Excel's 운행 현황 shows the same card for the period on screen (2.15 §9.9), beside 업무사용비율 and as tall as it, with
+ * the period's own facts ([periodFacts]) and without the tag ([showTag] false): the page's range tag already names the period.
  */
-@Composable internal fun EmployeeShareCard(shares: List<UsageShare>, facts: List<ShareFact>, month: String?, modifier: Modifier = Modifier) {
+@Composable internal fun EmployeeShareCard(shares: List<UsageShare>, facts: List<ShareFact>, month: String?, modifier: Modifier = Modifier,
+    showTag: Boolean = true) {
     val pleos = LocalPleosColors.current
     val track = Scene.ringTrack
     var look by remember { mutableStateOf(ShareFactsLook.NONE) }
     val policy = remember { ShareFillPolicy { decided -> look = decided } }
     val tag = month ?: SettingsCopy.USAGE_NO_TRIP_YET
     CarCard(modifier.height(IntrinsicSize.Min), title = {
-        CarSectionTitle(ReportCopy.USAGE_TITLE, icon = rememberVectorPainter(Icons.Outlined.Person), trailing = {
+        CarSectionTitle(ReportCopy.USAGE_TITLE, icon = rememberVectorPainter(Icons.Outlined.Person), trailing = if (showTag) { {
             CarTag(tag, description = month?.let { SettingsCopy.usageMonthSpoken(it) } ?: tag)
-        })
+        } } else null)
     }) {
         Layout(contents = listOf(
             {

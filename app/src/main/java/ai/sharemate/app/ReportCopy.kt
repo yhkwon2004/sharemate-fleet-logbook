@@ -33,8 +33,11 @@ internal object ReportCopy {
     const val RATIO_FORMULA = "⑬ = ⑫ ÷ ⑪"
     const val SPOKEN_RATIO_FORMULA = "업무 거리 나누기 총주행 거리"
     const val USAGE_TITLE = "직원별 운행"
-    const val USAGE_EMPTY = "완료된 운행이 없어요"
     const val USAGE_NOTE = "지난 운행의 직원은 운행 상세에서 고쳐요"
+    /** The period's three facts under the rows (2.15 §9.9, [periodFacts]): what the cards around them do not already say. */
+    const val FACT_DAYS = "운행한 날"
+    const val FACT_AVERAGE = "운행당 평균"
+    const val FACT_LONGEST = "가장 긴 운행"
 
     // 경비·정산
     const val EXPENSE_TITLE = "등록 경비"

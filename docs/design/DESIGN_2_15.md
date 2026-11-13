@@ -322,3 +322,11 @@ person never stretches into one page-wide tile.
 - **People are rows** in EMPLOYEE too. Where the month's trips have no person at all, its three facts stand in.
 - On the 지금 column's 차량 tile, 신호 reads 시연 신호 in demo mode and 휴대폰 reads 준비 중 / 연결 전 / 연결 N대 / 서버 오류 /
   꺼짐, the 차량 page's own words. A link that waits on the phone names its first address that is not local.
+
+### 9.9 월간·Excel › 운행 현황's second card
+
+Beside 업무사용비율 and as tall as it, 직원별 운행 held one row over 290 dp of empty card. It is now 설정 › 직원's card for the
+period on screen: every employee a row with its share bar (one without trips reads 운행 없음), 사용자 미지정 last, and the
+height under the rows filled by three facts of the period as tiles. They are not the month's count, distance and ratio,
+which the cards around them already show, but 운행한 날 ("3일"), 운행당 평균 ("6.0 km") and 가장 긴 운행 ("12.0 km")
+(`periodFacts`, pure). The card has no tag there: the page's range tag names the period. 2.12's `EmployeeUsageCard` went.
