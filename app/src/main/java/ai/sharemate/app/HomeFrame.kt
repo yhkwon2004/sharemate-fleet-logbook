@@ -19,6 +19,8 @@ import java.time.ZoneId
  * stacked again under the greeting, as 2.12 had them: the destinations in a tall form, the attention card (always one: the
  * idle card holds the slot when the queue is empty), the sky, and the incident dock in a tall form at the foot. Both tall
  * forms have the 2.13 forms as their compact fallback, and [homeForms] picks, for each state, the largest pair that fits.
+ * 2.15 (docs/design/DESIGN_2_15.md §4) fills the idle card: up to three rows of the newest trips ([homeIdle], [idleAnatomy]),
+ * 334 dp at the most, so the idle frame is 914 dp (1,010 with the demo strip).
  *
  * Heights are one text line as Asta Sans draws it (round(.952 s) + round(.241 s) dp: bodySmall 19, titleSmall and labelLarge
  * 23, bodyLarge 24, titleLarge 29, headlineSmall 31, displaySmall 53), which reproduces the shots to the pixel.
@@ -136,6 +138,20 @@ internal val MINI_STATS = 46.dp
 internal val CLOSE_BAR = 10.dp
 internal val CLOSE_BAR_GAP = 12.dp
 
+/**
+ * The idle card's rows (2.15, docs/design/DESIGN_2_15.md §4): the newest finished trips, three at most, each a 56-dp row (the
+ * car's least touch target) with a 1-dp hairline between two rows.
+ */
+internal const val IDLE_ROWS_MAX = 3
+internal val IDLE_ROW = 56.dp
+internal val IDLE_HAIRLINE = 1.dp
+
+/** [count] idle rows with the hairlines between them (pure, unit-tested): 56, 113 and 170 dp, none for none; three at most. */
+internal fun idleRowsHeight(count: Int): Dp {
+    val rows = count.coerceIn(0, IDLE_ROWS_MAX)
+    return if (rows == 0) 0.dp else IDLE_ROW * rows + IDLE_HAIRLINE * (rows - 1)
+}
+
 // ───────────────────────── the queue ─────────────────────────
 
 /**
@@ -212,16 +228,28 @@ internal fun attentionIndex(queue: List<AttentionItem>, pin: AttentionPin?): Int
 /**
  * How a card kind is built, for its height: a figure at the headline's end, the supporting lines, a block under the headline
  * ([under], the month-close bar), the body block, and the action row (none: [row] null, as on the setup card, whose tiles
- * are its buttons).
+ * are its buttons). Without a [headline] row (2.15: the idle card's rows) the body follows the title row's 12 dp directly,
+ * with neither the headline, the block under it, the lines nor the 16 dp over the body.
  */
-@Immutable internal data class AttentionAnatomy(val figure: Boolean, val lines: Int, val under: Dp = 0.dp, val body: Dp? = null, val row: Dp? = ATTENTION_ROW)
+@Immutable internal data class AttentionAnatomy(val figure: Boolean, val lines: Int, val under: Dp = 0.dp, val body: Dp? = null, val row: Dp? = ATTENTION_ROW,
+    val headline: Boolean = true)
 
 /**
- * Each kind's anatomy at its tallest (§3.2's table), and the idle card's for null (2.14: 최근 운행, the trip's title with its
- * distance at the end, one line, 운행기록 보기); the composables draw the same blocks with the same constants.
+ * The idle card's anatomy with [rows] trips to list (2.15, docs/design/DESIGN_2_15.md §4; pure, unit-tested). With trips: no
+ * headline row, the rows right under the title row ([idleRowsHeight], three at most), then 운행기록 보기. Without any: the
+ * headline 아직 운행이 없어요, the three steps of how a trip is recorded as tiles in the setup tiles' look ([SETUP_TILES]),
+ * then 시연 체험 보기.
+ */
+internal fun idleAnatomy(rows: Int): AttentionAnatomy =
+    if (rows > 0) AttentionAnatomy(figure = false, lines = 0, body = idleRowsHeight(rows), headline = false)
+    else AttentionAnatomy(figure = false, lines = 0, body = SETUP_TILES)
+
+/**
+ * Each kind's anatomy at its tallest (§3.2's table), and the idle card's for null at its tallest (2.15: 최근 운행 with three
+ * rows, 334 dp; without any trip it is 307); the composables draw the same blocks with the same constants.
  */
 internal fun attentionAnatomy(kind: AttentionKind?): AttentionAnatomy = when (kind) {
-    null -> AttentionAnatomy(figure = true, lines = 1)
+    null -> idleAnatomy(IDLE_ROWS_MAX)
     // 지금 할 일 / the photo hint; four steps, the note and the photo strip, 8 dp apart; the facts line beside two buttons.
     AttentionKind.INCIDENT -> AttentionAnatomy(figure = false, lines = 1,
         body = INCIDENT_STEP_ROW * INCIDENT_STEPS_MAX + INCIDENT_GAP + CAR_LINE_HEIGHT + INCIDENT_GAP + INCIDENT_PHOTO)
@@ -240,17 +268,31 @@ internal fun attentionAnatomy(kind: AttentionKind?): AttentionAnatomy = when (ki
 }
 
 /**
- * The tallest a card of [kind] gets at FULL 1× (pure, unit-tested): padding, the title row (taller with the [pager]), the
- * headline or its figure, the lines, the body and the action row. Null is the idle card (2.14), which never has a pager:
- * it shows only while the queue is empty. Every card stays under [ATTENTION_CARD_CAP]: the incident card is the tallest at
- * 477 with the pager.
+ * A card's height at FULL 1× from its [anatomy] (pure, unit-tested): padding, the title row (taller with the [pager]), the
+ * headline or its figure with the block under it and the lines, the body (16 dp under a headline, right under the title row
+ * without one) and the action row.
  */
-internal fun attentionCardMax(kind: AttentionKind?, pager: Boolean): Dp {
-    val a = attentionAnatomy(kind)
-    return ATTENTION_PADDING * 2 + (if (pager && kind != null) ATTENTION_TITLE_PAGER else ATTENTION_TITLE) + ATTENTION_TITLE_GAP +
-        (if (a.figure) ATTENTION_FIGURE else ATTENTION_HEADLINE) + a.under + ATTENTION_LINE * a.lines +
-        (a.body?.let { ATTENTION_BLOCK_GAP + it } ?: 0.dp) + (a.row?.let { ATTENTION_BLOCK_GAP + it } ?: 0.dp)
+internal fun attentionCardHeight(anatomy: AttentionAnatomy, pager: Boolean): Dp {
+    val a = anatomy
+    val head = if (a.headline) (if (a.figure) ATTENTION_FIGURE else ATTENTION_HEADLINE) + a.under + ATTENTION_LINE * a.lines else 0.dp
+    return ATTENTION_PADDING * 2 + (if (pager) ATTENTION_TITLE_PAGER else ATTENTION_TITLE) + ATTENTION_TITLE_GAP + head +
+        (a.body?.let { (if (a.headline) ATTENTION_BLOCK_GAP else 0.dp) + it } ?: 0.dp) + (a.row?.let { ATTENTION_BLOCK_GAP + it } ?: 0.dp)
 }
+
+/**
+ * The tallest a card of [kind] gets at FULL 1× (pure, unit-tested): [attentionCardHeight] of its [attentionAnatomy]. Null is
+ * the idle card, which never has a pager (it shows only while the queue is empty), at its tallest: three rows, 334 dp
+ * ([idleCardHeight] gives each form). Every card stays under [ATTENTION_CARD_CAP]: the incident card is the tallest at 477
+ * with the pager.
+ */
+internal fun attentionCardMax(kind: AttentionKind?, pager: Boolean): Dp = attentionCardHeight(attentionAnatomy(kind), pager && kind != null)
+
+/**
+ * The idle card's height with [rows] trips (2.15 §4; pure, unit-tested): 48 + 32 + 12 + the rows + 16 + 56, so 334 dp with
+ * three, 277 with two and 220 with one; without any, 48 + 32 + 12 + the headline 31 + 16 + the 96-dp tiles + 16 + 56 = 307.
+ * Every form stays within [attentionCardMax] of null, which the frame counts.
+ */
+internal fun idleCardHeight(rows: Int): Dp = attentionCardHeight(idleAnatomy(rows), pager = false)
 
 /** A form of 홈's destination cards or of its incident dock (2.14): 2.12's [TALL] look, or 2.13's [COMPACT] one. */
 internal enum class HomeForm { TALL, COMPACT }
@@ -497,30 +539,37 @@ internal fun setupSteps(data: TripLogData): List<SetupStep> {
 }
 
 /**
- * What the idle card says (2.14, [homeIdle]): the [headline] (a trip's row title, or that there is none yet) with its spoken
- * form, the trip's distance at its end ([km]; none where the title already is the distance), the one [line] with its spoken
- * form, and the [month] 운행기록 보기 opens on (none without a trip, and then no action either).
+ * One row of the idle card (2.15, docs/design/DESIGN_2_15.md §4): the trip a tap opens in 운행기록 ([id]); the [day] and the
+ * start, "10월 29일 (목) 02:26"; the [title] as 운행기록 titles the trip's row ([tripRowTitle]); the [purpose], drawn as the
+ * list's chip (미분류 as its tag); and the row's one TalkBack stop ([spoken]): the places one by one, the day and the start,
+ * the purpose, "수정구 시흥동, 판교, 10월 29일 (목) 02:26 출발, 일반 업무".
  */
-@Immutable internal data class HomeIdle(val headline: HomeLine, val km: Double?, val line: HomeLine, val month: YearMonth?)
+@Immutable internal data class IdleRow(val id: String, val day: String, val title: String, val purpose: TripPurpose, val spoken: String)
 
 /**
- * The idle card's words (pure, unit-tested): the newest finished trip of the data set on screen (demo trips only in demo
- * mode, real ones otherwise), titled as 운행기록 titles its row ([tripRowTitle]) and spoken as it reads the places, one by one
- * ([tripRowTitleSpoken]); its distance at the title's end only under a route, since a trip without an address is titled
- * "8.0 km · 1분" already ([tripHasRoute], 운행기록's own rule); and one line "10월 29일 (목) 02:26 · 일반 업무 · Kim Jiwoo":
- * the day, the start, the purpose or 미분류, the driver's name or 사용자 미지정. Without any trip: 아직 운행이 없어요, and how
- * a trip starts.
+ * What the idle card shows ([homeIdle]): its [rows], newest first, and the [month] 운행기록 보기 opens on, the newest trip's.
+ * No rows (and no month) without a trip: the card then shows how a trip is recorded ([HomeCopy.IDLE_STEPS]).
+ */
+@Immutable internal data class HomeIdle(val rows: List<IdleRow>, val month: YearMonth?)
+
+/**
+ * The idle card's rows (2.15 §4; pure, unit-tested): the newest finished trips of the data set on screen (demo trips only in
+ * demo mode, real ones otherwise), [IDLE_ROWS_MAX] at most, newest first; a trip still recording is not one of them. Each is
+ * titled as 운행기록 titles its row and spoken as it reads the places ([tripRowTitleSpoken]); an unclassified trip is heard
+ * as 목적 미분류. 2.14 showed one trip and its driver: three rows say more about the car in the same glance.
  */
 internal fun homeIdle(data: TripLogData): HomeIdle {
-    val trip = data.trips.filter { it.demo == data.profile.demoMode && !it.open && it.endAt != null }.maxByOrNull { it.startAt }
-        ?: return HomeIdle(HomeLine(HomeCopy.IDLE_EMPTY), null, HomeLine(HomeCopy.IDLE_EMPTY_LINE, HomeCopy.SPOKEN_IDLE_EMPTY_LINE), null)
-    val day = localDate(trip.startAt)
-    val who = data.drivers.firstOrNull { it.id == trip.driverId }?.name?.takeIf { it.isNotBlank() } ?: HomeCopy.NO_DRIVER
-    val purpose = trip.purpose.label
-    val spokenPurpose = if (trip.purpose == TripPurpose.UNCLASSIFIED) IssueType.UNCLASSIFIED.label else purpose
-    return HomeIdle(HomeLine(tripRowTitle(trip), tripRowTitleSpoken(trip)), trip.distanceKm.takeIf { tripHasRoute(trip) },
-        HomeLine("${dayLabel(day)} ${hm(trip.startAt)} · $purpose · $who", "${dayLabel(day)} ${hm(trip.startAt)} 출발, $spokenPurpose, $who"), YearMonth.from(day))
+    val trips = data.trips.filter { it.demo == data.profile.demoMode && !it.open }.sortedByDescending { it.startAt }.take(IDLE_ROWS_MAX)
+    val rows = trips.map { trip ->
+        val day = "${dayLabel(localDate(trip.startAt))} ${hm(trip.startAt)}"
+        val purpose = if (trip.purpose == TripPurpose.UNCLASSIFIED) IssueType.UNCLASSIFIED.label else trip.purpose.label
+        IdleRow(trip.id, day, tripRowTitle(trip), trip.purpose, "${tripRowTitleSpoken(trip)}, $day 출발, $purpose")
+    }
+    return HomeIdle(rows, trips.firstOrNull()?.let { YearMonth.from(localDate(it.startAt)) })
 }
+
+/** One step of how a trip is recorded (2.15 §4, the idle card without any trip): its [title], the [line] under it, and what TalkBack hears for the line. */
+@Immutable internal data class IdleStep(val title: String, val line: String, val spokenLine: String = line)
 
 /** The month a batch of settled card payments opens on (pure): the month of its first payment; null for no batch. */
 internal fun matchedBatchMonth(charges: List<CardCharge>, zone: ZoneId): YearMonth? =

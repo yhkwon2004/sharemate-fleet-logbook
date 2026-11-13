@@ -371,7 +371,7 @@ fun LogbookApp(driving: DrivingUiState, requestPermissions: () -> Unit) {
                     openTrip = { tripId ->
                         val trip = state.data.trips.firstOrNull { it.id == tripId }
                         goLog(0, trip?.let { YearMonth.from(Instant.ofEpochMilli(it.startAt).atZone(zone)) }, tripId)
-                    }, openReport = goReport, navigate = { tab = it })
+                    }, openReport = goReport, navigate = { tab = it }, openTutorial = { tutorial = true })
                 // One background layer for every page: the city at full strength on home, dimmed behind the other pages,
                 // moving on the same clock as the page change so the layers never jump.
                 val skyLevel = when { blocked || !state.loaded -> 0f; tab == 0 -> 1f; else -> .34f }

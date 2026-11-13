@@ -79,7 +79,10 @@ import java.util.Locale
  * budget is the card's. The bodies below read the data themselves; a card whose subject has gone draws nothing.
  */
 
-/** Where 홈's cards lead: the picker, the permission prompt, 설정's sections, 운행기록 (a filter and month, or one trip), 월간·Excel and the tabs. */
+/**
+ * Where 홈's cards lead: the picker, the permission prompt, 설정's sections, 운행기록 (a filter and month, or one trip), 월간·Excel
+ * and the tabs; and (2.15) the 시연 체험 walkthrough ([openTutorial]), the one the header's 시연 체험 opens.
+ */
 @Stable internal class HomeNav(
     val openDriver: (String?) -> Unit,
     val requestPermissions: () -> Unit,
@@ -88,6 +91,7 @@ import java.util.Locale
     val openTrip: (String) -> Unit,
     val openReport: (YearMonth) -> Unit,
     val navigate: (Int) -> Unit,
+    val openTutorial: () -> Unit,
 )
 
 /** The pager of a card from two items: where the driver is ([index] of [size]), the neighbours' names, and the turn. */
@@ -176,10 +180,12 @@ private val AttentionPinSaver = Saver<AttentionPin?, String>(
  * [lines] 4 dp under it (one [CarLine] each, its spoken form for TalkBack); 16 dp and the [body]; 16 dp and the action row,
  * the [start] slot (a line, a link or a field) and the [actions], at most two buttons, the way on last. Under 560 dp of
  * content the start slot takes its own row above the buttons. A debug build logs (tag HomeFrame) a card taller than
- * [attentionCardMax] at the full window's normal font, where the frame's budget holds. [kind] null is the idle card.
+ * [attentionCardMax] at the full window's normal font, where the frame's budget holds. [kind] null is the idle card. A
+ * [headline] of null (2.15, the idle card's rows) leaves the headline row out, with its figure, [under] and [lines]: the
+ * body then follows the title row's 12 dp directly, as [AttentionAnatomy.headline] counts it.
  */
 @OptIn(ExperimentalLayoutApi::class)
-@Composable private fun AttentionCard(kind: AttentionKind?, title: String, icon: Painter, pager: AttentionPager?, headline: String,
+@Composable private fun AttentionCard(kind: AttentionKind?, title: String, icon: Painter, pager: AttentionPager?, headline: String?,
     spokenHeadline: String? = null, tag: (@Composable () -> Unit)? = null, headlineColor: Color = Scene.text, live: Boolean = false, figure: (@Composable () -> Unit)? = null,
     under: (@Composable () -> Unit)? = null, lines: List<HomeLine> = emptyList(), body: (@Composable ColumnScope.() -> Unit)? = null,
     start: (@Composable () -> Unit)? = null, actions: (@Composable RowScope.() -> Unit)? = null) {
@@ -205,22 +211,24 @@ private val AttentionPinSaver = Saver<AttentionPin?, String>(
             if (pager != null) PagerRow(pager)
         }
         Spacer(Modifier.height(ATTENTION_TITLE_GAP))
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-            Text(headline, Modifier.weight(1f).alignByBaseline().then(if (live) Modifier.semantics { liveRegion = LiveRegionMode.Polite } else Modifier)
-                .then(if (spokenHeadline != null) Modifier.semantics { contentDescription = spokenHeadline } else Modifier),
-                style = MaterialTheme.typography.headlineSmall, color = headlineColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (figure != null) {
-                Spacer(Modifier.width(16.dp))
-                Box(Modifier.alignByBaseline()) { figure() }
+        if (headline != null) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+                Text(headline, Modifier.weight(1f).alignByBaseline().then(if (live) Modifier.semantics { liveRegion = LiveRegionMode.Polite } else Modifier)
+                    .then(if (spokenHeadline != null) Modifier.semantics { contentDescription = spokenHeadline } else Modifier),
+                    style = MaterialTheme.typography.headlineSmall, color = headlineColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (figure != null) {
+                    Spacer(Modifier.width(16.dp))
+                    Box(Modifier.alignByBaseline()) { figure() }
+                }
+            }
+            under?.invoke()
+            lines.forEach { line ->
+                Spacer(Modifier.height(ATTENTION_LINE_GAP))
+                CarLine(line.text, spoken = line.spoken.takeIf { it != line.text })
             }
         }
-        under?.invoke()
-        lines.forEach { line ->
-            Spacer(Modifier.height(ATTENTION_LINE_GAP))
-            CarLine(line.text, spoken = line.spoken.takeIf { it != line.text })
-        }
         if (body != null) {
-            Spacer(Modifier.height(ATTENTION_BLOCK_GAP))
+            if (headline != null) Spacer(Modifier.height(ATTENTION_BLOCK_GAP))
             Column(Modifier.fillMaxWidth(), content = body)
         }
         if (start != null || actions != null) {
@@ -603,17 +611,22 @@ private val SETUP_TILES_STACK_UNDER = 560.dp
 
 /**
  * The idle card (2.14, while the queue is empty), so the slot never leaves the page bare: 최근 운행 with the quiet tag 확인할
- * 일 없음, the newest finished trip of the data set on screen as 운행기록 titles it, its distance at the headline's end as on
- * 목적 확인, one line (the day, the start, the purpose, the driver), and 운행기록 보기, which opens 운행기록 on that trip's
- * month. Without any trip it says so and how one starts, with no button ([homeIdle]).
+ * 일 없음. 2.15 (docs/design/DESIGN_2_15.md §4): 2.14's one figure and one button left the card half empty, so it lists the
+ * newest finished trips of the data set on screen, three at most ([homeIdle]), with no headline row: each row is a button
+ * that opens 운행기록 on its trip ([IdleTripRows], [HomeNav.openTrip]); 운행기록 보기 opens the newest trip's month. Without
+ * any trip the card says so and shows how a trip is recorded, three step tiles ([IdleStepTiles]), with 시연 체험 보기, the
+ * walkthrough the header's 시연 체험 opens. Either form stays within the frame's idle card ([idleCardHeight]).
  */
 @Composable private fun IdleBody(data: TripLogData, nav: HomeNav) {
     val idle = remember(data) { homeIdle(data) }
-    AttentionCard(null, HomeCopy.IDLE_TITLE, painterResource(R.drawable.ic_journal), null, idle.headline.text,
-        spokenHeadline = idle.headline.spoken.takeIf { it != idle.headline.text }, tag = { CarTag(HomeCopy.IDLE_TAG, description = HomeCopy.SPOKEN_IDLE_TAG) },
-        figure = idle.km?.let { km -> { KmFigure(km) } },
-        lines = listOf(idle.line),
+    val journal = painterResource(R.drawable.ic_journal)
+    val tag: @Composable () -> Unit = { CarTag(HomeCopy.IDLE_TAG, description = HomeCopy.SPOKEN_IDLE_TAG) }
+    if (idle.rows.isNotEmpty()) AttentionCard(null, HomeCopy.IDLE_TITLE, journal, null, headline = null, tag = tag,
+        body = { IdleTripRows(idle.rows, nav.openTrip) },
         actions = idle.month?.let { month -> { QuietAction(HomeCopy.IDLE_ACTION) { nav.openLog(0, month) } } })
+    else AttentionCard(null, HomeCopy.IDLE_TITLE, journal, null, HomeCopy.IDLE_EMPTY, tag = tag,
+        body = { IdleStepTiles(HomeCopy.IDLE_STEPS) },
+        actions = { PrimaryAction(HomeCopy.IDLE_DEMO, onClick = nav.openTutorial) })
 }
 
 // ───────────────────────── 휴대폰 연결 ─────────────────────────
