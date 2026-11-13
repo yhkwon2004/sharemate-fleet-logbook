@@ -133,6 +133,11 @@ internal object LogCopy {
     const val UNFOLDED = "펼침"
     const val AMOUNT = "금액"
     const val AMOUNT_HINT = "1원~1,000만 원"
+    // The quick amounts under the field (2.15, QuickAmounts): what a tap does, for TalkBack, in 충전 비용's words.
+    /** A recent amount's chip sets the field; 홈's 충전 card says "이 금액으로 등록" for its own. */
+    const val QUICK_SET_ACTION = "이 금액으로 입력"
+    /** An adding chip (+1,000) adds to the field ([quickAddSpoken] is the chip itself). */
+    const val QUICK_ADD_ACTION = "금액에 더하기"
     /** After the toll chip's fare ([tollChipText]): the navigation's estimate, not a receipt. */
     const val TOLL_GUESS = "내비 예상"
     const val SPOKEN_TOLL_ACTION = "통행료 추가"
@@ -291,6 +296,12 @@ internal fun tollSuggestion(trip: Trip): Long? =
 
 /** The toll chip's words (pure): "통행료 3,600원 · 내비 예상". */
 internal fun tollChipText(fare: Long): String = "${ExpenseType.TOLL.label} ${formatWon(fare)} · ${LogCopy.TOLL_GUESS}"
+
+/** An adding chip's words under the amount field (pure, 2.15 §5.1): "+1,000", grouped as the field shows it. */
+internal fun quickAddText(add: Long): String = "+${groupDigits(add.toString())}"
+
+/** What TalkBack says for an adding chip (pure): "1,000원 더하기", since "+1,000" is a symbol. */
+internal fun quickAddSpoken(add: Long): String = "${formatWon(add)} 더하기"
 
 /** The answer to a cost added in the detail (pure): "주차 4,500원을 추가했어요". */
 internal fun expenseAddedLine(type: ExpenseType, won: Long): String = "${type.label} ${formatWon(won)}을 추가했어요"

@@ -66,10 +66,14 @@ internal object ReportCopy {
 
     // 검토
     const val AUDIT_TITLE = "증빙 준비 상태"
-    /** The real sheet name of the workbook (LogbookExcel). */
+    /** The real sheet name of the workbook (LogbookExcel). 2.15: behind the card's ⓘ row, under the rows of what is left. */
     const val AUDIT_LINE = "세부 항목은 Excel 확인사항 시트에 있어요"
     const val AUDIT_NOTE = "제출 전 검토용이에요"
-    val AUDIT_NOTE_MORE = listOf("직원·운행 목적·계기판 거리의 연결을 점검해요", "국세청 운행기록부 항목을 참고했어요", "영수증과 세무 요건은 따로 확인해 주세요")
+    val AUDIT_NOTE_MORE = listOf("직원·운행 목적·계기판 거리의 연결을 점검해요", AUDIT_LINE, "국세청 운행기록부 항목을 참고했어요", "영수증과 세무 요건은 따로 확인해 주세요")
+    /** 2.15 (AuditRows): the one row of a period with trips and nothing left, after the positive check. */
+    const val AUDIT_ALL_CLEAR = "모든 운행이 확인됐어요"
+    /** What a kind's row does under 월간, for TalkBack: it opens 운행기록 › 점검 필요 on the month. */
+    const val AUDIT_ROW_ACTION = "점검 필요에서 보기"
     const val TAX_TITLE = "비용 참고"
     /** Shown while the annual cost is missing: why entering it matters. */
     const val TAX_CAP_NOTE = "운행기록부가 없으면 연 1,500만 원까지만 인정돼요"
