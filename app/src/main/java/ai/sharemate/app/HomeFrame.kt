@@ -146,8 +146,19 @@ internal val PAIRING_QR_MAX = 260.dp
 /** Between the QR and the column beside it. */
 internal val PAIRING_QR_GAP = 24.dp
 
-/** The narrowest the column beside the QR may get; narrower, the QR stands above it ([pairingQrAbove]). */
+/**
+ * The narrowest the column beside the QR may get at 1×, grown with a larger font; narrower, the QR stands above it
+ * ([pairingQrAbove]).
+ */
 internal val PAIRING_COLUMN_MIN = 280.dp
+
+/**
+ * The lines the column's headline may take: one in the FULL column (808 dp hold 33 units of headlineSmall, and every form is
+ * 14 at the most), two where the column is narrower, down to [PAIRING_COLUMN_MIN] (some 11.7 units at any font, since the
+ * least grows with the font), where 새 번호로 휴대폰을 더 연결해요 and 휴대폰 연결을 준비하고 있어요 wrap instead of being cut
+ * (PairingCopyTest holds each form to two such lines). Two lines happen only outside the frame's budget, where the page scrolls.
+ */
+internal const val PAIRING_HEADLINE_LINES = 2
 
 /**
  * One labelled line of the column (주소, 연결 번호, 인증키) stands in a slot 29 dp tall at least, 8 dp from the next: the code's
@@ -168,10 +179,13 @@ internal val PAIRING_COLUMN = ATTENTION_HEADLINE + ATTENTION_BLOCK_GAP + PAIRING
 
 /**
  * Whether the QR stands above the column instead of beside it (pure, unit-tested; §10): where the card's [content] width is
- * under the [qr]'s side + 24 + [PAIRING_COLUMN_MIN], 536 dp for the usual 232-dp QR. That is outside the frame's budget (the
- * FULL card's content is 1,064 dp), where the page scrolls when it must.
+ * under the [qr]'s side + 24 + [PAIRING_COLUMN_MIN], 536 dp for the usual 232-dp QR at 1×. That is outside the frame's budget
+ * (the FULL card's content is 1,064 dp), where the page scrolls when it must. The column's least grows with [fontScale] (never
+ * scaled below 1×) and the QR does not, since its modules are drawn in dp: at 1.3× the column keeps 364 dp, so its words keep
+ * the room they have at 1× (620 dp of content with the usual QR), as the 차량 page's [pairingStepsBeside] does.
  */
-internal fun pairingQrAbove(content: Dp, qr: Dp): Boolean = content < qr + PAIRING_QR_GAP + PAIRING_COLUMN_MIN
+internal fun pairingQrAbove(content: Dp, qr: Dp, fontScale: Float = 1f): Boolean =
+    content < qr + PAIRING_QR_GAP + PAIRING_COLUMN_MIN * fontScale.coerceAtLeast(1f)
 
 /**
  * 홈's pairing card with a QR of [side] (pure, unit-tested; §10): no headline row and no action row of its own (the column

@@ -86,6 +86,31 @@ internal const val PAIRING_COLUMN_LINE_UNITS = 19.0
  */
 internal const val PAIRING_HEADLINE_UNITS = 33.0
 
+/**
+ * The pairing column's headline where the column is narrowest beside the QR: [PAIRING_COLUMN_MIN] at about 23.9 dp a unit,
+ * some 11.7 units a line. The least grows with the font ([pairingQrAbove]), so a line holds as many units at 1.3× as at 1×.
+ * The headline may take [PAIRING_HEADLINE_LINES] there, so each of its forms must break into that many such lines at most.
+ */
+internal val PAIRING_HEADLINE_NARROW_UNITS: Double = PAIRING_COLUMN_MIN.value / 23.9
+
+/**
+ * The lines [text] takes at [budget] units a line, broken at its spaces as the theme's headings break Korean (by phrase):
+ * greedy, a phrase wider than the budget alone on its line. A balanced break keeps the same count and evens the lines.
+ */
+internal fun phraseLines(text: String, budget: Double): Int {
+    var lines = 1
+    var used = -1.0
+    text.split(' ').forEach { word ->
+        val units = oneLineUnits(word)
+        val next = if (used < 0) units else used + .25 + units
+        if (used < 0 || next <= budget) used = next else {
+            lines++
+            used = units
+        }
+    }
+    return lines
+}
+
 /** The width of [text] in units: a Hangul syllable 1, whitespace .25, anything else .55. */
 internal fun oneLineUnits(text: String): Double = text.sumOf { ch ->
     when {

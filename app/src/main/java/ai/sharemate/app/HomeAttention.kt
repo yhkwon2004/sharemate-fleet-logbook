@@ -641,9 +641,10 @@ private val PAIRING_LABEL = 72.dp
  * instead of typing an address, six digits and a 64-character key. The title row as it was, the countdown as its tag (it ticks
  * in place and is never announced; TalkBack hears "4분 59초 남음", [pairingRemainingSpoken]); under it one row: the QR of the
  * live link ([syncPairingLinkText], [QrCode]) or, while there is none, the 차량 page's tile ([PairingQrPlaceholder]); 24 dp;
- * and [PairingColumn], as tall as the QR at the least. Where the card's content is under 536 dp ([pairingQrAbove]) the QR
- * stands above the column. The card has no headline row and no action row of its own (`headline = null`, no `actions`): the
- * column holds both, so its height is the title row and the QR ([pairingAnatomy]: 324 dp, 348 with the pager).
+ * and [PairingColumn], as tall as the QR at the least. Where the card's content is under 536 dp ([pairingQrAbove]; more with
+ * a larger font, so the column keeps its 1× room) the QR stands above the column. The card has no headline row and no action
+ * row of its own (`headline = null`, no `actions`): the column holds both, so its height is the title row and the QR
+ * ([pairingAnatomy]: 324 dp, 348 with the pager).
  *
  * The link is encoded here, once per text (`remember(link)`), so the column knows the tile's side the way [QrCode] takes it
  * ([qrTileSide]: larger than 232 dp only where a module would fall under 4 dp) and the tile draws that same matrix; the clock's
@@ -665,7 +666,8 @@ private val PAIRING_LABEL = 72.dp
             // The column is sized from the QR's own side, never by asking the row (whose action row is a BoxWithConstraints) for intrinsics.
             BoxWithConstraints(Modifier.fillMaxWidth()) {
                 val qr: @Composable () -> Unit = { if (matrix != null) QrCode(matrix, QR_MIN_SIDE) else PairingQrPlaceholder(side) }
-                if (pairingQrAbove(maxWidth, side)) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(ATTENTION_BLOCK_GAP)) {
+                val above = pairingQrAbove(maxWidth, side, LocalDensity.current.fontScale)
+                if (above) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(ATTENTION_BLOCK_GAP)) {
                     qr()
                     PairingColumn(info, code, headline, Modifier.fillMaxWidth())
                 } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
@@ -679,10 +681,13 @@ private val PAIRING_LABEL = 72.dp
 
 /**
  * The column beside 홈's pairing QR (2.15.1, §10), as tall as the QR at the least, its blocks spread over that height (at FULL
- * 1× they need 222 dp, [PAIRING_COLUMN], so the 10 dp to spare go between them): the [headline] (headlineSmall, one line, a
- * polite live region, so a code that runs out is heard once); 16 dp; the three things a phone types in the phone's order,
- * 주소, 연결 번호 and 인증키 ([PairingLine], each one TalkBack stop; the code as "455 426" in titleMedium, heard digit by digit,
- * or a muted "––– –––" that TalkBack hears as the reason); 16 dp; and the action row at its foot, 같은 Wi-Fi나 핫스팟에서 찍어요
+ * 1× they need 222 dp, [PAIRING_COLUMN], so the 10 dp to spare go between them): the [headline] (headlineSmall, a polite live
+ * region, so a code that runs out is heard once; one line in the FULL column's 808 dp, and two at the most where the column is
+ * narrower, as the 차량 page's headline beside its QR takes them, since its longest forms, 새 번호로 휴대폰을 더 연결해요 and
+ * 휴대폰 연결을 준비하고 있어요, are wider than the column's least of 280 dp and are wrapped there, never cut,
+ * [PAIRING_HEADLINE_LINES]); 16 dp; the three things a phone types in the phone's order, 주소, 연결 번호 and 인증키
+ * ([PairingLine], each one TalkBack stop; the code as "455 426" in titleMedium, heard digit by digit, or a muted "––– –––"
+ * that TalkBack hears as the reason); 16 dp; and the action row at its foot, 같은 Wi-Fi나 핫스팟에서 찍어요
  * at the start ([VehicleCopy.PHONE_QR_HOW]) and 번호 다시 만들기, or 새 연결 번호 without a live code, at the end. The addresses
  * are the ones the QR carries, the first four in the car's order. While the server is not running: the headline and one line
  * (the server's error, or 네트워크 주소 확인 중), centred beside the tile, and nothing to press.
@@ -690,7 +695,7 @@ private val PAIRING_LABEL = 72.dp
 @Composable private fun PairingColumn(info: SyncInfo, code: String?, headline: String, modifier: Modifier) {
     val title: @Composable () -> Unit = {
         Text(headline, Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.headlineSmall, color = Scene.text,
-            maxLines = 1, overflow = TextOverflow.Ellipsis)
+            maxLines = PAIRING_HEADLINE_LINES, overflow = TextOverflow.Ellipsis)
     }
     if (!info.running) Column(modifier, verticalArrangement = Arrangement.spacedBy(ATTENTION_LINE_GAP, Alignment.CenterVertically)) {
         title()

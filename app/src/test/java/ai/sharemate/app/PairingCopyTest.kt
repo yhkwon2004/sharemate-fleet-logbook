@@ -64,6 +64,27 @@ class PairingCopyTest {
         }
     }
 
+    /**
+     * 2.15.1 fix: where the column beside 홈's QR is narrowest ([PAIRING_COLUMN_MIN], some 11.7 headlineSmall units at any font,
+     * since the least grows with the font), the headline wraps to two lines at the most and is never cut. At FULL it stays one.
+     */
+    @Test fun theHeadlineWrapsInTheNarrowestColumnBesideTheQrAndIsNeverCut() {
+        assertEquals(2, PAIRING_HEADLINE_LINES)
+        val headlines = listOf(VehicleCopy.PHONE_QR, VehicleCopy.PHONE_EXPIRED, VehicleCopy.PHONE_ANOTHER, VehicleCopy.PHONE_ADDRESS_PENDING,
+            HomeCopy.PAIRING_PREPARING)
+        headlines.forEach { assertTrue("$it: ${phraseLines(it, PAIRING_HEADLINE_NARROW_UNITS)}줄", phraseLines(it, PAIRING_HEADLINE_NARROW_UNITS) <= PAIRING_HEADLINE_LINES) }
+        headlines.forEach { assertEquals("FULL에서는 한 줄: $it", 1, phraseLines(it, PAIRING_HEADLINE_UNITS)) }
+        // The two forms that need the second line there (14 and 13.75 units against some 11.7), and the two that do not.
+        assertEquals(2, phraseLines(VehicleCopy.PHONE_ANOTHER, PAIRING_HEADLINE_NARROW_UNITS))
+        assertEquals(2, phraseLines(HomeCopy.PAIRING_PREPARING, PAIRING_HEADLINE_NARROW_UNITS))
+        assertEquals(1, phraseLines(VehicleCopy.PHONE_QR, PAIRING_HEADLINE_NARROW_UNITS))
+        assertEquals(1, phraseLines(VehicleCopy.PHONE_EXPIRED, PAIRING_HEADLINE_NARROW_UNITS))
+        // The counting itself: a break at each space that would overflow, a phrase wider than the line alone on its own.
+        assertEquals(1, phraseLines("가나 다라", 4.25))
+        assertEquals(2, phraseLines("가나 다라", 4.0))
+        assertEquals(2, phraseLines("가나다라마 바", 3.0))
+    }
+
     @Test fun theColumnBesideTheQrSaysWhatToDoOrWhyThereIsNone() {
         assertEquals(VehicleCopy.PHONE_QR, pairingQrHeadline("sharemate://pair?…", "455426", 0))
         assertEquals("번호가 없고 연결된 휴대폰이 없음", VehicleCopy.PHONE_EXPIRED, pairingQrHeadline(null, null, 0))

@@ -195,7 +195,9 @@ class HomeFrameTest {
     /**
      * The column beside the QR (§10) at FULL 1×: the headline 31 + 16 + three 29-dp lines 8 apart (103) + 16 + the action row 56
      * is 222 dp, under the QR's 232, so the QR sets the row's height and the spare goes between the column's blocks. Under 536 dp
-     * of content (232 + 24 + 280) the QR stands above the column; the FULL card's content is 1,064 dp.
+     * of content (232 + 24 + 280) the QR stands above the column; the FULL card's content is 1,064 dp. With a larger font the
+     * column's least grows and the QR's side does not: at 1.3× the QR stands beside a column of 364 dp at the least (620 dp of
+     * content), so a split window's card of 580 dp puts it above, where at 1× it stays beside.
      */
     @Test fun theColumnBesideTheQrFitsItsHeight() {
         assertEquals(103.dp, PAIRING_LINES)
@@ -213,6 +215,15 @@ class HomeFrameTest {
         assertFalse(pairingQrAbove(564.dp, PAIRING_QR_MAX))
         // At FULL the column is 1,064 − 232 − 24 = 808 dp wide, well over its least.
         assertTrue(1064.dp - QR_MIN_SIDE - PAIRING_QR_GAP >= PAIRING_COLUMN_MIN)
+        // The font: 1× by default, never scaled below it, and the column's least only grows with it.
+        assertEquals(pairingQrAbove(535.dp, QR_MIN_SIDE), pairingQrAbove(535.dp, QR_MIN_SIDE, fontScale = 1f))
+        assertFalse("작은 글꼴도 1×의 536", pairingQrAbove(536.dp, QR_MIN_SIDE, fontScale = .85f))
+        assertFalse("1×에서 580은 옆", pairingQrAbove(580.dp, QR_MIN_SIDE, fontScale = 1f))
+        assertTrue("1.3×에서 580은 위아래로", pairingQrAbove(580.dp, QR_MIN_SIDE, fontScale = 1.3f))
+        assertTrue("1.3×의 기준은 232 + 24 + 364 = 620", pairingQrAbove(619.dp, QR_MIN_SIDE, fontScale = 1.3f))
+        assertFalse(pairingQrAbove(621.dp, QR_MIN_SIDE, fontScale = 1.3f))
+        assertFalse("1,064 dp는 1.3×에서도 옆", pairingQrAbove(1064.dp, QR_MIN_SIDE, fontScale = 1.3f))
+        assertFalse(pairingQrAbove(1064.dp, PAIRING_QR_MAX, fontScale = 1.3f))
     }
 
     /**
