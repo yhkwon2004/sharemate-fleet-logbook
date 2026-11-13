@@ -2413,11 +2413,17 @@ internal fun expenseTypeSums(trips: List<Trip>): List<Pair<ExpenseType, Long>> {
  * under its label. That amount is the card's one tone: positive while it exceeds the no-logbook figure, the case the logbook
  * pays for. The card's ₩ mark is its title's alone (2.12 drew three, and the result in Material's onTertiaryContainer).
  * 설정 › 정산·세무 (2.15 §7) shows it under the form that sets the cost and passes no [goSettings], as it does the settlement's.
+ * There (§9.5, [fill]) it fills the height it is stretched to with the comparison as bars ([TaxFill], SettingsFill.kt).
  */
-@Composable private fun TaxCard(profile: FleetProfile, year: LogbookTotals, basis: String, blocker: String?, modifier: Modifier, goSettings: (() -> Unit)?) {
+@Composable private fun TaxCard(profile: FleetProfile, year: LogbookTotals, basis: String, blocker: String?, modifier: Modifier, goSettings: (() -> Unit)?,
+    fill: Boolean = false) {
     CarCard(modifier.fillMaxHeight(), title = { CarSectionTitle(ReportCopy.TAX_TITLE, icon = painterResource(R.drawable.ic_won), trailing = { CarTag(basis) }) }) {
         val cost = profile.annualCostWon
         val ratio = year.ratio
+        if (fill) {
+            TaxFill(cost, ratio, blocker)
+            return@CarCard
+        }
         if (blocker != null) {
             Text(blocker, style = MaterialTheme.typography.titleSmall, color = Scene.text)
             if (cost == null) {
@@ -2445,14 +2451,19 @@ internal fun expenseTypeSums(trips: List<Trip>): List<Pair<ExpenseType, Long>> {
  * rate and passes none. [period] names the span the totals cover where the page around the card does not (설정 passes
  * "이번 달"); the words come from [settlementCopy]. 2.13 sets it as a list of money in the one style: the rows, then a
  * hairline and the total row only while there are rows, so a period without business trips says so in one line where 2.12
- * drew a 30-sp 0원 under it (v13).
+ * drew a 30-sp 0원 under it (v13). 2.15 §9.5: [monthTag] names, as a tag before the rate's, a month 설정 shows in place of
+ * this one (the month the log lands on while this one has no trip yet); TalkBack hears it as the month the figures count.
  */
-@Composable private fun SettlementCard(trips: List<Trip>, data: TripLogData, modifier: Modifier, goSettings: (() -> Unit)? = null, period: String? = null) {
+@Composable private fun SettlementCard(trips: List<Trip>, data: TripLogData, modifier: Modifier, goSettings: (() -> Unit)? = null, period: String? = null,
+    monthTag: String? = null) {
     val rate = data.profile.reimbursePerKmWon
     val copy = settlementCopy(rate, period)
     val tag = copy.tag
     CarCard(modifier.fillMaxHeight(), title = {
-        CarSectionTitle(ReportCopy.SETTLEMENT_TITLE, icon = painterResource(R.drawable.ic_won), trailing = if (tag != null) { { CarTag(tag) } } else null)
+        CarSectionTitle(ReportCopy.SETTLEMENT_TITLE, icon = painterResource(R.drawable.ic_won), trailing = if (tag != null || monthTag != null) { {
+            monthTag?.let { CarTag(it, description = SettingsCopy.usageMonthSpoken(it)) }
+            tag?.let { CarTag(it) }
+        } } else null)
     }) {
         if (rate <= 0) {
             Text(ReportCopy.SETTLEMENT_ASK, style = MaterialTheme.typography.titleSmall, color = Scene.text)
@@ -2495,15 +2506,18 @@ internal fun settingsCardColumns(layout: LayoutTokens, page: Dp, fontScale: Floa
  * ([settingsFieldColumns]). The PLEOS SDK card of 2.11 is gone: its facts are an ⓘ row of 기록 및 개인정보. The shell holds the
  * [section], so a button that opens 설정 on one lands there and the header's tab returns to the last one. 2.15 (§7): 직원 and
  * 정산·세무 reach the page's foot, the manager over 직원별 운행 with share bars, and a second pair, 비용 참고 beside this year's
- * 업무사용비율 ([SettingsStack], SettingsFill.kt).
+ * 업무사용비율 ([SettingsStack], SettingsFill.kt); §9.5 fills what reaches it (the month's facts, the comparison's bars, and
+ * before the first employee three tiles of what registering does).
  */
 @Composable private fun SettingsPane(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, section: Int, onSection: (Int) -> Unit,
     onTutorial: () -> Unit = {}, onAssistant: (String?) -> Unit = {}, showInfo: (String) -> Unit) {
     val layout = LocalLayout.current
     val fontScale = LocalDensity.current.fontScale
     val month = YearMonth.from(localDate(now))
-    // The clock recomposes the pane every second; this month's trips only change with the data and the month.
-    val monthTrips = remember(state.data.trips, month) { tripsIn(state.data.trips, month.atDay(1), month.atEndOfMonth(), zone) }
+    // 2.15 §9.5: 직원 and 유류비 정산 read the month the log lands on ([landingMonth]): this one, or while it has no trip yet the
+    // latest earlier one that has. The clock recomposes the pane every second; these only change with the data and the month.
+    val landing = remember(state.data.trips, month) { landingMonth(state.data.trips, localDate(now), zone) }
+    val monthTrips = remember(state.data.trips, landing) { tripsIn(state.data.trips, landing.atDay(1), landing.atEndOfMonth(), zone) }
     val sections = rememberSaveableStateHolder()
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val twoUp = settingsCardColumns(layout, maxWidth, fontScale) == 2
@@ -2520,30 +2534,35 @@ internal fun settingsCardColumns(layout: LayoutTokens, page: Dp, fontScale: Floa
                 CareSettingsCard(state, act, repository, modifier = modifier, columns = if (twoColumns) 2 else 1)
             }
         }
-        // 2.15 §7: under the manager, 직원별 운행 of the month 운행기록 lands on, a share bar under each row, reaching the page's
-        // foot ([SettingsStack]); before the first finished trip there is no card.
+        // 2.15 §9.5: under the manager, from the first employee on, 직원별 운행 of the month 운행기록 lands on, every employee with
+        // a share bar and the month's facts filling the height it is stretched to; before the first employee, on the scene, the
+        // three tiles of what registering does. Either reaches the page's foot ([SettingsStack]).
         val drivers: @Composable () -> Unit = {
             val today = localDate(now)
-            val shown = remember(state.data.trips, today) { landingMonth(state.data.trips, today, zone) }
-            val shares = remember(state.data.trips, state.data.drivers, shown) {
-                usageShares(tripsIn(state.data.trips, shown.atDay(1), shown.atEndOfMonth(), zone), state.data.drivers)
+            val shares = remember(monthTrips, state.data.drivers) { employeeShares(monthTrips, state.data.drivers) }
+            val facts = remember(monthTrips) { monthFacts(monthTrips) }
+            SettingsStack(maxHeight, gap, top = { DriversCard(state.data, act, repository, pairFields) }) {
+                if (state.data.drivers.isEmpty()) DriverIntroTiles()
+                else EmployeeShareCard(shares, facts, monthLabel(landing, today).takeIf { monthTrips.isNotEmpty() })
             }
-            SettingsStack(maxHeight, gap, top = { DriversCard(state.data, act, repository, pairFields) },
-                bottom = if (shares.isEmpty()) null else { { EmployeeShareCard(shares, monthLabel(shown, today)) } })
         }
         // 2.15 §7: a second pair under the first, what the yearly cost does (비용 참고) beside the ratio it applies, both this
-        // year's, reaching the page's foot ([SettingsStack]). Here the tax card offers no 설정에서 입력: the form is above it.
+        // year's, reaching the page's foot ([SettingsStack]). Here the tax card offers no 설정에서 입력: the form is above it, and it
+        // draws its comparison as bars over the height (§9.5). The settlement sums the month the log lands on, named by a tag
+        // while that is an earlier month.
         val costs: @Composable () -> Unit = {
             val today = localDate(now)
             val (yearFrom, yearTo) = reportRange(ReportPeriod(YearMonth.from(today), yearly = true), today)
             val year = remember(state.data.trips, yearFrom, yearTo) { logbookTotals(tripsIn(state.data.trips, yearFrom, yearTo, zone)) }
+            val earlier = monthLabel(landing, today).takeIf { landing != month }
             SettingsStack(maxHeight, gap, top = {
                 SideBySide(twoUp, gap, equalHeight = true, first = { modifier -> CostCard(state.data.profile, act, repository, showInfo, modifier, twoColumns) }) { modifier ->
-                    SettlementCard(monthTrips, state.data, modifier, period = SettingsCopy.SETTLEMENT_PERIOD)
+                    SettlementCard(monthTrips, state.data, modifier, period = earlier ?: SettingsCopy.SETTLEMENT_PERIOD, monthTag = earlier)
                 }
             }) {
                 SideBySide(twoUp, gap, equalHeight = true, first = { modifier ->
-                    TaxCard(state.data.profile, year, taxBasis(today.year, today), taxCardBlocker(state.data.profile.annualCostWon, year.ratio, today.year, today), modifier, null)
+                    TaxCard(state.data.profile, year, taxBasis(today.year, today), taxCardBlocker(state.data.profile.annualCostWon, year.ratio, today.year, today), modifier, null,
+                        fill = true)
                 }) { modifier -> RatioCard(year, modifier, compact = !twoUp, yearTag = SettingsCopy.ratioYearTag(today.year)) }
             }
         }
