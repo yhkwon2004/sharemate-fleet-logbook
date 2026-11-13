@@ -160,14 +160,18 @@ class HomeFrameTest {
     }
 
     @Test fun theNowColumnFitsBesideIt() {
-        // 사용자 with a two-line question, 예약, 오늘 운행 and 이달 운행일지 with their three 16-dp gaps; 2.15's 차량 tile takes the
-        // rest of the page after its own 16-dp gap and the 8-dp foot, so the column ends on the page's foot without scrolling.
-        val above = 323.dp + 84.dp + 199.dp + 172.dp + 48.dp
-        assertEquals(826.dp, above)
-        val vehicle = nowVehicleHeight(HOME_PAGE_FULL, above)!!
-        assertEquals(247.dp, vehicle)
-        assertEquals(HOME_PAGE_FULL, above + 16.dp + vehicle + 8.dp)
-        assertTrue(vehicle >= NOW_VEHICLE_MIN)
+        // 사용자, 예약, 오늘 운행 and 이달 운행일지 with their three 16-dp gaps; 2.15's 차량 tile takes the rest of the page after its
+        // own 16-dp gap and the 8-dp foot, so the column ends on the page's foot without scrolling. §9.4: in every state of the
+        // 사용자 card, the question on two lines (323), the person once it is answered (171) and a first run (212).
+        val tiles = 84.dp + 199.dp + 172.dp + 48.dp
+        assertEquals(826.dp, 323.dp + tiles)
+        mapOf(323.dp to 247.dp, 171.dp to 399.dp, 212.dp to 358.dp).forEach { (driver, expected) ->
+            val vehicle = nowVehicleHeight(HOME_PAGE_FULL, driver + tiles)!!
+            assertEquals("사용자 $driver", expected, vehicle)
+            assertEquals("사용자 $driver", HOME_PAGE_FULL, driver + tiles + 16.dp + vehicle + 8.dp)
+            assertTrue(vehicle >= NOW_VEHICLE_MIN)
+            assertTrue(vehicle <= NOW_VEHICLE_MAX)
+        }
     }
 
     @Test fun theQueueKeepsTheOrderTheMomentDemands() {
