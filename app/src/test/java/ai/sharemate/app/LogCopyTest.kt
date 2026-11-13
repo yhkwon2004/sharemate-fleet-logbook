@@ -5,7 +5,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.YearMonth
 import java.time.ZoneId
 import java.util.UUID
 
@@ -175,8 +177,26 @@ class LogCopyTest {
             // Card lines, ⓘ lines and tags.
             listOf(EMPTY_ISSUES_LINE, ODOMETER_READ, ODOMETER_FILLED, COSTS_EMPTY, DRIVER_EMPTY, REQUIRED, REFERENCE, DEMO, NO_DRIVER, EDITED,
                 FILL_GAP, AMOUNT_HINT, historyLine(120), tollChipText(10_000_000)).forEach { assertOneLine(it, CARD_LINE_UNITS) }
-            // Titles: the empty card's (titleSmall) and the detail's sections.
-            listOf(EMPTY_TRIPS, EMPTY_ISSUES, EMPTY_MATCHED).forEach { assertOneLine(it, CARD_LINE_UNITS * 16 / 19) }
+            // 2.15's empty hero: its title (headlineMedium, about 26 dp a syllable, across a 560-dp page), its line (bodyLarge, a
+            // card line's budget), the tiles' titles (titleLarge) and lines (a third of the 900-dp page, as a setup tile's line), the
+            // buttons, and the landing tag in the tag row.
+            val today = LocalDate.of(2026, 11, 13)
+            listOf(HERO_FIRST, EMPTY_ISSUES, EMPTY_MATCHED, emptyMonthTitle(YearMonth.of(2026, 11), today), emptyMonthTitle(YearMonth.of(2025, 12), today),
+                employeeEmptyTitle(kim.name), employeeEmptyTitle(null)).forEach { assertOneLine(it, 20.0) }
+            listOf(HERO_START, EMPTY_ISSUES_LINE).forEach { assertOneLine(it, CARD_LINE_UNITS) }
+            val tiles = HERO_FIRST_STEPS + HERO_CARD_STEPS
+            tiles.forEach { (title, line) ->
+                assertOneLine(title, 10.0)
+                assertOneLine(line, SETUP_TILE_LINE_UNITS)
+            }
+            listOf(FACT_TRIPS, FACT_DISTANCE, FACT_RATIO, monthTileLine(LogbookTotals(1_234.5, 0.0, 1_234.5, 0.0, 0.0, 120, 0)),
+                monthTileLine(LogbookTotals(0.0, 0.0, 0.0, 0.0, 0.0, 1, 0))).forEach { assertOneLine(it, SETUP_TILE_LINE_UNITS) }
+            assertEquals("120건 · 1,234.5 km · 업무 100%", monthTileLine(LogbookTotals(1_234.5, 0.0, 1_234.5, 0.0, 0.0, 120, 0)))
+            listOf(HERO_TUTORIAL, HERO_DEMO_SETTING, HERO_DEMO_DRIVE, HERO_CARD_SETTING, PREVIOUS_MONTH, CLEAR_FILTER, SHOW_ALL, HERO_CLOSED,
+                closeMonthAction(YearMonth.of(2025, 12), today)).forEach { assertOneLine(it, 14.0) }
+            assertOneLine(landingTag(YearMonth.of(2026, 12)), CARD_LINE_UNITS)
+            assertEquals("1단계, D로 출발, 기록이 시작돼요", heroStepSpoken(1, "D로 출발", "기록이 시작돼요"))
+            // Titles: the detail's sections.
             listOf(PURPOSE, COSTS, NOTE, DETAIL).forEach { title ->
                 assertOneLine(title, CARD_LINE_UNITS)
                 assertTrue("$title: 8음절 이하", title.count { it in '가'..'힣' } <= 8)

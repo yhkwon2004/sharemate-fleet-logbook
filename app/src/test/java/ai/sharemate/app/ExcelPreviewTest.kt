@@ -45,6 +45,24 @@ class ExcelPreviewTest {
         assertEquals(6, previewRowsPerPage(Dp.Infinity, compact = false))
     }
 
+    /** 2.15 (DESIGN_2_15 §2.3): an empty sheet on the car shows its header row and ruled, empty rows; the phone's does not change. */
+    @Test fun anEmptySheetOnTheCarDrawsTheRuledRowsItsRoomHoldsUpToEight() {
+        assertEquals("휴대폰은 그대로", 0, emptySheetRows(2_000.dp, compact = true, car = false))
+        assertEquals("휴대폰은 높이가 없어도 그대로", 0, emptySheetRows(null, compact = true, car = false))
+        assertEquals("높이가 없으면 여덟 줄", PREVIEW_MAX_ROWS, emptySheetRows(null, compact = false))
+        assertEquals(8, emptySheetRows(Dp.Infinity, compact = false))
+        assertEquals("아무리 높아도 여덟 줄", 8, emptySheetRows(2_000.dp, compact = false))
+        // The header takes 66 dp, a row 72 + 1 (64 + 1 in a narrow car window); no pager or hint under an empty sheet.
+        assertEquals("머리글 66 + 8 × 73", 8, emptySheetRows(650.dp, compact = false))
+        assertEquals(7, emptySheetRows(649.dp, compact = false))
+        assertEquals("FULL 1×의 미리보기 카드에 남는 높이(약 372 dp)", 4, emptySheetRows(372.dp, compact = false))
+        assertEquals("좁은 창은 64 dp 줄", 4, emptySheetRows(326.dp, compact = true))
+        assertEquals("큰 글꼴은 줄이 높아져 덜 담음", 3, emptySheetRows(372.dp, compact = false, fontScale = 1.3f))
+        assertEquals("머리글과 한 줄이 딱 맞는 높이", 1, emptySheetRows(139.dp, compact = false))
+        assertEquals("한 줄도 안 들어가면 표가 없음", 0, emptySheetRows(138.dp, compact = false))
+        assertEquals(0, emptySheetRows(0.dp, compact = false))
+    }
+
     @Test fun thePagerAndTheHintTakeTheirShareOfTheTablesRoom() {
         assertEquals("간격 12 + 버튼 56 + 간격 12 + 안내 한 줄 16", 96f, previewPagerHeight(56.dp).value, .01f)
         assertEquals("휴대폰 48 dp 버튼", 88f, previewPagerHeight(48.dp).value, .01f)

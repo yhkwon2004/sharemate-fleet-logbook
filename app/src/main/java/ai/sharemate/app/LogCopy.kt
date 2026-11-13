@@ -1,5 +1,8 @@
 package ai.sharemate.app
 
+import java.time.LocalDate
+import java.time.YearMonth
+
 /*
  * The words of 운행기록 on the car (2.13, docs/design/DESIGN_2_13_SPEC.md §7), kept in one place so that LogCopyTest can hold
  * every line to the one-line rule: one fact in 해요체, no final period, inside the width the line gets at the normal font
@@ -8,7 +11,7 @@ package ai.sharemate.app
  * touch the phone: its list keeps routeText and its own rows.
  */
 
-/** 운행기록: the header, the three lists, the empty card and 운행 상세. */
+/** 운행기록: the header, the three lists, the empty hero and 운행 상세. */
 internal object LogCopy {
     // The header (LogPane)
     const val ALL_EMPLOYEES = "전체 직원"
@@ -43,14 +46,58 @@ internal object LogCopy {
     const val ISSUE_RECOVERED = "앱이 멈춰 마지막 수신 시각으로 끝냈어요"
     const val ISSUE_CARD_ON_PERSONAL = "회사 규정에 따라 처리해 주세요"
 
-    // An empty list (LogEmptyCard): the stepper and the chip already name the month and the employee, so the titles do not;
-    // TalkBack keeps the long titles ([logEmptyCopy]).
-    const val EMPTY_TRIPS = "운행 기록이 없어요"
+    // An empty list (2.15, CarEmptyHero, docs/design/DESIGN_2_15.md §2.2): the title on the scene, at most one line under it,
+    // the tiles and the ways on ([logEmptyHero]). A title that leaves out the month or the employee keeps them for TalkBack.
+    const val HERO_FIRST = "아직 운행이 없어요"
+    /** The line under FIRST and under this month's MONTH title. */
+    const val HERO_START = "출발하면 자동으로 기록해요"
     const val EMPTY_ISSUES = "점검할 운행이 없어요"
     const val EMPTY_ISSUES_LINE = "계기판 누적거리가 끊김 없이 이어져요"
-    const val EMPTY_MATCHED = "자동 반영된 운행이 없어요"
+    const val EMPTY_MATCHED = "자동으로 들어간 카드 결제가 없어요"
+    /** FIRST's three steps, each a title over its line. */
+    val HERO_FIRST_STEPS = listOf("D로 출발" to "기록이 시작돼요", "P로 주차" to "거리와 시간이 저장돼요", "목적 확인" to "홈에서 한 번 눌러요")
+    /** MATCHED's three steps: how a card payment reaches a trip by itself. */
+    val HERO_CARD_STEPS = listOf("카드 등록" to "끝 4자리만 적어요", "결제 알림" to "휴대폰 앱이 읽어요", "자동 반영" to "운행 비용에 들어가요")
+    // ISSUES's three facts of the month: the figure is the tile's title, these its line.
+    const val FACT_TRIPS = "운행"
+    const val FACT_DISTANCE = "총주행"
+    const val FACT_RATIO = "업무사용비율"
+    /** A month tile's tag while that month is closed. */
+    const val HERO_CLOSED = "마감됨"
+    /** What a month tile does, for TalkBack's click label. */
+    const val HERO_OPEN_MONTH = "이 달 운행 보기"
     const val PREVIOUS_MONTH = "이전 달 보기"
     const val CLEAR_FILTER = "필터 해제"
+    const val SHOW_ALL = "전체 보기"
+    /** FIRST's way on: the header's 시연 체험 walkthrough. */
+    const val HERO_TUTORIAL = "시연 체험 보기"
+    /** FIRST's way to the demo switch, which the hero never flips itself: on a real car it stops real recording. */
+    const val HERO_DEMO_SETTING = "시연 모드 켜러 가기"
+    /** FIRST in demo mode: the demo drive starts on 홈's strip. */
+    const val HERO_DEMO_DRIVE = "홈에서 시연 출발"
+    const val HERO_CARD_SETTING = "카드 등록하러 가기"
+
+    /**
+     * The quiet tag of a page that follows the trips and stands on an earlier month (2.15 §2.1): "11월은 아직 운행이 없어요".
+     * [month] is this month; 월 always takes 은.
+     */
+    fun landingTag(month: YearMonth): String = "${month.monthValue}월은 아직 운행이 없어요"
+
+    /** MONTH's title: "11월 운행이 아직 없어요" for this month, "9월 운행 기록이 없어요" for a past one (the year when it differs). */
+    fun emptyMonthTitle(month: YearMonth, today: LocalDate): String =
+        if (month == YearMonth.from(today)) "${monthLabel(month, today)} 운행이 아직 없어요" else "${monthLabel(month, today)} 운행 기록이 없어요"
+
+    /** EMPLOYEE's title: "Kim Jiwoo 님의 운행이 없어요", or, for a filter whose employee is gone, "선택한 직원의 운행이 없어요". */
+    fun employeeEmptyTitle(name: String?): String = if (name != null) "$name 님의 운행이 없어요" else "선택한 직원의 운행이 없어요"
+
+    /** ISSUES's way to the close of a month that is ready: "10월 마감하러 가기". */
+    fun closeMonthAction(month: YearMonth, today: LocalDate): String = "${monthLabel(month, today)} 마감하러 가기"
+
+    /** A month tile's line: "9건 · 54.0 km · 업무 80%". */
+    fun monthTileLine(totals: LogbookTotals): String = "${totals.trips}건 · ${kmText(totals.totalKm)} · 업무 ${ratioText(totals.ratio)}"
+
+    /** A step tile as TalkBack hears it, the way 월 마감's steps say theirs: "1단계, D로 출발, 기록이 시작돼요". */
+    fun heroStepSpoken(step: Int, title: String, line: String): String = "${step}단계, $title, $line"
 
     // 자동 반영 (MatchedTripList)
     const val NOT_COMPANY = "회사 비용 아님"

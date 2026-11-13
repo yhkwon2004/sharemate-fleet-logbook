@@ -79,28 +79,33 @@ class LogbookUiTest {
     }
 
     @Test fun anEmptyLogSaysWhatTheMonthIsMissingAndOffersClearingOnlyWhenSomethingNarrowsIt() {
-        // 2.13: the title is short (the stepper and the chip already name the month and the employee); TalkBack keeps the long one.
+        // 2.15 (migrated from 2.13's logEmptyCopy): the hero's title says what is missing; TalkBack hears the month and the
+        // employee the title leaves out; 필터 해제 only while a filter or an employee narrows the list. EmptyHeroTest has every branch.
         val today = LocalDate.of(2026, 11, 9)
         val november = YearMonth.of(2026, 11)
-        val plain = logEmptyCopy(0, november, 0, null, today)
-        assertEquals("운행 기록이 없어요", plain.title); assertEquals("11월 운행 기록이 없어요", plain.spoken); assertNull(plain.detail)
-        assertEquals(LogEmptyKind.TRIPS, plain.kind)
-        assertFalse("전체·전체 직원이면 필터 해제가 없음", plain.clearable)
-        val employee = logEmptyCopy(0, november, 0, "영업 · 권", today)
-        assertEquals("운행 기록이 없어요", employee.title); assertEquals("11월 영업 · 권 님의 운행 기록이 없어요", employee.spoken)
-        assertTrue(employee.clearable)
-        val checked = logEmptyCopy(1, november, 4, null, today)
-        assertEquals("점검할 운행이 없어요", checked.title); assertEquals("11월 점검할 운행이 없어요", checked.spoken)
-        assertEquals("계기판 누적거리가 끊김 없이 이어져요", checked.detail)
-        assertEquals(LogEmptyKind.ISSUES, checked.kind)
-        assertTrue(checked.clearable)
-        val nothing = logEmptyCopy(1, november, 0, null, today)
-        assertEquals("운행이 없으면 점검 필요도 운행이 없다고 말함", "운행 기록이 없어요", nothing.title)
-        assertEquals("11월 운행 기록이 없어요", nothing.spoken)
-        val matched = logEmptyCopy(2, november, 3, null, today)
-        assertEquals("자동 반영된 운행이 없어요", matched.title); assertEquals("11월 카드 결제가 자동으로 들어간 운행이 없어요", matched.spoken)
-        assertEquals(LogEmptyKind.MATCHED, matched.kind)
-        assertEquals("지난해 달은 연도를 붙임", "2025년 12월 운행 기록이 없어요", logEmptyCopy(0, YearMonth.of(2025, 12), 0, null, today).spoken)
+        val driver = Driver(id("d"), "영업", "권")
+        val october = Trip(id("t"), at(10, 20, 9), at(10, 20, 10), 100.0, 110.0, driverId = driver.id, purpose = TripPurpose.BUSINESS)
+        val data = TripLogData(drivers = listOf(driver), trips = listOf(october))
+        val clear = { hero: EmptyHero -> hero.actions.any { it.action == HeroAction.CLEAR_FILTER } }
+        val plain = logEmptyHero(0, november, data, null, today, zone)
+        assertEquals("11월 운행이 아직 없어요", plain.title); assertEquals("11월 운행이 아직 없어요", plain.spoken)
+        assertEquals(EmptyHeroCase.MONTH, plain.case)
+        assertFalse("전체·전체 직원이면 필터 해제가 없음", clear(plain))
+        val employee = logEmptyHero(0, november, data, driver.id, today, zone)
+        assertEquals("11월 운행이 아직 없어요", employee.title); assertEquals("11월 영업 · 권 님의 운행이 아직 없어요", employee.spoken)
+        assertTrue(clear(employee))
+        val checked = logEmptyHero(1, YearMonth.of(2026, 10), data, null, today, zone)
+        assertEquals("점검할 운행이 없어요", checked.title); assertEquals("10월 점검할 운행이 없어요", checked.spoken)
+        assertEquals("계기판 누적거리가 끊김 없이 이어져요", checked.line)
+        assertEquals(EmptyHeroCase.ISSUES, checked.case)
+        assertTrue("점검 필요의 해제는 전체 보기", checked.actions.any { it.action == HeroAction.SHOW_ALL })
+        val nothing = logEmptyHero(1, november, data, null, today, zone)
+        assertEquals("운행이 없으면 점검 필요도 운행이 없다고 말함", "11월 운행이 아직 없어요", nothing.title)
+        assertTrue(clear(nothing))
+        val matched = logEmptyHero(2, november, data, null, today, zone)
+        assertEquals("자동으로 들어간 카드 결제가 없어요", matched.title); assertEquals("11월 자동으로 들어간 카드 결제가 없어요", matched.spoken)
+        assertEquals(EmptyHeroCase.MATCHED, matched.case)
+        assertEquals("지난해 달은 연도를 붙임", "2025년 12월 운행 기록이 없어요", logEmptyHero(0, YearMonth.of(2025, 12), data, null, today, zone).spoken)
     }
 
     private val reportToday = LocalDate.of(2026, 11, 9)
