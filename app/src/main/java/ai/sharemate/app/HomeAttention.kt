@@ -669,11 +669,11 @@ private val PAIRING_LABEL = 72.dp
                 val above = pairingQrAbove(maxWidth, side, LocalDensity.current.fontScale)
                 if (above) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(ATTENTION_BLOCK_GAP)) {
                     qr()
-                    PairingColumn(info, code, headline, Modifier.fillMaxWidth())
+                    PairingColumn(info, code, headline, Modifier.fillMaxWidth(), qr = matrix != null)
                 } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                     qr()
                     Spacer(Modifier.width(PAIRING_QR_GAP))
-                    PairingColumn(info, code, headline, Modifier.weight(1f).heightIn(min = side))
+                    PairingColumn(info, code, headline, Modifier.weight(1f).heightIn(min = side), qr = matrix != null)
                 }
             }
         })
@@ -688,11 +688,12 @@ private val PAIRING_LABEL = 72.dp
  * [PAIRING_HEADLINE_LINES]); 16 dp; the three things a phone types in the phone's order, 주소, 연결 번호 and 인증키
  * ([PairingLine], each one TalkBack stop; the code as "455 426" in titleMedium, heard digit by digit, or a muted "––– –––"
  * that TalkBack hears as the reason); 16 dp; and the action row at its foot, 같은 Wi-Fi나 핫스팟에서 찍어요
- * at the start ([VehicleCopy.PHONE_QR_HOW]) and 번호 다시 만들기, or 새 연결 번호 without a live code, at the end. The addresses
+ * at the start while the QR shows ([qr]; else what brings it back, [VehicleCopy.pairingQrHint]) and 번호 다시 만들기, or 새 연결
+ * 번호 without a live code, at the end. The addresses
  * are the ones the QR carries, the first four in the car's order. While the server is not running: the headline and one line
  * (the server's error, or 네트워크 주소 확인 중), centred beside the tile, and nothing to press.
  */
-@Composable private fun PairingColumn(info: SyncInfo, code: String?, headline: String, modifier: Modifier) {
+@Composable private fun PairingColumn(info: SyncInfo, code: String?, headline: String, modifier: Modifier, qr: Boolean) {
     val title: @Composable () -> Unit = {
         Text(headline, Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.headlineSmall, color = Scene.text,
             maxLines = PAIRING_HEADLINE_LINES, overflow = TextOverflow.Ellipsis)
@@ -715,7 +716,8 @@ private val PAIRING_LABEL = 72.dp
                 PairingLine(VehicleCopy.PHONE_KEY, key, VehicleCopy.SPOKEN_PHONE_KEY)
             }
             Box(Modifier.fillMaxWidth().padding(top = ATTENTION_BLOCK_GAP)) {
-                ActionRow(start = { CarLine(VehicleCopy.PHONE_QR_HOW) }, actions = {
+                // While the tile shows no QR the line says what brings one back, never to scan what is not there.
+                ActionRow(start = { CarLine(VehicleCopy.pairingQrHint(qr, code != null)) }, actions = {
                     QuietAction(if (code == null) VehicleCopy.PHONE_NEW_CODE else VehicleCopy.PHONE_RENEW_CODE) { SyncServer.active?.refreshPairingCode() }
                 })
             }

@@ -48,6 +48,12 @@ class PairingCopyTest {
             assertEquals("같은 Wi-Fi나 핫스팟에서 찍어요", PHONE_QR_HOW)
             assertOneLine(PHONE_QR_HOW, PAIRING_COLUMN_LINE_UNITS)
             assertFalse("조사 앞 공백 없음", PHONE_QR_HOW.contains("Fi 나"))
+            // Without a QR on the tile the line says what brings one back, in the same slot beside the button.
+            assertEquals(PHONE_QR_HOW, pairingQrHint(qr = true, code = true))
+            assertEquals("새 번호를 만들면 QR이 다시 나와요", pairingQrHint(qr = false, code = false))
+            assertEquals("Wi-Fi나 핫스팟에 연결되면 QR이 나와요", pairingQrHint(qr = false, code = true))
+            listOf(PHONE_QR_AGAIN, PHONE_QR_NETWORK).forEach { assertOneLine(it, PAIRING_COLUMN_LINE_UNITS) }
+            assertFalse("QR이 없을 때 찍으라고 하지 않음", listOf(PHONE_QR_AGAIN, PHONE_QR_NETWORK).any { it.contains("찍어요") })
             listOf(PHONE_QR, PHONE_EXPIRED, PHONE_ANOTHER, PHONE_ADDRESS_PENDING, HomeCopy.PAIRING_PREPARING).forEach { assertOneLine(it, PAIRING_HEADLINE_UNITS) }
             // The three names, in the phone's order, as the 차량 page's steps name them; each fits the 72-dp name column
             // (labelMedium, 16 sp: 4.5 units are about 66 dp, so 연결 번호 keeps a gap before its digits).

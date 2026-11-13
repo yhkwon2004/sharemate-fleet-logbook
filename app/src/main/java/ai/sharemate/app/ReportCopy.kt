@@ -226,6 +226,20 @@ internal object VehicleCopy {
      * for the QR to work. The 차량 page keeps [PHONE_HOW] under its typed code.
      */
     const val PHONE_QR_HOW = "같은 Wi-Fi나 핫스팟에서 찍어요"
+    /** The same line while there is no QR to scan: what brings it back, a new code or a network to publish addresses on. */
+    const val PHONE_QR_AGAIN = "새 번호를 만들면 QR이 다시 나와요"
+    const val PHONE_QR_NETWORK = "Wi-Fi나 핫스팟에 연결되면 QR이 나와요"
+
+    /**
+     * The line at the foot of 홈's pairing column (2.15.1 §10; pure, unit-tested): how to scan while the QR shows ([qr]);
+     * without a QR, that a new code brings it back when the code ran out, else (a live [code] with no address yet) that a
+     * network does. It never tells the driver to scan a QR that is not there.
+     */
+    fun pairingQrHint(qr: Boolean, code: Boolean): String = when {
+        qr -> PHONE_QR_HOW
+        !code -> PHONE_QR_AGAIN
+        else -> PHONE_QR_NETWORK
+    }
     /**
      * What TalkBack hears for the countdown tag's "4:59 남음" (2.15.1 §10, [pairingRemainingSpoken]), so the figure is never
      * heard as a time of day: "4분 59초 남음", "5분 남음" on the whole minute, "59초 남음" under a minute.
