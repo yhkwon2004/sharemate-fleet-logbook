@@ -1,5 +1,6 @@
 package ai.sharemate.app
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,6 +14,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.isSpecified
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.IntrinsicMeasurable
 import androidx.compose.ui.layout.IntrinsicMeasureScope
@@ -215,6 +217,9 @@ internal fun nowVehicleInfo(state: TripLogState, now: Long, zone: ZoneId): NowVe
     val picture = painterResource(R.drawable.sharemate_silver_car)
     val aspect = picture.intrinsicSize.let { if (it.isSpecified && it.width > 0f) it.height / it.width else NOW_VEHICLE_ASPECT }
     val policy = remember(aspect) { VehicleBodyPolicy(aspect) { shown -> more = shown } }
+    // The second row arrives with a short fade where the room opens under it (the daily question folding away), never as a pop
+    // in the middle of that fold; it snaps under reduced motion, and leaves at once with the room.
+    val reveal by animateFloatAsState(if (more) 1f else 0f, enterSpec(160), label = "now-vehicle-more")
     CarCard(modifier, onClick = onOpen, onClickLabel = VehicleCopy.NOW_OPEN, description = if (more) info.spokenMore else info.spoken,
         padding = NOW_TILE_PADDING,
         title = {
@@ -235,7 +240,7 @@ internal fun nowVehicleInfo(state: TripLogState, now: Long, zone: ZoneId): NowVe
             },
             {
                 // §9.4: composed always, placed only where the body has room for it.
-                Row(Modifier.clearAndSetSemantics {}, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(Modifier.graphicsLayer { alpha = reveal }.clearAndSetSemantics {}, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     CarMiniStat(painterResource(R.drawable.ic_calendar), VehicleCopy.NOW_CARE, info.care.value, Modifier.weight(1f), live = true,
                         muted = info.care.muted)
                     CarMiniStat(painterResource(R.drawable.ic_bolt), VehicleCopy.NOW_CHARGE, info.charge.value, Modifier.weight(1f), live = true,
