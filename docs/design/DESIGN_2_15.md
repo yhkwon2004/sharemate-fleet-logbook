@@ -225,3 +225,83 @@ Today the phone types three things the car shows. 2.15 puts them in one QR code.
   tallest and the first-run state by day and by night, the idle card with three rows, one row and none, the quick
   amounts, 검토's rows, the QR on the car (decoded from a screenshot), the phone's connect card with a picture of a QR,
   the two 설정 pages, 홈's budget, and the phone's other screens against 2.14.1.
+
+## 9. Corrections after the first build
+
+The first build (f91f300) was looked at on the Pleos emulator (FULL window, 1×, by day and by night, a data set with
+trips and a clean install) and reviewed from three sides. What follows replaces the sections it names.
+
+### 9.1 The empty hero takes the page's height (replaces §2.2's fixed 208 dp)
+
+A clean install's 운행기록 filled 37 % of its page. Across the page, the TALL tiles now grow with the room: the tile row's
+height is the hero's bounded height less its own title, line, gaps and actions and less a 200-dp band for the city,
+held between 208 and 360 dp (`heroTileHeight(room, chrome)`, pure). From 300 dp up a tile carries an 88-dp accent square
+with a 44-dp glyph and its title in `headlineSmall`. Where the hero's height is not bounded, or the tiles stack, they
+keep 208 and 104.
+
+- The three first-trip steps carry a small picture under their line, so a tall tile says what it means without more
+  words: ① the gear strip `P R N D` with D lit, ② the same strip with P lit, ③ the three purpose chips (출·퇴근, 일반 업무,
+  개인) as the list draws them, not buttons. `HeroTile.ornament` names it; other tiles have none. TalkBack skips them.
+- **Month tiles never stretch.** The months of a MONTH hero always stand as the stacked COMPACT rows (104 dp, the icon at
+  the start, the month, its line, 마감됨 as a tag, the chevron), across the page, whatever its width. One month is one row.
+- A tile's tag is not a second TalkBack stop: its spoken form already says it.
+- **No hero without tiles.** EMPLOYEE lists that employee's nearest months with trips as rows (a tap opens the month,
+  the filter kept); when the employee has no trip anywhere, the tiles are the people who drove in the month on screen,
+  three at most, the name over "9건 · 54.0 km" (a tap filters by that person). MONTH with an employee who has no trip
+  anywhere does the same.
+
+### 9.2 A pinned trip keeps its pane (운행기록, split page)
+
+The hero takes both panes only while no trip is shown. When the list empties under a trip the driver is editing (the
+last 점검 필요 fixed in the pane), the detail stays where it is and the hero stands in the list column, in its stacked
+form. The month a selection belongs to is saved with it, so a page that comes back after its followed month moved drops
+the old month's trip.
+
+### 9.3 월간·Excel without trips (운행 현황, 경비·정산, 검토)
+
+Where the period has no trip, those three views show a hero without a title in place of their two cards (the month-close
+card above them already says the month is empty). On an empty log: the three steps of a month, ① 목적 확인 / 운행마다 한 번
+눌러요 ② 월 마감 / 확인이 끝나면 잠가요 ③ Excel 저장 / 운행기록부 양식으로 받아요, and 시연 체험 보기. Otherwise the nearest
+months with trips as rows (a tap moves the page to that month) and 이전 달 보기. The Excel view keeps its empty form.
+
+### 9.4 The 지금 column always ends at the page's end (replaces §3's 280-dp cap)
+
+`NOW_VEHICLE_MAX` is 400 dp: the tile takes the room the page leaves in every state (247 with the daily question, about
+399 once it is answered, about 358 on a first run). Height the picture cannot use becomes content, not air: when the
+picture slot exceeds the picture's own height by 62 dp or more, a second row of three mini stats stands under the first:
+관리 (the next care deadline as "D-7", or —), 충전 (충전 중, or —) and 휴대폰 (연결 N대, 대기, or 꺼짐). The tile's one
+TalkBack stop names them too. The budget test covers the three driver-card states.
+
+### 9.5 설정 › 직원 and › 정산·세무 (replaces §7's cards where they were hollow)
+
+- **직원, no employee yet:** under the manager, on the scene, the small heading 직원을 등록하면 and three tiles in the
+  hero's look, not buttons: ④ 사용자 칸 / 운행기록부에 이름이 들어가요, 출발 전 확인 / 하루 한 번 운전자를 물어요, 유류비 정산 /
+  직원별로 계산해요.
+- **직원, with employees:** 직원별 운행 stays stretched to the page's foot and uses the height. Every registered employee
+  has a row (one without trips in the month: "운행 없음", an empty track, muted), then 사용자 미지정 when there is one.
+  Where 208 dp or more is left under the rows, three facts of the month fill it as tiles: the count / 운행, the distance /
+  총주행, the ratio / 업무사용비율. The card shows as soon as an employee exists; before the first trip its tag says
+  아직 운행 없음 and the facts read 0건, 0.0 km and –.
+- **정산·세무:** 유류비 정산 shows `landingMonth` with the month as its tag when this month has no trip yet. 비용 참고, in
+  설정 only, fills its stretched height with the comparison as two bars under the money rows (기록부 없을 때 and 업무 비율
+  적용액, the larger at full width, 24 dp on the ring-track token, the amount at the bar's end in the money style); before
+  a yearly cost exists, one bar for the 1,500만 원 limit with its line. 월간's 검토 keeps the card as it was.
+
+### 9.6 Pairing
+
+- **An expired code is no code.** The QR, its headline, the countdown and the pill read the code only while
+  `now < pairingExpiresAt` (`syncPairingLinkText(info, now)`), and the server publishes once when the code runs out, so
+  홈's pairing card drops it too. At expiry the placeholder stands with 연결 번호가 만료됐어요 and 새 연결 번호.
+- **A link is trusted only as far as typing was.** `pairingLinkIsLocal(link)` (pure): true only when every endpoint is an
+  IPv4 literal on 10/8, 172.16/12, 192.168/16 or 169.254/16. The phone connects at once only for a picture it took
+  itself of a local link. A link from 사진에서 QR 읽기, or one that names any other host, fills the three fields and waits:
+  one line under the buttons, "주소를 확인하고 차량과 연결을 눌러 주세요 · 203.0.113.9:443", and the person presses 차량과 연결,
+  as when typing.
+- **The card stands across the 차량 page**, under the two columns. From 900 dp of card width the three manual steps
+  stand beside the QR and its words, with no fold; narrower, 직접 입력하기 folds them as before.
+- The QR's headline is 휴대폰 앱으로 찍어요.
+- ZXing's NOTICE text follows the licence in both licence files.
+
+### 9.7 홈
+
+- A closed month of another year reads "2026년 12월 운행기록부 · Excel 저장", which fits the tall card's line.
