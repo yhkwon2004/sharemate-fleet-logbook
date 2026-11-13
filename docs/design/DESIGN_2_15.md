@@ -330,3 +330,35 @@ period on screen: every employee a row with its share bar (one without trips rea
 height under the rows filled by three facts of the period as tiles. They are not the month's count, distance and ratio,
 which the cards around them already show, but 운행한 날 ("3일"), 운행당 평균 ("6.0 km") and 가장 긴 운행 ("12.0 km")
 (`periodFacts`, pure). The card has no tag there: the page's range tag names the period. 2.12's `EmployeeUsageCard` went.
+
+## 10. 홈's 휴대폰 연결 card carries the QR (2.15.1)
+
+2.15.0 put the QR on 차량 › 휴대폰 연결 only. The card 홈 queues while the link is on and no phone is paired still had the
+phone type an address, six digits and a 64-character key. Asked whether the QR should stand there too, the user said
+"네, 넣어 주세요".
+
+- **Layout (FULL, 1×).** The card's title row as it is (휴대폰 연결, the countdown as its tag, the pager). Under it one
+  row: the QR at the start (`QrCode(link, QR_MIN_SIDE)`, or the 차량 page's placeholder tile while there is no live link),
+  24 dp, and a column that takes the rest of the width and is as tall as the QR at the least:
+  - the headline (headlineSmall, one line): `pairingQrHeadline`'s words, 휴대폰 앱으로 찍어요 with a live link, else why
+    there is none (연결 번호가 만료됐어요 / 새 번호로 휴대폰을 더 연결해요 / 네트워크 주소 확인 중);
+  - the three things a phone types, as labelled lines in the phone's order: 주소, 연결 번호 (titleMedium, tabular digits,
+    "––– –––" without a live code) and 인증키, 8 dp apart, each one TalkBack stop;
+  - at the column's foot the action row: one line at the start, "같은 Wi-Fi나 핫스팟에서 찍어요"
+    (`VehicleCopy.PHONE_QR_HOW`), and 번호 다시 만들기 / 새 연결 번호 at the end.
+  The card has no headline row and no action row of its own (`headline = null`, no `actions`): the column holds both.
+- **Height.** 48 + 32 + 12 + the QR: 324 dp (348 with the pager), 2 dp more than 2.15.0's card. The column's content at 1×
+  is 31 + 16 + three lines (29 each, 8 apart: 103) + 16 + 56 = 222 dp, under the QR's 232; the spare goes between its
+  blocks. An address list long enough to wrap comes with a larger QR.
+- **Budget.** `AttentionAnatomy(figure = false, lines = 0, body = PAIRING_QR_MAX, row = null, headline = false)`, where
+  `PAIRING_QR_MAX` is 260 dp: the QR's side for a car's own link at its longest, four IPv4 addresses with five-digit
+  ports (a unit test builds that link and holds `qrSide` to it). The card's maximum is 352 dp (376 with the pager), so
+  every state keeps the tall cards and the tall dock: the frame is 956 dp at the most, 1,052 with the demo strip.
+- **Server not running.** The placeholder, the headline 휴대폰 연결을 준비하고 있어요, and one line (the server's error,
+  or 네트워크 주소 확인 중); no typed lines and no button.
+- **Narrow.** Where the card's content is under 536 dp (232 + 24 + 280) the QR stands above the column, at the start.
+  That is outside the frame's budget, where the page scrolls.
+- **TalkBack.** The QR is one stop (휴대폰 연결 QR). The countdown tag gets a spoken form on 홈 and on the 차량 page,
+  "4분 59초 남음" (`pairingRemainingSpoken`), so "4:59" is never heard as a time of day; it stays silent while it ticks.
+- 홈 no longer shows 차량 기록이 원본이에요 on this card; the 차량 page's card keeps it behind its ⓘ row.
+- Version 2.15.1 (versionCode 27).
