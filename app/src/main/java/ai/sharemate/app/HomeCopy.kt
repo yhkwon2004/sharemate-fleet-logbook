@@ -189,6 +189,18 @@ internal object HomeCopy {
     const val CLOSE_REMINDER_CLOSE = "마감하기"
     const val SPOKEN_REMINDER_CLOSE = "이달 마감 안내 닫기"
 
+    // ───── 정보 내보내기 (the destination card's line, [homeCardLines])
+    /**
+     * 정보 내보내기's line (2.15 §2.1, §9.7): the [month] the Excel covers, as [monthLabel] names it, "10월 운행기록부 · Excel 5개
+     * 시트"; "… · 마감 전 저장" for an earlier month still to close; "… · Excel 저장" for a closed month of [otherYear], whose year
+     * leaves no room for the sheets in the tall card's line ("2026년 12월 운행기록부 · Excel 5개 시트" would ellipsise there).
+     */
+    fun exportLine(month: String, toClose: Boolean, otherYear: Boolean): String = when {
+        toClose -> "$month 운행기록부 · 마감 전 저장"
+        otherYear -> "$month 운행기록부 · Excel 저장"
+        else -> "$month 운행기록부 · Excel 5개 시트"
+    }
+
     // ───── 차량 관리
     const val CARE_TITLE = "차량 관리"
     const val CARE_SNOOZE = "7일 뒤 다시"
