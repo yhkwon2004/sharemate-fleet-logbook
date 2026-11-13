@@ -78,6 +78,17 @@ internal object LogCopy {
     /** FIRST in demo mode: the demo drive starts on 홈's strip. */
     const val HERO_DEMO_DRIVE = "홈에서 시연 출발"
     const val HERO_CARD_SETTING = "카드 등록하러 가기"
+    /** What a person tile does (2.15 §9.1), for TalkBack's click label: the list then shows that employee's trips. */
+    const val HERO_PICK_EMPLOYEE = "이 직원 운행 보기"
+    /** The gear strip under the first two first-trip steps (2.15 §9.1, decorative): a selector's four positions. */
+    val HERO_GEARS = listOf("P", "R", "N", "D")
+
+    /**
+     * A person tile's line (2.15 §9.1): "9건 · 54.0 km" in the month on screen, or "10월 · 9건 · 54.0 km" led by the month the
+     * tile opens.
+     */
+    fun personTileLine(totals: LogbookTotals, month: String? = null): String =
+        listOfNotNull(month, "${totals.trips}건", kmText(totals.totalKm)).joinToString(" · ")
 
     /**
      * The quiet tag of a page that follows the trips and stands on an earlier month (2.15 §2.1): "11월은 아직 운행이 없어요".
@@ -244,6 +255,15 @@ internal fun logTopId(filter: Int, trips: List<Trip>, issues: List<TripIssue>, m
  */
 internal fun logSelection(selectedId: String?, known: Set<String>, topId: String?, twoPane: Boolean): String? =
     selectedId?.takeIf { it in known } ?: topId.takeIf { twoPane }
+
+/**
+ * The tap a page may still show (pure, 2.15 §9.2): [selectedId] while the page stands on the month the tap was made in
+ * ([selectionMonth], saved with it) or the month is the driver's ([following] false); a page that follows the trips and whose
+ * month moved since (a trip arrived in a later month, maybe while the page was not composed) drops it, so the detail never
+ * shows another month's trip beside the list.
+ */
+internal fun logKeptSelection(selectedId: String?, selectionMonth: String, period: YearMonth, following: Boolean): String? =
+    selectedId.takeIf { !following || selectionMonth == period.toString() }
 
 /** The month's totals as one tag (pure): "총 54.0 km · 업무 80% · 9건". */
 internal fun logTotalsLine(totals: LogbookTotals): String = "총 ${kmText(totals.totalKm)} · 업무 ${ratioText(totals.ratio)} · ${totals.trips}건"

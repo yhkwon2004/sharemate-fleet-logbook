@@ -378,7 +378,8 @@ internal fun logReview(data: TripLogData, month: YearMonth, zone: ZoneId): LogRe
  * month, "최근 10월 · 9건", and opens the log following it ([HomeCardLines.logMonth] null); its count badge keeps counting this
  * month. 정보 내보내기 names the month the Excel covers, [HomeCardLines.exportMonth], which 월간·Excel then opens on
  * ([carReportLandingMonth]): "… · 마감 전 저장" for an earlier month still to close, "… · Excel 5개 시트" for this month or a
- * closed one.
+ * closed one, "… · Excel 저장" for a closed month of another year (§9.7: "2026년 12월" leaves the sheets no room in the tall
+ * card's line; [HomeCopy.exportLine]).
  */
 internal fun homeCardLines(data: TripLogData, socPercent: Int?, odometerKm: Double?, odometerLive: Boolean, today: LocalDate, zone: ZoneId,
     snoozedCare: Set<String> = emptySet()): HomeCardLines {
@@ -398,8 +399,8 @@ internal fun homeCardLines(data: TripLogData, socPercent: Int?, odometerKm: Doub
     }
     val pending = review.issues
     val exportMonth = carReportLandingMonth(data, today, zone)
-    val export = if (exportMonth != month && monthStatus(data, exportMonth, zone).closed == null) "${monthLabel(exportMonth, today)} 운행기록부 · 마감 전 저장"
-        else "${monthLabel(exportMonth, today)} 운행기록부 · Excel 5개 시트"
+    val export = HomeCopy.exportLine(monthLabel(exportMonth, today), toClose = exportMonth != month && monthStatus(data, exportMonth, zone).closed == null,
+        otherYear = exportMonth.year != today.year)
     return HomeCardLines(vehicle, log, pending, export, exportMonth, logMonth = if (landing != null) null else month)
 }
 

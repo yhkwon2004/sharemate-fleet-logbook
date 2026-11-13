@@ -147,6 +147,25 @@ class HomeDashboardTest {
         assertEquals(YearMonth.of(2026, 9), homeCardLines(september, null, null, false, LocalDate.of(2026, 11, 13), zone).exportMonth)
     }
 
+    /**
+     * 2.15 §9.7 (C5): every January, after December is closed and before the first January trip, the card names last year's
+     * December. "2026년 12월 운행기록부 · Excel 5개 시트" (18.65 units) would ellipsise in the tall card's line; it says "Excel
+     * 저장" instead (16.85), and an open December keeps "마감 전 저장" (17.35).
+     */
+    @Test fun aClosedMonthOfAnotherYearFitsTheTallCardsLine() {
+        val december = (1..3).map { day -> trip("d$day", 12, day, start = 100.0 + day * 10) }
+        val open = TripLogData(drivers = listOf(driver), trips = december)
+        val closed = closeMonth(open, YearMonth.of(2026, 12), LocalDateTime.of(2027, 1, 2, 9, 0).atZone(zone).toInstant().toEpochMilli(), zone)
+        val january = LocalDate.of(2027, 1, 5)
+        val lines = homeCardLines(closed, null, null, false, january, zone)
+        assertEquals(YearMonth.of(2026, 12), lines.exportMonth)
+        assertEquals("2026년 12월 운행기록부 · Excel 저장", lines.export)
+        val toClose = homeCardLines(open, null, null, false, january, zone).export
+        assertEquals("2026년 12월 운행기록부 · 마감 전 저장", toClose)
+        listOf(lines.export, toClose).forEach { assertOneLine(it, HOME_TALL_LINE_UNITS); assertOneLine(it, HOME_TILE_LINE_UNITS) }
+        assertEquals("같은 해의 마감된 달은 시트 수", "12월 운행기록부 · Excel 5개 시트", homeCardLines(closed, null, null, false, LocalDate.of(2026, 12, 20), zone).export)
+    }
+
     @Test fun monthWidgetUsesOneTruthfulWord() {
         val today = LocalDate.of(2026, 11, 20)
         val empty = monthWidgetInfo(TripLogData(), today, zone)

@@ -88,6 +88,15 @@ internal object ReportCopy {
     const val CONFIRM_TITLE = "정리되지 않은 운행이 있어요"
     const val CONFIRM_SAVE = "그래도 저장"
     const val CONFIRM_TIDY = "정리하러 가기"
+
+    // 2.15 (DESIGN_2_15 §9.3): where the period on screen has no trip, 운행 현황, 경비·정산 and 검토 show a hero without a title
+    // in place of their two cards ([reportEmptyHero]); the month-close card above them already says the month is empty.
+    /** On an empty log: the three steps of a month, each a title over its line. */
+    val HERO_STEPS = listOf("목적 확인" to "운행마다 한 번 눌러요", "월 마감" to "확인이 끝나면 잠가요", "Excel 저장" to "운행기록부 양식으로 받아요")
+    /** What a month row does, for TalkBack's click label: the page moves to that month. */
+    const val HERO_OPEN_MONTH = "이 달 보기"
+    /** Under 연간, the step back by the period's unit (이전 달 보기 under 월간). */
+    const val HERO_PREVIOUS_YEAR = "이전 해 보기"
 }
 
 /** 차량: the car card, 차량 정보, 차량 관리, 정비 기록, 휴대폰 연결, 차량 예약 and 사고·특이사항. */
