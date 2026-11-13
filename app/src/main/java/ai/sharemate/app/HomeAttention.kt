@@ -634,10 +634,11 @@ private val SETUP_TILES_STACK_UNDER = 560.dp
 /**
  * Phone pairing from the driver's seat, once: the six digits as the phone shows them, with their countdown as a tag (it
  * ticks in place, never announced); the address and the vehicle key the phone types, the key wrapping and never cut; and a
- * new code. Nothing to type on the car.
+ * new code. Nothing to type on the car. 2.15 fix (docs/design/DESIGN_2_15.md §9.6): the code is read live ([livePairingCode]),
+ * so the second it runs out the card says 연결 번호가 만료됐어요 with 새 연결 번호, even before the server's publish at expiry.
  */
 @Composable private fun PairingBody(info: SyncInfo, now: Long, pager: AttentionPager?) {
-    val code = info.pairingCode
+    val code = livePairingCode(info, now)
     val remaining = pairingRemaining(info, now)
     val key = info.fingerprint.chunked(8).joinToString(" ")
     val addresses = if (info.addresses.isEmpty()) VehicleCopy.PHONE_ADDRESS_PENDING else info.addresses.joinToString("  ·  ") { "$it:${info.port}" }

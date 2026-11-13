@@ -47,6 +47,23 @@ class VehiclePaneTest {
         assertEquals(0.dp, shortNarrow.drawingHeight)
     }
 
+    @Test fun thePairingStepsStandBesideTheQrFrom900DpOfCard() {
+        // 2.15 fix (DESIGN_2_15 §9.6): 휴대폰 연결 spans the page, so its width is the pane's.
+        assertEquals(900f, PAIRING_STEPS_BESIDE_MIN.value, .01f)
+        assertTrue("FULL의 1112 페이지", pairingStepsBeside(1112.dp, 1f))
+        assertTrue("지금 열이 없는 1200 dp 창의 1104 페이지", pairingStepsBeside(1104.dp, 1f))
+        assertTrue("딱 900", pairingStepsBeside(900.dp, 1f))
+        assertFalse("899는 접힘", pairingStepsBeside(899.dp, 1f))
+        assertFalse("1400 dp 창의 832 페이지", pairingStepsBeside(832.dp, 1f))
+        assertFalse("한 열 레이아웃의 좁은 창", pairingStepsBeside(660.dp, 1f))
+        // The font scale divides the width, as the window classes do: 1.3× on the 1046-dp page is 805 dp, folded.
+        assertFalse("1.3배 글꼴", pairingStepsBeside(1046.dp, 1.3f))
+        assertFalse("1.3배 글꼴에 1112", pairingStepsBeside(1112.dp, 1.3f))
+        assertTrue("1.2배 글꼴에 1112 (927)", pairingStepsBeside(1112.dp, 1.2f))
+        // A font under 1× never widens the card past what it is.
+        assertFalse("0.85배 글꼴도 899는 접힘", pairingStepsBeside(899.dp, .85f))
+    }
+
     @Test fun theCarCardSaysTheSignalInOneTag() {
         val footer = "차량에서 받은 정보만 보여요"
         assertEquals(VehicleHeroCopy("수신 중", PillTone.POSITIVE, "P", footer), vehicleHeroCopy(demo = false, fresh = true, signal = SignalStatus.READY, gear = GearState.PARK))

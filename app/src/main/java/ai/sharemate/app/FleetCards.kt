@@ -55,6 +55,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
@@ -76,6 +78,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -99,8 +102,9 @@ internal fun recentIncidents(data: TripLogData, limit: Int = 12): List<Incident>
 /** Pairing code shown as "123 456" so it reads at arm's length and over a phone call. */
 internal fun pairingDisplay(code: String) = code.chunked(3).joinToString(" ")
 
+/** The live code's countdown as "m:ss", or null without a live code (2.15 fix, §9.6: an expired code has none, not "0:00"). */
 internal fun pairingRemaining(info: SyncInfo, now: Long): String? =
-    info.pairingCode?.let { ((info.pairingExpiresAt - now) / 1000).coerceAtLeast(0) }?.let { "%d:%02d".format(it / 60, it % 60) }
+    livePairingCode(info, now)?.let { ((info.pairingExpiresAt - now) / 1000).coerceAtLeast(0) }?.let { "%d:%02d".format(it / 60, it % 60) }
 
 /** The car caps a staggered entrance at five rows (spec C); later rows are simply there. */
 internal const val CAR_APPEAR_CAP = 5
@@ -469,9 +473,12 @@ internal fun phoneLinkTag(enabled: Boolean, running: Boolean, error: String?, on
  * three small figures (the record version, the phone's last call, the phones paired) and, while the server runs, the pairing
  * ([PhonePairing]): since 2.15 the QR a phone scans, with the three things a phone types folded under it. The home keeps its own pairing card (2.13: the 휴대폰 연결 attention card, HomeAttention.kt).
  * What the link does sits behind ⓘ. Switched off (2.13), the card holds the switch itself, the same row as 설정 › 기록's
- * ([SettingsCopy.PHONE_SYNC_TITLE]), where 2.12 only said where to find it.
+ * ([SettingsCopy.PHONE_SYNC_TITLE]), where 2.12 only said where to find it. 2.15 fix (docs/design/DESIGN_2_15.md §9.6): the
+ * card stands across the 차량 page under its two columns ([VehiclePane]), and where it is wide enough ([stepsBeside],
+ * [pairingStepsBeside]) the three typed steps stand beside the QR, open, instead of folded under it.
  */
-@Composable internal fun PhoneSyncCard(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, modifier: Modifier = Modifier) {
+@Composable internal fun PhoneSyncCard(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, modifier: Modifier = Modifier,
+    stepsBeside: Boolean = false) {
     val info = state.sync
     val profile = state.data.profile
     val enabled = profile.phoneSync
@@ -499,7 +506,7 @@ internal fun phoneLinkTag(enabled: Boolean, running: Boolean, error: String?, on
             }
             if (info.running) {
                 CarDivider()
-                PhonePairing(info, now)
+                PhonePairing(info, now, stepsBeside)
             }
             CarInfoRow(VehicleCopy.PHONE_NOTE, more = VehicleCopy.PHONE_NOTE_MORE)
         }
@@ -508,8 +515,9 @@ internal fun phoneLinkTag(enabled: Boolean, running: Boolean, error: String?, on
 
 /**
  * What the column beside the pairing QR says first (2.15, pure, unit-tested): what to do with the QR while there is a [link];
- * otherwise why there is none, in 2.13's words: no live code (another phone can still pair with a new one, or the code ran
- * out), or a code but no network address yet.
+ * otherwise why there is none, in 2.13's words: no live [code] (another phone can still pair with a new one, or the code ran
+ * out), or a code but no network address yet. 2.15 fix (§9.6): the caller passes the live code ([livePairingCode]), so the
+ * moment a code runs out this says 연결 번호가 만료됐어요, never "scan this" over a dead code.
  */
 internal fun pairingQrHeadline(link: String?, code: String?, pairedPhones: Int): String = when {
     link != null -> VehicleCopy.PHONE_QR
@@ -517,8 +525,25 @@ internal fun pairingQrHeadline(link: String?, code: String?, pairedPhones: Int):
     else -> VehicleCopy.PHONE_ADDRESS_PENDING
 }
 
+/** From this card width (the width ÷ the font scale, §9.6) the three typed steps stand beside the QR, with no fold. */
+internal val PAIRING_STEPS_BESIDE_MIN = 900.dp
+
+/**
+ * Whether the three steps a phone types stand beside the QR and its words (pure, unit-tested; 2.15 fix, docs/design/
+ * DESIGN_2_15.md §9.6): from [PAIRING_STEPS_BESIDE_MIN] of card width, taken as [cardWidth] ÷ [fontScale] (never scaled
+ * below 1×) as the window classes are, so a 1.3× font on the 1112-dp page (855 dp) folds them as a narrow card does. The
+ * FULL page's card is 1112 dp: the QR (232), its words (248) and the steps (about 500) stand in one row.
+ */
+internal fun pairingStepsBeside(cardWidth: Dp, fontScale: Float): Boolean = cardWidth / fontScale.coerceAtLeast(1f) >= PAIRING_STEPS_BESIDE_MIN
+
 /** The narrowest the column beside the QR gets before it stacks under the QR (a narrow card, a large font). */
 private val PAIRING_SIDE_MIN = 200.dp
+
+/** The column beside the QR where the steps stand beside it too (§9.6): the headline's one line (13 titleSmall units), the tag, the pill. */
+private val PAIRING_SIDE_WIDTH = 248.dp
+
+/** Between the words beside the QR and the steps: the hairline sits half way. */
+private val PAIRING_STEPS_GAP = 24.dp
 
 /** 직접 입력하기's fold and its arrow: the ⓘ row's 200 ms (spec C), a snap under reduced motion. */
 private const val PAIRING_FOLD_MS = 200
@@ -526,40 +551,68 @@ private const val PAIRING_FOLD_MS = 200
 /**
  * The pairing inside [PhoneSyncCard] (2.15, docs/design/DESIGN_2_15.md §6.2). The QR leads: the car's addresses, the live code
  * and the key in one link ([syncPairingLinkText]) on its white tile ([QrCode]); beside it what to do ([VehicleCopy.PHONE_QR]),
- * the countdown as a tag (it ticks in place, never announced) and the pill for a new code. Where the column beside the QR
- * would be narrower than 200 dp it stacks under the QR (a FlowRow, so nothing asks a lazy or subcomposed child for its
- * intrinsic size). Without a link a quiet tile keeps the QR's place, so the card keeps its form when a code runs out, and the
- * column says why ([pairingQrHeadline]) with 새 연결 번호. The QR is rebuilt only when the link's text changes ([QrCode]
- * remembers it), never on the clock's tick that recomposes this card.
+ * the countdown as a tag (it ticks in place, never announced) and the pill for a new code. Without a link a quiet tile keeps
+ * the QR's place, so the card keeps its form when a code runs out, and the column says why ([pairingQrHeadline]) with 새
+ * 연결 번호. The QR is rebuilt only when the link's text changes ([QrCode] remembers it), never on the clock's tick that
+ * recomposes this card.
  *
- * Under a hairline, 직접 입력하기 folds the three steps of 2.13 ([PairingSteps]); it starts closed and keeps its state across a
- * new code, a page change and a rotation.
+ * 2.15 fix (§9.6): every one of those reads the live code ([livePairingCode] at [now]), so the QR, its headline, the
+ * countdown and the pill drop a code the moment it runs out, before the server's publish at expiry reaches the state.
+ *
+ * Two forms. [stepsBeside] (a card of [PAIRING_STEPS_BESIDE_MIN] or more, [pairingStepsBeside]): one row, the QR with its
+ * words in a 248-dp column, then a hairline and the three typed steps ([PairingSteps]) open, so the wide card is filled by
+ * the code and its key rather than by air, and nothing is folded away. Otherwise as first built: the column beside the QR
+ * stacks under it where it would be narrower than 200 dp (a FlowRow, so nothing asks a lazy or subcomposed child for its
+ * intrinsic size), and under a hairline 직접 입력하기 folds the steps; it starts closed and keeps its state across a new code,
+ * a page change, a rotation and a switch between the forms.
  */
 @OptIn(ExperimentalLayoutApi::class)
-@Composable private fun PhonePairing(info: SyncInfo, now: Long) {
-    val code = info.pairingCode
+@Composable private fun PhonePairing(info: SyncInfo, now: Long, stepsBeside: Boolean) {
+    val code = livePairingCode(info, now)
     val remaining = pairingRemaining(info, now)
-    val link = syncPairingLinkText(info)
+    val link = syncPairingLinkText(info, now)
     var manual by rememberSaveable { mutableStateOf(false) }
     val reduce = LocalReduceMotion.current
     val ease = FastOutSlowInEasing
+    val qr: @Composable () -> Unit = { if (link != null) QrCode(link, QR_MIN_SIDE) else PairingQrPlaceholder() }
+    val words: @Composable (Modifier) -> Unit = { place ->
+        Column(place, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(pairingQrHeadline(link, code, info.pairedPhones), style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 2,
+                overflow = TextOverflow.Ellipsis)
+            if (code != null && remaining != null) CarTag("$remaining 남음")
+            CarPillButton(if (code == null) VehicleCopy.PHONE_NEW_CODE else VehicleCopy.PHONE_RENEW_CODE, { SyncServer.active?.refreshPairingCode() })
+        }
+    }
+    if (stepsBeside) {
+        // The QR and its words are one block, the words centred on the tile; the steps start level with the tile's top.
+        val rule = Car.skin.cardBorder
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                qr()
+                words(Modifier.width(PAIRING_SIDE_WIDTH))
+            }
+            Spacer(Modifier.width(PAIRING_STEPS_GAP))
+            // The hairline is drawn at the steps' own start edge, as tall as they are: no intrinsic measurement of the row.
+            PairingSteps(info, code, Modifier.weight(1f).drawBehind {
+                val stroke = 1.dp.toPx()
+                val x = if (layoutDirection == LayoutDirection.Rtl) size.width - stroke / 2 else stroke / 2
+                drawLine(rule, Offset(x, 0f), Offset(x, size.height), stroke)
+            }.padding(start = PAIRING_STEPS_GAP), reasonBeside = true)
+        }
+        return
+    }
     Column(Modifier.fillMaxWidth()) {
         FlowRow(Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp), itemVerticalAlignment = Alignment.CenterVertically) {
-            if (link != null) QrCode(link, QR_MIN_SIDE) else PairingQrPlaceholder()
-            Column(Modifier.weight(1f).widthIn(min = PAIRING_SIDE_MIN), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(pairingQrHeadline(link, code, info.pairedPhones), style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 2,
-                    overflow = TextOverflow.Ellipsis)
-                if (code != null && remaining != null) CarTag("$remaining 남음")
-                CarPillButton(if (code == null) VehicleCopy.PHONE_NEW_CODE else VehicleCopy.PHONE_RENEW_CODE, { SyncServer.active?.refreshPairingCode() })
-            }
+            qr()
+            words(Modifier.weight(1f).widthIn(min = PAIRING_SIDE_MIN))
         }
         CarDivider()
         PairingFoldRow(manual) { manual = it }
         AnimatedVisibility(manual, label = "pairing-manual",
             enter = if (reduce) fadeIn(snap()) else fadeIn(tween(PAIRING_FOLD_MS, easing = ease)) + expandVertically(tween(PAIRING_FOLD_MS, easing = ease)),
             exit = if (reduce) fadeOut(snap()) else fadeOut(tween(PAIRING_FOLD_MS, easing = ease)) + shrinkVertically(tween(PAIRING_FOLD_MS, easing = ease))) {
-            PairingSteps(info)
+            PairingSteps(info, code)
         }
     }
 }
@@ -609,14 +662,20 @@ private const val PAIRING_FOLD_MS = 200
  * the pill stand beside the QR above. ③ The vehicle key, wrapping onto as many lines as it needs and never cut (a phone types
  * all 64 characters, and a 1.3× font in a narrow window takes three lines). TalkBack hears each step's number with what it
  * holds.
+ *
+ * 2.15 fix (§9.6): step ② shows the live [code] the caller read ([livePairingCode]), never one past its time. Where the steps
+ * stand beside the QR ([reasonBeside]) the words next to the QR already say why there is no code, so step ② keeps the
+ * digits' place with a muted [VehicleCopy.PHONE_CODE_NONE] (TalkBack hears the reason): the card does not change height
+ * every time a code runs out.
  */
-@Composable private fun PairingSteps(info: SyncInfo) {
-    val code = info.pairingCode
+@Composable private fun PairingSteps(info: SyncInfo, code: String?, modifier: Modifier = Modifier, reasonBeside: Boolean = false) {
     val key = info.fingerprint.chunked(8).joinToString(" ")
     val addresses = if (info.addresses.isEmpty()) VehicleCopy.PHONE_ADDRESS_PENDING else info.addresses.joinToString("  ·  ") { "$it:${info.port}" }
+    val reason = if (info.pairedPhones > 0) VehicleCopy.PHONE_ANOTHER else VehicleCopy.PHONE_EXPIRED
+    val digits = MaterialTheme.typography.displayMedium.copy(fontFeatureSettings = "tnum")
     // Under a step's own row, the content starts where the step's words do: the 32-dp disc and the 12-dp gap after it.
     val under = 44.dp
-    Column(Modifier.fillMaxWidth()) {
+    Column(modifier.fillMaxWidth()) {
         CarRow(addresses, line = VehicleCopy.PHONE_ADDRESS, lead = { CarStepDisc(1, done = false) }, titleMaxLines = 2,
             spoken = "1단계 ${VehicleCopy.SPOKEN_PHONE_ADDRESS}, $addresses")
         CarDivider(Modifier.padding(start = under))
@@ -628,10 +687,14 @@ private const val PAIRING_FOLD_MS = 200
         }
         Column(Modifier.fillMaxWidth().padding(start = under, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (code != null) {
-                Text(pairingDisplay(code), style = MaterialTheme.typography.displayMedium.copy(fontFeatureSettings = "tnum"), fontWeight = FontWeight.Medium, color = Scene.text,
+                Text(pairingDisplay(code), style = digits, fontWeight = FontWeight.Medium, color = Scene.text,
                     modifier = Modifier.semantics { contentDescription = "연결 번호 " + code.toCharArray().joinToString(" ") })
                 CarLine(VehicleCopy.PHONE_HOW)
-            } else Text(if (info.pairedPhones > 0) VehicleCopy.PHONE_ANOTHER else VehicleCopy.PHONE_EXPIRED, style = MaterialTheme.typography.titleSmall, color = Scene.text)
+            } else if (reasonBeside) {
+                Text(VehicleCopy.PHONE_CODE_NONE, style = digits, fontWeight = FontWeight.Medium, color = Scene.textMuted, maxLines = 1,
+                    modifier = Modifier.clearAndSetSemantics { contentDescription = reason })
+                CarLine(VehicleCopy.PHONE_HOW)
+            } else Text(reason, style = MaterialTheme.typography.titleSmall, color = Scene.text)
         }
         CarDivider(Modifier.padding(start = under))
         CarRow(key, line = VehicleCopy.PHONE_KEY, lead = { CarStepDisc(3, done = false) }, titleMaxLines = Int.MAX_VALUE,

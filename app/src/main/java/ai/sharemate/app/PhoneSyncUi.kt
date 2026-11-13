@@ -122,10 +122,17 @@ internal fun reasonSteps(reason: String): List<String> = reason.split(" · ").ma
  * as one QR, so the card leads with QR 찍어서 연결: the system camera takes a picture into the app's cache through the
  * evidence FileProvider ([qrScanFile]; no camera permission, the camera app has its own), then 사진에서 QR 읽기 (the system
  * photo picker, images only, for a screenshot or a picture sent from another phone). The picture is decoded off the main
- * thread ([readQrPicture]) and the camera's file deleted. A link that parses ([parsePairingLink]) fills the three fields and
- * connects at once, since the person just scanned the car in front of them; [PhoneSyncClient.pair] tries its addresses in
- * order. What went wrong with a scan, or with the pairing a scan started, is one message under the buttons, a polite live
- * region. Then 직접 입력: the three fields and the button as before, [error] under the field it concerns after a typed try.
+ * thread ([readQrPicture]) and the camera's file deleted. [PhoneSyncClient.pair] tries a link's addresses in order. What went
+ * wrong with a scan, or with the pairing a scan started, is one message under the buttons, a polite live region. Then 직접
+ * 입력: the three fields and the button as before, [error] under the field it concerns after a typed try.
+ *
+ * 2.15 fix (docs/design/DESIGN_2_15.md §9.6): a link is trusted only as far as typing was. A link that parses
+ * ([parsePairingLink]) always fills the three fields, but it connects at once only for a picture the camera just took of a
+ * link whose addresses are all the car's local ones ([scannedLinkPairsAtOnce], [pairingLinkIsLocal]): the person stands at
+ * the car that shows it. A picture from the picker (one sent from elsewhere), or a link that names a public address or a
+ * host name, waits: one line under the buttons, not an error, names the first address ([PhoneQrCopy.confirm]) and the person
+ * presses 차량과 연결, as when typing. The QR's key pins whichever server the link names, so without this a hostile picture
+ * would move the phone's car, its card payments and photos to that server with no look at where they go.
  */
 @Composable internal fun PhoneConnectCard(busy: Boolean, error: String? = null, pair: (String, String, String) -> Unit) {
     val context = LocalContext.current
@@ -136,40 +143,52 @@ internal fun reasonSteps(reason: String): List<String> = reason.split(" · ").ma
     // Whether the last try came from a scan: its failure is said under the scan buttons, not under a field further down.
     var scanned by rememberSaveable { mutableStateOf(false) }
     var scanError by rememberSaveable { mutableStateOf<String?>(null) }
+    // A scanned link that waits for 차량과 연결 (§9.6): the line under the buttons that names its first address.
+    var scanNotice by rememberSaveable { mutableStateOf<String?>(null) }
+    // The host keeps its last pairing error until the next try; a new scan sets that stale one aside until then.
+    var setAside by rememberSaveable { mutableStateOf<String?>(null) }
     var reading by remember { mutableStateOf(false) }
     val endpointFocus = remember { FocusRequester() }
     val codeFocus = remember { FocusRequester() }
-    val fieldError = error?.takeUnless { scanned }
+    val current = error?.takeUnless { it == setAside }
+    val fieldError = current?.takeUnless { scanned }
     val addressError = fieldError != null && pairingErrorIsAddress(fieldError)
     val codeError = fieldError != null && !addressError
-    val scanMessage = scanError ?: error?.takeIf { scanned }
+    val scanMessage = scanError ?: current?.takeIf { scanned }
     LaunchedEffect(error) {
-        if (error == null || scanned) return@LaunchedEffect
+        if (error == null || scanned || error == setAside) return@LaunchedEffect
         runCatching { if (addressError) endpointFocus.requestFocus() else codeFocus.requestFocus() }
     }
-    val use: (String?) -> Unit = { text ->
+    val connect: (String, String, String) -> Unit = { e, c, k -> setAside = null; pair(e, c, k) }
+    val startScan: () -> Unit = { scanError = null; scanNotice = null; setAside = error }
+    val use: (String?, Boolean) -> Unit = { text, fromCamera ->
         val link = text?.let(::parsePairingLink)
         if (link == null) scanError = if (text == null) PhoneQrCopy.UNREADABLE else PhoneQrCopy.NOT_OURS
         else {
             endpoint = link.endpointText; code = link.code; fingerprint = link.fingerprint
-            scanned = true
-            pair(link.endpointText, link.code, link.fingerprint)
+            if (scannedLinkPairsAtOnce(fromCamera, pairingLinkIsLocal(link))) {
+                scanned = true
+                connect(link.endpointText, link.code, link.fingerprint)
+            } else {
+                scanned = false
+                scanNotice = PhoneQrCopy.confirm(link.endpoints.first())
+            }
         }
     }
-    val read: (suspend () -> String?) -> Unit = { load ->
+    val read: (Boolean, suspend () -> String?) -> Unit = { fromCamera, load ->
         reading = true
-        scope.launch { try { use(load()) } finally { reading = false } }
+        scope.launch { try { use(load(), fromCamera) } finally { reading = false } }
     }
     val scanFile = remember(context) { qrScanFile(context) }
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
-        if (taken) read { try { readQrPicture(scanFile) } finally { scanFile.delete() } } else scanFile.delete()
+        if (taken) read(true) { try { readQrPicture(scanFile) } finally { scanFile.delete() } } else scanFile.delete()
     }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> if (uri != null) read { readQrPicture(context, uri) } }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> if (uri != null) read(false) { readQrPicture(context, uri) } }
     val idle = !busy && !reading
     Panel(padding = 22.dp) {
         Box(Modifier.semantics(mergeDescendants = true) { heading() }) { Eyebrow("차량과 실시간 연결") }
         Button(onClick = {
-            scanError = null
+            startScan()
             scanFile.delete()
             runCatching { camera.launch(FileProvider.getUriForFile(context, "${context.packageName}.evidence", scanFile)) }
                 .onFailure { scanError = PhoneQrCopy.NO_CAMERA }
@@ -183,17 +202,23 @@ internal fun reasonSteps(reason: String): List<String> = reason.split(" · ").ma
             LoadingLabel(PhoneQrCopy.SCAN, working, if (reading) PhoneQrCopy.READING else "연결하는 중…")
         }
         TextButton(onClick = {
-            scanError = null
+            startScan()
             runCatching { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
                 .onFailure { scanError = PhoneQrCopy.NO_PICKER }
         }, enabled = idle, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(PhoneQrCopy.PICK) }
-        scanMessage?.let {
-            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite })
-        }
+        val notice = scanNotice
+        if (scanMessage != null) Text(scanMessage, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite })
+        else if (notice != null) Muted(notice, Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite })
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
         Text(PhoneQrCopy.MANUAL, style = MaterialTheme.typography.titleSmall, modifier = Modifier.semantics { heading() })
-        OutlinedTextField(endpoint, { if (it.length <= 80 || it.length < endpoint.length) endpoint = it.trim() }, Modifier.fillMaxWidth().focusRequester(endpointFocus), singleLine = true,
+        OutlinedTextField(endpoint, { value ->
+            if (value.length <= 80 || value.length < endpoint.length) {
+                // The waiting line names the scanned address; once the person changes the address it no longer applies.
+                if (value.trim() != endpoint) scanNotice = null
+                endpoint = value.trim()
+            }
+        }, Modifier.fillMaxWidth().focusRequester(endpointFocus), singleLine = true,
             label = { Text("차량 주소 (예: 192.168.0.12:9247)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), shape = RoundedCornerShape(16.dp),
             isError = addressError, supportingText = if (addressError) { { Text(fieldError!!, style = MaterialTheme.typography.bodySmall) } } else null)
         OutlinedTextField(code, { if (it.length <= 6 && it.all(Char::isDigit)) code = it }, Modifier.fillMaxWidth().focusRequester(codeFocus), singleLine = true,
@@ -204,7 +229,8 @@ internal fun reasonSteps(reason: String): List<String> = reason.split(" · ").ma
             if (compact.length <= 64 && compact.all { it in '0'..'9' || it in 'a'..'f' }) fingerprint = compact
         }, Modifier.fillMaxWidth(), label = { Text("차량 인증키 64자리") }, minLines = 2,
             supportingText = { Text("차량 화면의 인증키를 입력하세요. 첫 연결 전에 차량을 확인합니다.") })
-        Button(onClick = { scanned = false; scanError = null; pair(endpoint, code, fingerprint) }, enabled = idle && endpoint.isNotBlank() && code.length == 6 && validToken(fingerprint),
+        Button(onClick = { scanned = false; scanError = null; scanNotice = null; connect(endpoint, code, fingerprint) },
+            enabled = idle && endpoint.isNotBlank() && code.length == 6 && validToken(fingerprint),
             modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), shape = RoundedCornerShape(18.dp)) { LoadingLabel("차량과 연결", busy && !scanned, "연결하는 중…") }
         Muted("차량 앱 › 차량 탭 › 휴대폰 연결에서 번호를 볼 수 있어요. 번호는 5분 뒤 만료돼요. 차량과 같은 Wi-Fi·핫스팟이어야 해요.")
     }

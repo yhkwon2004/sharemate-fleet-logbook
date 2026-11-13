@@ -41,6 +41,13 @@ internal object PhoneQrCopy {
     const val NO_CAMERA = "카메라를 열 수 없어요 · 카메라 앱이 있는지 확인해 주세요"
     /** The photo picker could not be opened. */
     const val NO_PICKER = "사진을 고를 수 없어요 · 직접 입력해 주세요"
+
+    /**
+     * A link the phone does not pair at once (2.15 fix, docs/design/DESIGN_2_15.md §9.6: a picture from the picker, or an
+     * address that is not a car's local one): the fields are filled, and this one line, not an error, names the first address
+     * the code would go to and asks for 차량과 연결, as typing does.
+     */
+    fun confirm(endpoint: String): String = "주소를 확인하고 차량과 연결을 눌러 주세요 · $endpoint"
 }
 
 /** The longest edge a picture is loaded at before decoding (§6.3): enough for a QR across part of a photo, light on memory. */

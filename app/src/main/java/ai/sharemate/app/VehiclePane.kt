@@ -97,10 +97,13 @@ internal fun vehicleHeroCopy(demo: Boolean, fresh: Boolean, signal: SignalStatus
 }
 
 /**
- * The vehicle as the app knows it (2.12): the car card beside 차량 정보, then the deadlines (차량 관리), the maintenance records
- * (정비 기록) and the phone link with its pairing (휴대폰 연결) in the left column, the bookings and what happened to the car in
- * the right one; one column in the same order where the page is narrow ([vehiclePaneLayout]). 휴대폰 연결 carries its own
- * switch while the link is off (2.13), so it gets [act] and [repository] too.
+ * The vehicle as the app knows it (2.12): the car card beside 차량 정보, then the deadlines (차량 관리) and the maintenance
+ * records (정비 기록) in the left column, the bookings and what happened to the car in the right one; one column in the same
+ * order where the page is narrow ([vehiclePaneLayout]). 2.15 fix (docs/design/DESIGN_2_15.md §9.6): the phone link with its
+ * pairing (휴대폰 연결) stands across the page under the two columns, last in either arrangement. In the left column its QR
+ * card (about 548 dp) made that column outrun the right one by a card's height; across the page it has the width for the
+ * three typed steps beside the QR ([pairingStepsBeside] on the card's width, which is the pane's). 휴대폰 연결 carries its
+ * own switch while the link is off (2.13), so it gets [act] and [repository] too.
  */
 @Composable
 internal fun VehiclePane(state: TripLogState, now: Long, act: Act, repository: TripLogRepository, goSettings: (() -> Unit)? = null) {
@@ -110,10 +113,11 @@ internal fun VehiclePane(state: TripLogState, now: Long, act: Act, repository: T
         val layout = vehiclePaneLayout(tokens, maxWidth, fontScale)
         val gap = tokens.cardGap
         val fresh = vehicleSampleFresh(state, now)
+        // The card spans the pane (the car's content maximum is unbounded), so the pane's width is the card's.
+        val stepsBeside = pairingStepsBeside(maxWidth, fontScale)
         val upkeep: @Composable ColumnScope.() -> Unit = {
             VehicleCareCard(state, now, Modifier.fillMaxWidth(), goSettings)
             MaintenanceCard(state, now, act, repository, Modifier.fillMaxWidth())
-            PhoneSyncCard(state, now, act, repository, Modifier.fillMaxWidth())
         }
         val record: @Composable ColumnScope.() -> Unit = {
             CarReservationsCard(state = state, now = now, act = act, repository = repository)
@@ -144,6 +148,7 @@ internal fun VehiclePane(state: TripLogState, now: Long, act: Act, repository: T
                 upkeep()
                 record()
             }
+            PhoneSyncCard(state, now, act, repository, Modifier.fillMaxWidth(), stepsBeside = stepsBeside)
         }
     }
 }

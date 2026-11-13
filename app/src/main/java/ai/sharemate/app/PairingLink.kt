@@ -79,13 +79,58 @@ internal fun pairingLinkText(endpoints: List<String>, code: String, fingerprint:
 }
 
 /**
- * The link the car shows for its sync server right now (pure): its addresses on its port, the live code and the key, or
- * null while there is no code (expired, used, or closed after too many wrong tries), no address or no key yet.
+ * The car's pairing code while it is live (pure; 2.15 fix, docs/design/DESIGN_2_15.md §9.6): [SyncInfo.pairingCode] only
+ * while [now] is before [SyncInfo.pairingExpiresAt]. The server drops an expired code only when it publishes, and on a first
+ * pairing nothing else makes it publish, so every reader of the code on screen (the QR, its headline, the countdown, the
+ * pill, 홈's pairing card) asks this instead of the field: an expired code is no code.
  */
-internal fun syncPairingLinkText(info: SyncInfo): String? {
-    val code = info.pairingCode ?: return null
+internal fun livePairingCode(info: SyncInfo, now: Long): String? = info.pairingCode?.takeIf { now < info.pairingExpiresAt }
+
+/**
+ * The link the car shows for its sync server at [now] (pure): its addresses on its port, the live code ([livePairingCode])
+ * and the key, or null while there is no live code (expired, used, or closed after too many wrong tries), no address or no
+ * key yet. 2.15 fix (§9.6): a code past its time gives no link, so the car never draws a QR the phone would scan in vain.
+ */
+internal fun syncPairingLinkText(info: SyncInfo, now: Long): String? {
+    val code = livePairingCode(info, now) ?: return null
     return pairingLinkText(info.addresses.map { "$it:${info.port}" }, code, info.fingerprint)
 }
+
+// ───────────────────────── how far a scanned link is trusted (§9.6) ─────────────────────────
+
+/** One strict IPv4 octet in ASCII digits: 0–255, no leading zero, no sign, no hex. */
+private val LOCAL_OCTET = Regex("0|[1-9][0-9]{0,2}")
+
+/**
+ * Whether [host] is a four-octet IPv4 literal on a network a car's own interface can have (pure): 10/8, 172.16/12,
+ * 192.168/16 or the link-local 169.254/16. Loopback (127/8) is not a car, a public address is not one either, and a host
+ * name never qualifies whatever it would resolve to ("localhost", "0x7f.0.0.1").
+ */
+private fun hostIsLocalIpv4(host: String): Boolean {
+    val octets = host.split('.')
+    if (octets.size != 4 || !octets.all { LOCAL_OCTET.matches(it) }) return false
+    val values = octets.map { it.toInt() }
+    if (values.any { it > 255 }) return false
+    val (a, b) = values
+    return a == 10 || (a == 172 && b in 16..31) || (a == 192 && b == 168) || (a == 169 && b == 254)
+}
+
+/**
+ * Whether every address of [link] is a local IPv4 literal (pure; 2.15 fix, docs/design/DESIGN_2_15.md §9.6): true only when
+ * each endpoint's host is on 10/8, 172.16/12, 192.168/16 or 169.254/16. Every link a real car writes passes, since the car
+ * publishes its own interface addresses ([SyncServer]). A link that names a public address or any host name (a picture sent
+ * from elsewhere, a sticker beside the screen) is trusted no further than typing was: the phone fills the fields and waits.
+ */
+internal fun pairingLinkIsLocal(link: PairingLink): Boolean =
+    link.endpoints.isNotEmpty() && link.endpoints.all { hostIsLocalIpv4(it.substringBeforeLast(':')) }
+
+/**
+ * Whether a scanned link pairs at once (pure; §9.6): only a picture the phone's camera just took ([fromCamera]) of a link
+ * whose addresses are all local ([local], [pairingLinkIsLocal]): the person stands at the car that shows it. A picture from
+ * the photo picker, or a link that names another host, fills the three fields and waits for 차량과 연결, as typing does, with
+ * the first address shown so the person sees where the code would go.
+ */
+internal fun scannedLinkPairsAtOnce(fromCamera: Boolean, local: Boolean): Boolean = fromCamera && local
 
 /**
  * Reads a pairing link (pure, strict; §6.1): that scheme and host, `v=1` once, one to four `e` addresses ([pairingEndpoint]),
