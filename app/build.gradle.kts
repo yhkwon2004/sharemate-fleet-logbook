@@ -90,6 +90,7 @@ dependencies {
     implementation("androidx.credentials:credentials:1.3.0")
     implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
+    implementation("com.google.zxing:core:3.5.3")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
     // Android's org.json is a stub in local unit tests; the Gleo parameter parser needs the real implementation.

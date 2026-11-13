@@ -88,16 +88,24 @@ class PhoneSyncClient private constructor(context: Context) {
         }
     }
 
-    /** The certificate pin comes from the vehicle screen, before any pairing secret is transmitted. */
+    /**
+     * The certificate pin comes from the vehicle screen, before any pairing secret is transmitted. 2.15
+     * (docs/design/DESIGN_2_15.md §6.3): [endpoint] may hold several addresses separated by commas, as a scanned pairing link
+     * carries them ([PairingLink.endpointText]). They are tried in order ([pairInOrder]): one that cannot be reached moves on
+     * to the next; a wrong code or a certificate that is not the pinned one stops at once, so the code is never sent to a
+     * second address after the car has answered.
+     */
     suspend fun pair(endpoint: String, code: String, vehicleFingerprint: String) {
         require(accounts.account.value != null) { "먼저 로그인해 주세요." }
-        val base = endpoint.trim().trimEnd('/').let { if (it.startsWith("https://")) it else "https://$it" }
-        require(URI(base).host?.isNotBlank() == true) { "차량 주소를 확인해 주세요." }
+        val bases = pairingEndpointList(endpoint).map { typed -> typed.trimEnd('/').let { if (it.startsWith("https://")) it else "https://$it" } }
+        require(bases.isNotEmpty() && bases.all { runCatching { URI(it).host }.getOrNull()?.isNotBlank() == true }) { "차량 주소를 확인해 주세요." }
         require(code.matches(Regex("\\d{6}"))) { "6자리 연결 번호를 입력해 주세요." }
         val fingerprint = pairingFingerprint(vehicleFingerprint)
-        val pairingConfig = parseLink("$base|${"0".repeat(64)}|$fingerprint").copy(token = "")
-        val response = try { store.request(pairingConfig, "/pair", JSONObject().put("code", code)) }
-        catch (e: javax.net.ssl.SSLException) { throw IllegalArgumentException("차량 인증키를 확인하지 못했어요. 차량 화면의 인증키와 날짜 설정을 확인해 주세요.", e) }
+        // Every address is checked before the first is dialled, so a malformed later one never surfaces mid-way.
+        val configs = bases.map { parseLink("$it|${"0".repeat(64)}|$fingerprint").copy(token = "") }.distinctBy { it.endpoint }
+        val (base, response) = try {
+            pairInOrder(configs) { pairingConfig -> pairingConfig.endpoint to store.request(pairingConfig, "/pair", JSONObject().put("code", code)) }
+        } catch (e: javax.net.ssl.SSLException) { throw IllegalArgumentException("차량 인증키를 확인하지 못했어요. 차량 화면의 인증키와 날짜 설정을 확인해 주세요.", e) }
         require(response.getString("fingerprint") == fingerprint) { "차량 인증키가 달라요. 차량 화면에서 다시 확인해 주세요." }
         val text = "$base|${response.getString("token")}|$fingerprint"
         withContext(Dispatchers.IO) { store.save(text) }

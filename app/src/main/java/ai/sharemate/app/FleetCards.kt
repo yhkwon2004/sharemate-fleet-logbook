@@ -1,6 +1,15 @@
 package ai.sharemate.app
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.LocalIndication
@@ -11,6 +20,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.graphics.asImageBitmap
@@ -23,6 +33,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Warning
@@ -44,6 +56,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
@@ -55,8 +68,10 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -452,7 +467,7 @@ internal fun phoneLinkTag(enabled: Boolean, running: Boolean, error: String?, on
 /**
  * 휴대폰 연결 on the vehicle page (2.12): the link's state as a live tag beside the title ([phoneLinkTag]); while the link is on,
  * three small figures (the record version, the phone's last call, the phones paired) and, while the server runs, the pairing
- * ([PhonePairing]): the three things a phone types, in the phone's order. The home keeps its own pairing card (2.13: the 휴대폰 연결 attention card, HomeAttention.kt).
+ * ([PhonePairing]): since 2.15 the QR a phone scans, with the three things a phone types folded under it. The home keeps its own pairing card (2.13: the 휴대폰 연결 attention card, HomeAttention.kt).
  * What the link does sits behind ⓘ. Switched off (2.13), the card holds the switch itself, the same row as 설정 › 기록's
  * ([SettingsCopy.PHONE_SYNC_TITLE]), where 2.12 only said where to find it.
  */
@@ -492,17 +507,111 @@ internal fun phoneLinkTag(enabled: Boolean, running: Boolean, error: String?, on
 }
 
 /**
- * The pairing inside [PhoneSyncCard] (2.13): the three things the phone asks for, in the phone's order (address, code, key),
- * each led by its step disc ([CarStepDisc]) so the driver reads them off top to bottom as they are typed. ① The addresses, two
- * lines at most. ② 연결 번호 with its countdown as a tag (it ticks in place, never announced) and, at the end of that row, the
- * pill for a new code (2.12 left it alone under the key); under them the six digits as the phone shows them, or why there is
- * no code. ③ The vehicle key, wrapping onto as many lines as it needs and never cut (a phone types all 64 characters, and a
- * 1.3× font in a narrow window takes three lines). TalkBack hears each step's number with what it holds.
+ * What the column beside the pairing QR says first (2.15, pure, unit-tested): what to do with the QR while there is a [link];
+ * otherwise why there is none, in 2.13's words: no live code (another phone can still pair with a new one, or the code ran
+ * out), or a code but no network address yet.
+ */
+internal fun pairingQrHeadline(link: String?, code: String?, pairedPhones: Int): String = when {
+    link != null -> VehicleCopy.PHONE_QR
+    code == null -> if (pairedPhones > 0) VehicleCopy.PHONE_ANOTHER else VehicleCopy.PHONE_EXPIRED
+    else -> VehicleCopy.PHONE_ADDRESS_PENDING
+}
+
+/** The narrowest the column beside the QR gets before it stacks under the QR (a narrow card, a large font). */
+private val PAIRING_SIDE_MIN = 200.dp
+
+/** 직접 입력하기's fold and its arrow: the ⓘ row's 200 ms (spec C), a snap under reduced motion. */
+private const val PAIRING_FOLD_MS = 200
+
+/**
+ * The pairing inside [PhoneSyncCard] (2.15, docs/design/DESIGN_2_15.md §6.2). The QR leads: the car's addresses, the live code
+ * and the key in one link ([syncPairingLinkText]) on its white tile ([QrCode]); beside it what to do ([VehicleCopy.PHONE_QR]),
+ * the countdown as a tag (it ticks in place, never announced) and the pill for a new code. Where the column beside the QR
+ * would be narrower than 200 dp it stacks under the QR (a FlowRow, so nothing asks a lazy or subcomposed child for its
+ * intrinsic size). Without a link a quiet tile keeps the QR's place, so the card keeps its form when a code runs out, and the
+ * column says why ([pairingQrHeadline]) with 새 연결 번호. The QR is rebuilt only when the link's text changes ([QrCode]
+ * remembers it), never on the clock's tick that recomposes this card.
+ *
+ * Under a hairline, 직접 입력하기 folds the three steps of 2.13 ([PairingSteps]); it starts closed and keeps its state across a
+ * new code, a page change and a rotation.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable private fun PhonePairing(info: SyncInfo, now: Long) {
     val code = info.pairingCode
     val remaining = pairingRemaining(info, now)
+    val link = syncPairingLinkText(info)
+    var manual by rememberSaveable { mutableStateOf(false) }
+    val reduce = LocalReduceMotion.current
+    val ease = FastOutSlowInEasing
+    Column(Modifier.fillMaxWidth()) {
+        FlowRow(Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+            if (link != null) QrCode(link, QR_MIN_SIDE) else PairingQrPlaceholder()
+            Column(Modifier.weight(1f).widthIn(min = PAIRING_SIDE_MIN), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(pairingQrHeadline(link, code, info.pairedPhones), style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 2,
+                    overflow = TextOverflow.Ellipsis)
+                if (code != null && remaining != null) CarTag("$remaining 남음")
+                CarPillButton(if (code == null) VehicleCopy.PHONE_NEW_CODE else VehicleCopy.PHONE_RENEW_CODE, { SyncServer.active?.refreshPairingCode() })
+            }
+        }
+        CarDivider()
+        PairingFoldRow(manual) { manual = it }
+        AnimatedVisibility(manual, label = "pairing-manual",
+            enter = if (reduce) fadeIn(snap()) else fadeIn(tween(PAIRING_FOLD_MS, easing = ease)) + expandVertically(tween(PAIRING_FOLD_MS, easing = ease)),
+            exit = if (reduce) fadeOut(snap()) else fadeOut(tween(PAIRING_FOLD_MS, easing = ease)) + shrinkVertically(tween(PAIRING_FOLD_MS, easing = ease))) {
+            PairingSteps(info)
+        }
+    }
+}
+
+/**
+ * The QR's place while there is no link (2.15): a tile of the QR's size on the chip fill inside the chip border, the phone
+ * mark on its disc in the middle. Decorative: the column beside it says why.
+ */
+@Composable private fun PairingQrPlaceholder() {
+    val skin = Car.skin
+    val shape = RoundedCornerShape(16.dp)
+    Box(Modifier.size(QR_MIN_SIDE).clip(shape).background(skin.chipFill).border(1.dp, skin.chipBorder, shape).clearAndSetSemantics {},
+        contentAlignment = Alignment.Center) {
+        CarIconDisc(painterResource(R.drawable.ic_phone), size = 72.dp, iconSize = 36.dp)
+    }
+}
+
+/**
+ * 직접 입력하기 (2.15): a 56-dp toggle row in the ⓘ row's form ([CarInfoRow]), the edit mark, the words and an arrow that
+ * turns as the steps unfold. TalkBack hears the row as a button with its state (접힘 / 펼침) and what a tap does.
+ */
+@Composable private fun PairingFoldRow(open: Boolean, onChange: (Boolean) -> Unit) {
+    val reduce = LocalReduceMotion.current
+    val interaction = remember { MutableInteractionSource() }
+    val turn by animateFloatAsState(if (open) 180f else 0f, if (reduce) snap() else tween(PAIRING_FOLD_MS, easing = FastOutSlowInEasing), label = "pairing-arrow")
+    // The outer semantics names the click (the toggle's own action carries no label) and says the state in words.
+    Row(Modifier.fillMaxWidth().pressable(interaction, .98f).clip(RoundedCornerShape(12.dp))
+        .semantics {
+            onClick(label = if (open) "접기" else "펼치기") { onChange(!open); true }
+            stateDescription = if (open) "펼침" else "접힘"
+        }
+        .toggleable(value = open, interactionSource = interaction, indication = null, role = Role.Button) { onChange(it) }
+        .pressFill(interaction).heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Outlined.Edit, contentDescription = null, Modifier.size(20.dp), tint = Car.skin.icon)
+        Spacer(Modifier.width(12.dp))
+        Text(VehicleCopy.PHONE_MANUAL, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 1,
+            overflow = TextOverflow.Ellipsis)
+        Spacer(Modifier.width(10.dp))
+        Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null, Modifier.size(24.dp).graphicsLayer { rotationZ = turn }, tint = Scene.textSecondary)
+    }
+}
+
+/**
+ * The three steps a phone types by hand (2.13, behind 직접 입력하기 since 2.15), in the phone's order (address, code, key), each
+ * led by its step disc ([CarStepDisc]) so the driver reads them off top to bottom as they are typed. ① The addresses, two
+ * lines at most. ② 연결 번호, and under it the six digits as the phone shows them, or why there is no code; the countdown and
+ * the pill stand beside the QR above. ③ The vehicle key, wrapping onto as many lines as it needs and never cut (a phone types
+ * all 64 characters, and a 1.3× font in a narrow window takes three lines). TalkBack hears each step's number with what it
+ * holds.
+ */
+@Composable private fun PairingSteps(info: SyncInfo) {
+    val code = info.pairingCode
     val key = info.fingerprint.chunked(8).joinToString(" ")
     val addresses = if (info.addresses.isEmpty()) VehicleCopy.PHONE_ADDRESS_PENDING else info.addresses.joinToString("  ·  ") { "$it:${info.port}" }
     // Under a step's own row, the content starts where the step's words do: the 32-dp disc and the 12-dp gap after it.
@@ -511,19 +620,11 @@ internal fun phoneLinkTag(enabled: Boolean, running: Boolean, error: String?, on
         CarRow(addresses, line = VehicleCopy.PHONE_ADDRESS, lead = { CarStepDisc(1, done = false) }, titleMaxLines = 2,
             spoken = "1단계 ${VehicleCopy.SPOKEN_PHONE_ADDRESS}, $addresses")
         CarDivider(Modifier.padding(start = under))
-        // ② as a title row whose end (the countdown and the pill) wraps under the title where it does not fit beside it.
-        FlowRow(Modifier.fillMaxWidth().heightIn(min = 72.dp), horizontalArrangement = Arrangement.SpaceBetween,
-            verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically), itemVerticalAlignment = Alignment.CenterVertically) {
-            Row(Modifier.padding(end = 12.dp).clearAndSetSemantics { contentDescription = "2단계 ${VehicleCopy.PHONE_CODE}" },
-                verticalAlignment = Alignment.CenterVertically) {
-                CarStepDisc(2, done = false)
-                Spacer(Modifier.width(12.dp))
-                Text(VehicleCopy.PHONE_CODE, style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 1)
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (code != null && remaining != null) CarTag("$remaining 남음")
-                CarPillButton(if (code == null) "새 연결 번호" else "번호 다시 만들기", { SyncServer.active?.refreshPairingCode() })
-            }
+        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clearAndSetSemantics { contentDescription = "2단계 ${VehicleCopy.PHONE_CODE}" },
+            verticalAlignment = Alignment.CenterVertically) {
+            CarStepDisc(2, done = false)
+            Spacer(Modifier.width(12.dp))
+            Text(VehicleCopy.PHONE_CODE, style = MaterialTheme.typography.titleSmall, color = Scene.text, maxLines = 1)
         }
         Column(Modifier.fillMaxWidth().padding(start = under, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (code != null) {

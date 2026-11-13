@@ -3,6 +3,9 @@ package ai.sharemate.app
 import androidx.core.content.edit
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -15,6 +18,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -27,6 +31,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -38,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -49,7 +55,9 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -110,37 +118,94 @@ internal fun reasonSteps(reason: String): List<String> = reason.split(" · ").ma
 }
 
 /**
- * The one-time handshake: the car shows a six-digit code and its address, the phone types both.
- * [error] is the last pairing failure, shown under the field it concerns instead of a dialog.
+ * The one-time handshake. 2.15 (docs/design/DESIGN_2_15.md §6.3): the car shows its addresses, a six-digit code and its key
+ * as one QR, so the card leads with QR 찍어서 연결: the system camera takes a picture into the app's cache through the
+ * evidence FileProvider ([qrScanFile]; no camera permission, the camera app has its own), then 사진에서 QR 읽기 (the system
+ * photo picker, images only, for a screenshot or a picture sent from another phone). The picture is decoded off the main
+ * thread ([readQrPicture]) and the camera's file deleted. A link that parses ([parsePairingLink]) fills the three fields and
+ * connects at once, since the person just scanned the car in front of them; [PhoneSyncClient.pair] tries its addresses in
+ * order. What went wrong with a scan, or with the pairing a scan started, is one message under the buttons, a polite live
+ * region. Then 직접 입력: the three fields and the button as before, [error] under the field it concerns after a typed try.
  */
 @Composable internal fun PhoneConnectCard(busy: Boolean, error: String? = null, pair: (String, String, String) -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var endpoint by rememberSaveable { mutableStateOf("") }
     var code by rememberSaveable { mutableStateOf("") }
     var fingerprint by rememberSaveable { mutableStateOf("") }
+    // Whether the last try came from a scan: its failure is said under the scan buttons, not under a field further down.
+    var scanned by rememberSaveable { mutableStateOf(false) }
+    var scanError by rememberSaveable { mutableStateOf<String?>(null) }
+    var reading by remember { mutableStateOf(false) }
     val endpointFocus = remember { FocusRequester() }
     val codeFocus = remember { FocusRequester() }
-    val addressError = error != null && pairingErrorIsAddress(error)
-    val codeError = error != null && !addressError
+    val fieldError = error?.takeUnless { scanned }
+    val addressError = fieldError != null && pairingErrorIsAddress(fieldError)
+    val codeError = fieldError != null && !addressError
+    val scanMessage = scanError ?: error?.takeIf { scanned }
     LaunchedEffect(error) {
-        if (error == null) return@LaunchedEffect
+        if (error == null || scanned) return@LaunchedEffect
         runCatching { if (addressError) endpointFocus.requestFocus() else codeFocus.requestFocus() }
     }
+    val use: (String?) -> Unit = { text ->
+        val link = text?.let(::parsePairingLink)
+        if (link == null) scanError = if (text == null) PhoneQrCopy.UNREADABLE else PhoneQrCopy.NOT_OURS
+        else {
+            endpoint = link.endpointText; code = link.code; fingerprint = link.fingerprint
+            scanned = true
+            pair(link.endpointText, link.code, link.fingerprint)
+        }
+    }
+    val read: (suspend () -> String?) -> Unit = { load ->
+        reading = true
+        scope.launch { try { use(load()) } finally { reading = false } }
+    }
+    val scanFile = remember(context) { qrScanFile(context) }
+    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
+        if (taken) read { try { readQrPicture(scanFile) } finally { scanFile.delete() } } else scanFile.delete()
+    }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> if (uri != null) read { readQrPicture(context, uri) } }
+    val idle = !busy && !reading
     Panel(padding = 22.dp) {
-        Eyebrow("차량과 실시간 연결")
-        Text("차량 화면의 주소와 6자리 번호를 입력하세요", style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
-        OutlinedTextField(endpoint, { if (it.length <= 80) endpoint = it.trim() }, Modifier.fillMaxWidth().focusRequester(endpointFocus), singleLine = true,
+        Box(Modifier.semantics(mergeDescendants = true) { heading() }) { Eyebrow("차량과 실시간 연결") }
+        Button(onClick = {
+            scanError = null
+            scanFile.delete()
+            runCatching { camera.launch(FileProvider.getUriForFile(context, "${context.packageName}.evidence", scanFile)) }
+                .onFailure { scanError = PhoneQrCopy.NO_CAMERA }
+        }, enabled = idle, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), shape = RoundedCornerShape(18.dp)) {
+            // The scan's own progress stays on its button: reading the picture, then the pairing it started.
+            val working = reading || (busy && scanned)
+            if (!working) {
+                Icon(painterResource(R.drawable.ic_camera), contentDescription = null, Modifier.size(22.dp))
+                Spacer(Modifier.width(10.dp))
+            }
+            LoadingLabel(PhoneQrCopy.SCAN, working, if (reading) PhoneQrCopy.READING else "연결하는 중…")
+        }
+        TextButton(onClick = {
+            scanError = null
+            runCatching { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+                .onFailure { scanError = PhoneQrCopy.NO_PICKER }
+        }, enabled = idle, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(PhoneQrCopy.PICK) }
+        scanMessage?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite })
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
+        Text(PhoneQrCopy.MANUAL, style = MaterialTheme.typography.titleSmall, modifier = Modifier.semantics { heading() })
+        OutlinedTextField(endpoint, { if (it.length <= 80 || it.length < endpoint.length) endpoint = it.trim() }, Modifier.fillMaxWidth().focusRequester(endpointFocus), singleLine = true,
             label = { Text("차량 주소 (예: 192.168.0.12:9247)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), shape = RoundedCornerShape(16.dp),
-            isError = addressError, supportingText = if (addressError) { { Text(error!!, style = MaterialTheme.typography.bodySmall) } } else null)
+            isError = addressError, supportingText = if (addressError) { { Text(fieldError!!, style = MaterialTheme.typography.bodySmall) } } else null)
         OutlinedTextField(code, { if (it.length <= 6 && it.all(Char::isDigit)) code = it }, Modifier.fillMaxWidth().focusRequester(codeFocus), singleLine = true,
             label = { Text("연결 번호 6자리") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword), shape = RoundedCornerShape(16.dp),
-            isError = codeError, supportingText = if (codeError) { { Text(error!!, style = MaterialTheme.typography.bodySmall, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) } } else null)
+            isError = codeError, supportingText = if (codeError) { { Text(fieldError!!, style = MaterialTheme.typography.bodySmall, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) } } else null)
         OutlinedTextField(fingerprint, { value ->
             val compact = value.filterNot(Char::isWhitespace).lowercase()
             if (compact.length <= 64 && compact.all { it in '0'..'9' || it in 'a'..'f' }) fingerprint = compact
         }, Modifier.fillMaxWidth(), label = { Text("차량 인증키 64자리") }, minLines = 2,
             supportingText = { Text("차량 화면의 인증키를 입력하세요. 첫 연결 전에 차량을 확인합니다.") })
-        Button(onClick = { pair(endpoint, code, fingerprint) }, enabled = !busy && endpoint.isNotBlank() && code.length == 6 && validToken(fingerprint),
-            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), shape = RoundedCornerShape(18.dp)) { LoadingLabel("차량과 연결", busy, "연결하는 중…") }
+        Button(onClick = { scanned = false; scanError = null; pair(endpoint, code, fingerprint) }, enabled = idle && endpoint.isNotBlank() && code.length == 6 && validToken(fingerprint),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), shape = RoundedCornerShape(18.dp)) { LoadingLabel("차량과 연결", busy && !scanned, "연결하는 중…") }
         Muted("차량 앱 › 차량 탭 › 휴대폰 연결에서 번호를 볼 수 있어요. 번호는 5분 뒤 만료돼요. 차량과 같은 Wi-Fi·핫스팟이어야 해요.")
     }
 }
