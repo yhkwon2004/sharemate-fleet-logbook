@@ -461,8 +461,9 @@ internal fun deleteIncident(incident: Incident, act: Act, repository: TripLogRep
  * and not-yet-paired take the ready tone: the server is up and listening.
  */
 internal fun phoneLinkTag(enabled: Boolean, running: Boolean, error: String?, online: Boolean, paired: Int): Pair<String, PillTone> = when {
-    !enabled -> "꺼짐" to PillTone.QUIET
-    !running -> if (error != null) "서버 오류" to PillTone.NEGATIVE else "준비 중" to PillTone.QUIET
+    // 2.15: off and the server's error in the 지금 column's 차량 tile's words, one constant for both ([nowVehiclePhone]).
+    !enabled -> VehicleCopy.NOW_PHONE_OFF to PillTone.QUIET
+    !running -> if (error != null) VehicleCopy.NOW_PHONE_ERROR to PillTone.NEGATIVE else "준비 중" to PillTone.QUIET
     online -> "실시간 동기화 중" to PillTone.POSITIVE
     paired > 0 -> "대기" to PillTone.READY
     else -> "연결 전" to PillTone.READY

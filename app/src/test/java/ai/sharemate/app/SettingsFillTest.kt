@@ -112,7 +112,7 @@ class SettingsFillTest {
         fun free(manager: Int, rows: Int) = room(manager) - (116 + 92 * rows).dp - 16.dp
         // No employee: the tiles stand on the scene, 360 dp tall, the larger look.
         assertEquals(623.dp, room(368))
-        assertEquals(360.dp, settingsTileHeight(room(368), 30.dp + 12.dp))
+        assertEquals(360.dp, heroTileHeight(room(368), 30.dp + 12.dp))
         // One employee: a 360-dp row of facts in the larger look; two: 304 dp, still the larger look; three: 136, the short look.
         assertEquals(399.dp, free(368, 1))
         assertEquals(ShareFactsLook.BIG, shareFactsLook(free(368, 1)))
@@ -127,13 +127,27 @@ class SettingsFillTest {
     // ───────────────────────── tiles before the first employee ─────────────────────────
 
     @Test fun theIntroTilesGrowWithTheRoomAndStandAcrossAWidePage() {
-        assertEquals("최대 360", 360.dp, settingsTileHeight(623.dp, 42.dp))
-        assertEquals("방에서 머리와 도시를 뺀 만큼", 258.dp, settingsTileHeight(500.dp, 42.dp))
-        assertEquals("최소 208", 208.dp, settingsTileHeight(300.dp, 42.dp))
-        assertTrue(settingsTilesAcross(1112.dp, 1f))
-        assertTrue("작은 글꼴은 1배로", settingsTilesAcross(900.dp, .9f))
-        assertFalse("한 단 설정은 720 dp", settingsTilesAcross(720.dp, 1f))
-        assertFalse("1.3배에서 1112 dp는 855 dp", settingsTilesAcross(1112.dp, 1.3f))
+        // The empty hero's own rule (§9.1), the heading's 30-dp line and its 12-dp gap as the chrome.
+        assertEquals("최대 360", 360.dp, heroTileHeight(623.dp, 42.dp))
+        assertTrue("큰 모양", heroTileLarge(heroTileHeight(623.dp, 42.dp)))
+        assertEquals("방에서 머리와 도시를 뺀 만큼", 258.dp, heroTileHeight(500.dp, 42.dp))
+        assertEquals("최소 208", 208.dp, heroTileHeight(300.dp, 42.dp))
+        assertEquals("스크롤 안에서는 208", 208.dp, heroTileHeight(0.dp, 42.dp))
+        assertTrue(heroTilesAcross(1112.dp, 1f))
+        assertTrue("작은 글꼴은 1배로", heroTilesAcross(900.dp, .9f))
+        assertFalse("한 단 설정은 720 dp", heroTilesAcross(720.dp, 1f))
+        assertFalse("1.3배에서 1112 dp는 855 dp", heroTilesAcross(1112.dp, 1.3f))
+    }
+
+    @Test fun theIntroTilesAreHeroTilesThatLeadNowhere() {
+        val tiles = driverIntroTiles()
+        assertEquals(listOf("④ 사용자 칸", "출발 전 확인", "유류비 정산"), tiles.map { it.title })
+        assertEquals(listOf("운행기록부에 이름이 들어가요", "하루 한 번 운전자를 물어요", "직원별로 계산해요"), tiles.map { it.line })
+        assertEquals(listOf(HeroGlyph.PERSON, HeroGlyph.PURPOSE, HeroGlyph.CARD), tiles.map { it.glyph })
+        assertEquals(SettingsCopy.SPOKEN_DRIVERS_INTRO_TILES, tiles.map { it.spoken })
+        // Not buttons, no step disc, no tag, no picture: one stop each that explains.
+        assertTrue(tiles.all { it.action == null && it.clickLabel == null && it.step == null && it.tag == null && it.ornament == null })
+        assertTrue("④는 소리로 읽지 않음", tiles.none { '④' in it.spoken })
     }
 
     // ───────────────────────── 비용 참고 ─────────────────────────

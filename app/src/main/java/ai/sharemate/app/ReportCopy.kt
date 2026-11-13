@@ -63,6 +63,11 @@ internal object ReportCopy {
     const val SAVE_BAR_LINE = "휴대폰 앱에서 여는 전체 운행 파일"
     /** Why a save is off, for TalkBack: a range (or a log) without trips has nothing to save. */
     const val NOTHING_TO_SAVE = "저장할 운행이 없어요"
+    /**
+     * The save as 월 마감's last step and the save bar name it. 2.15: one word for it in the hero's third step ([HERO_STEPS]) and
+     * in 홈's 정보 내보내기 line for a closed month of another year ([HomeCopy.exportLine]).
+     */
+    const val EXCEL_SAVE = "Excel 저장"
 
     // 검토
     const val AUDIT_TITLE = "증빙 준비 상태"
@@ -91,8 +96,9 @@ internal object ReportCopy {
 
     // 2.15 (DESIGN_2_15 §9.3): where the period on screen has no trip, 운행 현황, 경비·정산 and 검토 show a hero without a title
     // in place of their two cards ([reportEmptyHero]); the month-close card above them already says the month is empty.
-    /** On an empty log: the three steps of a month, each a title over its line. */
-    val HERO_STEPS = listOf("목적 확인" to "운행마다 한 번 눌러요", "월 마감" to "확인이 끝나면 잠가요", "Excel 저장" to "운행기록부 양식으로 받아요")
+    /** On an empty log: the three steps of a month, each a title over its line, named as 홈 and 월 마감 name them. */
+    val HERO_STEPS = listOf(HomeCopy.IDLE_STEP_PURPOSE to "운행마다 한 번 눌러요", HomeCopy.CLOSE_TITLE to "확인이 끝나면 잠가요",
+        EXCEL_SAVE to "운행기록부 양식으로 받아요")
     /** What a month row does, for TalkBack's click label: the page moves to that month. */
     const val HERO_OPEN_MONTH = "이 달 보기"
     /** Under 연간, the step back by the period's unit (이전 달 보기 under 월간). */
@@ -140,7 +146,7 @@ internal object VehicleCopy {
     const val NOW_CHARGE = "충전"
     const val NOW_PHONE = "휴대폰"
     const val NOW_CHARGING = "충전 중"
-    /** The phone link switched off, drawn quietly. */
+    /** The phone link switched off, drawn quietly: the 휴대폰 연결 card's tag too ([phoneLinkTag]). */
     const val NOW_PHONE_OFF = "꺼짐"
     /** The link on and listening, before a phone pairs or while the server starts. */
     const val NOW_PHONE_WAITING = "대기"

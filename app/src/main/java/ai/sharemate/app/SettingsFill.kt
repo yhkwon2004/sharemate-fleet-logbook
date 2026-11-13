@@ -12,15 +12,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,7 +30,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.layout.IntrinsicMeasurable
 import androidx.compose.ui.layout.IntrinsicMeasureScope
@@ -44,7 +39,6 @@ import androidx.compose.ui.layout.MeasureResult
 import androidx.compose.ui.layout.MeasureScope
 import androidx.compose.ui.layout.MultiContentMeasurePolicy
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -68,113 +62,46 @@ import kotlin.math.roundToInt
  * scrolls as before where they are taller.
  */
 
-// ───────────────────────── tiles in the hero's look ─────────────────────────
-
-/** A tile across the page: the empty hero's TALL tile (2.14's tall destination card), at least. */
-internal val SETTINGS_TILE_MIN = 208.dp
-
-/** The most a tile grows to with the room (§9.1's hero rule): past it, the scene keeps the height. */
-internal val SETTINGS_TILE_MAX = 360.dp
-
-/** From this height a tile takes the larger look (§9.1): the 88-dp accent square with a 44-dp glyph, the title in headlineSmall. */
-internal val SETTINGS_TILE_BIG = 300.dp
-
-/** A stacked tile, or a short fact tile: the hero's COMPACT tile. */
-internal val SETTINGS_TILE_COMPACT = 104.dp
-
-/** The band §9.1 leaves the scene's city under tiles that stand on the scene. */
-internal val SETTINGS_CITY_BAND = 200.dp
-
-/** The effective page (its width ÷ the font scale) from which three tiles stand across, the hero's own threshold. */
-internal val SETTINGS_TILES_ACROSS_FROM = 900.dp
-
-/**
- * Whether three tiles stand across a block [width] wide at [fontScale] (pure, unit-tested): from [SETTINGS_TILES_ACROSS_FROM]
- * of effective width, as the empty hero decides; below it they stack in the COMPACT look. A font under 1× counts as 1×.
- */
-internal fun settingsTilesAcross(width: Dp, fontScale: Float): Boolean = width / fontScale.coerceAtLeast(1f) >= SETTINGS_TILES_ACROSS_FROM
-
-/**
- * How tall the tiles across stand on the scene in a block [room] tall whose heading takes [heading] with its gap (pure,
- * unit-tested; §9.1's rule for the hero): the rest less [SETTINGS_CITY_BAND] for the city, held between [SETTINGS_TILE_MIN]
- * and [SETTINGS_TILE_MAX]. In the FULL window at 1×, 직원 before its first employee leaves 623 dp under the 368-dp manager:
- * 623 − 42 − 200 = 381, so the tiles are 360 tall and take the larger look ([SETTINGS_TILE_BIG]).
- */
-internal fun settingsTileHeight(room: Dp, heading: Dp): Dp = (room - heading - SETTINGS_CITY_BAND).coerceIn(SETTINGS_TILE_MIN, SETTINGS_TILE_MAX)
-
 // ───────────────────────── 직원, before the first employee ─────────────────────────
 
 /**
+ * 설정 › 직원's tiles before the first employee (2.15 §9.5; pure, unit-tested): ④ 사용자 칸, 출발 전 확인 and 유류비 정산
+ * ([SettingsCopy.DRIVERS_INTRO_TILES]) as empty-hero tiles, with the hero's glyphs for a person, a check and money. They explain
+ * and lead nowhere: no action, so no chevron and no press; each is one stop that is not a button ([SettingsCopy.SPOKEN_DRIVERS_INTRO_TILES]).
+ */
+internal fun driverIntroTiles(): List<HeroTile> =
+    SettingsCopy.DRIVERS_INTRO_TILES.zip(SettingsCopy.SPOKEN_DRIVERS_INTRO_TILES).zip(listOf(HeroGlyph.PERSON, HeroGlyph.PURPOSE, HeroGlyph.CARD)) { (words, spoken), glyph ->
+        HeroTile(words.first, words.second, glyph, spoken)
+    }
+
+/**
  * 설정 › 직원 before the first employee (2.15 §9.5): under the manager, on the scene, the small heading 직원을 등록하면 (a heading
- * for TalkBack) and three tiles in the empty hero's look that say what registering does: ④ 사용자 칸, 출발 전 확인 and 유류비 정산
- * ([SettingsCopy.DRIVERS_INTRO_TILES]). They explain and lead nowhere: no chevron, no press, one stop each that is not a button.
- * Across the page ([settingsTilesAcross]) they grow with the room SettingsStack hands the block, its minimum height
- * ([settingsTileHeight]); stacked, they keep the COMPACT look. A BoxWithConstraints: SettingsStack and the section's scroll never
- * ask this block for its intrinsic size.
+ * for TalkBack) and the three tiles of [driverIntroTiles], drawn as the empty hero draws its tiles ([HeroTileCard]), so the two
+ * pages share one tile. Across the page ([heroTilesAcross]) they grow with the room SettingsStack hands the block, its minimum
+ * height, by §9.1's rule ([heroTileHeight], the heading with its 12-dp gap as the chrome): in the FULL window at 1× 직원 leaves
+ * 623 dp under the 368-dp manager, 623 − 42 − 200 = 381, so the tiles are 360 tall in the larger look. Stacked, they keep the
+ * COMPACT look. A BoxWithConstraints: SettingsStack and the section's scroll never ask this block for its intrinsic size; the
+ * row inside may ask its tiles, which hold none.
  */
 @Composable internal fun DriverIntroTiles(modifier: Modifier = Modifier) {
     val density = LocalDensity.current
     val fontScale = density.fontScale
     val headingStyle = MaterialTheme.typography.titleMedium
-    val glyphs = listOf(rememberVectorPainter(Icons.Outlined.Person), rememberVectorPainter(Icons.Outlined.CheckCircle), painterResource(R.drawable.ic_won))
+    val tiles = remember { driverIntroTiles() }
     BoxWithConstraints(modifier.fillMaxWidth()) {
-        val across = settingsTilesAcross(maxWidth, fontScale)
+        val across = heroTilesAcross(maxWidth, fontScale)
         // The heading's line at the font in effect and the 12 dp under it.
-        val tile = settingsTileHeight(minHeight, with(density) { headingStyle.lineHeight.toDp() } + 12.dp)
+        val tile = heroTileHeight(minHeight, with(density) { headingStyle.lineHeight.toDp() } + 12.dp)
         Column(Modifier.fillMaxWidth().semantics { isTraversalGroup = true }) {
             Text(SettingsCopy.DRIVERS_INTRO, Modifier.semantics { heading() }, style = headingStyle, color = Scene.text,
                 maxLines = carLineMaxLines(fontScale), overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(12.dp))
-            val tiles = SettingsCopy.DRIVERS_INTRO_TILES.zip(SettingsCopy.SPOKEN_DRIVERS_INTRO_TILES).zip(glyphs)
-            if (across) Row(Modifier.fillMaxWidth().height(tile), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                tiles.forEach { (words, glyph) ->
-                    SettingsTile(words.first.first, words.first.second, glyph, words.second, tall = true, big = tile >= SETTINGS_TILE_BIG,
-                        modifier = Modifier.weight(1f).fillMaxHeight())
-                }
+            if (across) Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                tiles.forEach { HeroTileCard(it, tall = true, tile, Modifier.weight(1f).fillMaxHeight(), onClick = null) }
             } else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                tiles.forEach { (words, glyph) ->
-                    SettingsTile(words.first.first, words.first.second, glyph, words.second, tall = false, big = false, modifier = Modifier.fillMaxWidth())
-                }
+                tiles.forEach { HeroTileCard(it, tall = false, HERO_TILE_COMPACT, Modifier.fillMaxWidth(), onClick = null) }
             }
         }
-    }
-}
-
-/**
- * A tile in the empty hero's look (§2.2, §9.1), written here so the hero's own file stays its package's: a [CarCard] that
- * TalkBack meets as one stop ([spoken]) and that is not a button. [tall]: the content centred in the card's height, the
- * [glyph] on the accent square (56 dp, or 88 when [big]), 16 dp, the [title] (titleLarge, or headlineSmall when [big]), 6 dp,
- * one centred [CarLine]. Otherwise the COMPACT look: the square at the start, the title (titleMedium) over its line.
- */
-@Composable private fun SettingsTile(title: String, line: String, glyph: Painter, spoken: String, tall: Boolean, big: Boolean, modifier: Modifier) {
-    CarCard(modifier, description = spoken, padding = 0.dp) {
-        if (tall) Box(Modifier.fillMaxWidth().fillMaxHeight().heightIn(min = SETTINGS_TILE_MIN)) {
-            Column(Modifier.align(Alignment.Center).fillMaxWidth().padding(horizontal = 16.dp, vertical = 24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally) {
-                AccentSquare(glyph, big)
-                Spacer(Modifier.height(16.dp))
-                Text(title, style = if (big) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge, color = Scene.text,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
-                Spacer(Modifier.height(6.dp))
-                CarLine(line)
-            }
-        } else Row(Modifier.fillMaxWidth().heightIn(min = SETTINGS_TILE_COMPACT).padding(horizontal = 20.dp, vertical = 16.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            AccentSquare(glyph, big = false)
-            Spacer(Modifier.width(16.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, style = MaterialTheme.typography.titleMedium, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                CarLine(line)
-            }
-        }
-    }
-}
-
-/** A tile's glyph on its accent square (corner 16, 20 when [big]), onAccent (4.93), as on 홈's tall destination cards. Decorative. */
-@Composable private fun AccentSquare(glyph: Painter, big: Boolean) {
-    val skin = Car.skin
-    Box(Modifier.size(if (big) 88.dp else 56.dp).clip(RoundedCornerShape(if (big) 20.dp else 16.dp)).background(skin.accent), contentAlignment = Alignment.Center) {
-        Icon(glyph, contentDescription = null, Modifier.size(if (big) 44.dp else 28.dp), tint = skin.onAccent)
     }
 }
 
@@ -206,17 +133,25 @@ internal fun employeeShares(trips: List<Trip>, drivers: List<Driver>): List<Usag
     return rows.map { UsageShare(it, if (month > 0) it.totals.totalKm / month else 0.0) }
 }
 
-/** Which fact of the month a tile shows; the composable gives each its glyph. */
+/** Which fact of the month a tile shows. */
 internal enum class ShareFactKind { TRIPS, DISTANCE, RATIO }
+
+/** A fact's glyph, the empty hero's for the same fact (its ISSUES tiles are these facts): a journal, a gauge, the report. */
+internal val ShareFactKind.glyph: HeroGlyph get() = when (this) {
+    ShareFactKind.TRIPS -> HeroGlyph.COUNT
+    ShareFactKind.DISTANCE -> HeroGlyph.DISTANCE
+    ShareFactKind.RATIO -> HeroGlyph.RATIO
+}
 
 /** One fact of the month in 직원별 운행: the [figure] is the tile's title, the [label] its line, [spoken] its one TalkBack stop. */
 @Immutable
 internal data class ShareFact(val figure: String, val label: String, val kind: ShareFactKind, val spoken: String)
 
 /**
- * The three facts of the month that fill 직원별 운행's stretched height (2.15 §9.5; pure, unit-tested), as the empty hero's
- * ISSUES tiles say them: the count / 운행, the distance / 총주행, the ratio / 업무사용비율, of the finished trips in [trips].
- * Before the first trip they read 0건, 0.0 km and –; TalkBack hears "업무사용비율 없음" for the dash.
+ * The three facts of the month that fill 직원별 운행's stretched height (2.15 §9.5; pure, unit-tested), and the empty hero's
+ * ISSUES tiles ([logEmptyHero]), so both pages say them alike: the count / 운행, the distance / 총주행, the ratio /
+ * 업무사용비율, of the finished trips in [trips]. Before the first trip they read 0건, 0.0 km and –; TalkBack hears
+ * "업무사용비율 없음" for the dash.
  */
 internal fun monthFacts(trips: List<Trip>): List<ShareFact> {
     val totals = logbookTotals(trips.filterNot { it.open })
@@ -232,20 +167,20 @@ internal fun monthFacts(trips: List<Trip>): List<ShareFact> {
 
 /**
  * How the facts of the month stand in 직원별 운행 for the height [free] the card leaves them under its rows (pure, unit-tested):
- * none under [SETTINGS_TILE_COMPACT]; SHORT tiles (the figure over its label) from there; the hero's TALL look from
- * [SETTINGS_TILE_MIN] (§9.5's 208 dp); its larger look from [SETTINGS_TILE_BIG].
+ * none under [HERO_TILE_COMPACT]; SHORT tiles (the figure over its label) from there; the hero's TALL look from
+ * [HERO_TILE_TALL] (§9.5's 208 dp); its larger look from [HERO_TILE_LARGE_FROM].
  */
 internal enum class ShareFactsLook { NONE, SHORT, TALL, BIG }
 
 internal fun shareFactsLook(free: Dp): ShareFactsLook = when {
-    free >= SETTINGS_TILE_BIG -> ShareFactsLook.BIG
-    free >= SETTINGS_TILE_MIN -> ShareFactsLook.TALL
-    free >= SETTINGS_TILE_COMPACT -> ShareFactsLook.SHORT
+    free >= HERO_TILE_LARGE_FROM -> ShareFactsLook.BIG
+    free >= HERO_TILE_TALL -> ShareFactsLook.TALL
+    free >= HERO_TILE_COMPACT -> ShareFactsLook.SHORT
     else -> ShareFactsLook.NONE
 }
 
-/** The facts' height in [free] (pure, unit-tested): all of it, up to [SETTINGS_TILE_MAX]; null where they do not stand. */
-internal fun shareFactsHeight(free: Dp): Dp? = if (shareFactsLook(free) == ShareFactsLook.NONE) null else free.coerceAtMost(SETTINGS_TILE_MAX)
+/** The facts' height in [free] (pure, unit-tested): all of it, up to the hero's tallest tile ([HERO_TILE_MAX]); null where they do not stand. */
+internal fun shareFactsHeight(free: Dp): Dp? = if (shareFactsLook(free) == ShareFactsLook.NONE) null else free.coerceAtMost(HERO_TILE_MAX)
 
 /** The share bar's height (spec §7): the ring track's 8 dp, as 업무사용비율's bars. */
 private val SHARE_BAR = 8.dp
@@ -331,16 +266,12 @@ private val SHARE_TEXT_START = 40.dp + 12.dp
     val skin = Car.skin
     val shape = RoundedCornerShape(16.dp)
     val big = look == ShareFactsLook.BIG
-    val glyph = when (fact.kind) {
-        ShareFactKind.TRIPS -> painterResource(R.drawable.ic_journal)
-        ShareFactKind.DISTANCE -> painterResource(R.drawable.ic_gauge)
-        ShareFactKind.RATIO -> painterResource(R.drawable.ic_report)
-    }
+    val glyph = heroGlyph(fact.kind.glyph)
     Box(modifier.clip(shape).background(skin.chipFill).border(1.dp, skin.chipBorder, shape).clearAndSetSemantics { contentDescription = fact.spoken },
         contentAlignment = Alignment.Center) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             if (look != ShareFactsLook.SHORT) {
-                AccentSquare(glyph, big)
+                HeroAccentSquare(glyph, big)
                 Spacer(Modifier.height(16.dp))
             }
             val style = if (big) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge

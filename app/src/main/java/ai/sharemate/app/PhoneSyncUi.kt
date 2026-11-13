@@ -231,7 +231,7 @@ internal fun reasonSteps(reason: String): List<String> = reason.split(" · ").ma
             supportingText = { Text("차량 화면의 인증키를 입력하세요. 첫 연결 전에 차량을 확인합니다.") })
         Button(onClick = { scanned = false; scanError = null; scanNotice = null; connect(endpoint, code, fingerprint) },
             enabled = idle && endpoint.isNotBlank() && code.length == 6 && validToken(fingerprint),
-            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), shape = RoundedCornerShape(18.dp)) { LoadingLabel("차량과 연결", busy && !scanned, "연결하는 중…") }
+            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp), shape = RoundedCornerShape(18.dp)) { LoadingLabel(PhoneQrCopy.CONNECT, busy && !scanned, "연결하는 중…") }
         Muted("차량 앱 › 차량 탭 › 휴대폰 연결에서 번호를 볼 수 있어요. 번호는 5분 뒤 만료돼요. 차량과 같은 Wi-Fi·핫스팟이어야 해요.")
     }
 }

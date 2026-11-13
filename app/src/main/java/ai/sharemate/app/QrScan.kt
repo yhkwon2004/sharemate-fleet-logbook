@@ -33,6 +33,8 @@ internal object PhoneQrCopy {
     const val PICK = "사진에서 QR 읽기"
     /** The heading over the three fields typed by hand, as before 2.15. */
     const val MANUAL = "직접 입력"
+    /** The button under the three fields, as before 2.15; [confirm] names it, so the line and the button say the same word. */
+    const val CONNECT = "차량과 연결"
     /** No QR in the picture (or a picture that could not be opened). */
     const val UNREADABLE = "QR을 읽지 못했어요 · 화면에 QR이 다 나오게 다시 찍어 주세요"
     /** A QR, but not a SHAREMATE pairing link ([parsePairingLink] refused it). */
@@ -47,7 +49,7 @@ internal object PhoneQrCopy {
      * address that is not a car's local one): the fields are filled, and this one line, not an error, names the first address
      * the code would go to and asks for 차량과 연결, as typing does.
      */
-    fun confirm(endpoint: String): String = "주소를 확인하고 차량과 연결을 눌러 주세요 · $endpoint"
+    fun confirm(endpoint: String): String = "주소를 확인하고 ${CONNECT}을 눌러 주세요 · $endpoint"
 }
 
 /** The longest edge a picture is loaded at before decoding (§6.3): enough for a QR across part of a photo, light on memory. */

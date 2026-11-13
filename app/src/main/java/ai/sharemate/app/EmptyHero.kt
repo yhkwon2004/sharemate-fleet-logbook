@@ -277,12 +277,8 @@ internal fun logEmptyHero(filter: Int, month: YearMonth, data: TripLogData, empl
                 actions = listOf(HeroButton(LogCopy.HERO_CARD_SETTING, HeroAction.CARD_SETTING, primary = true), showAll))
         }
         filter == 1 && monthListed.isNotEmpty() -> {
-            val totals = logbookTotals(monthListed)
-            val facts = listOf(
-                Triple("${totals.trips}건", LogCopy.FACT_TRIPS, HeroGlyph.COUNT),
-                Triple(kmText(totals.totalKm), LogCopy.FACT_DISTANCE, HeroGlyph.DISTANCE),
-                Triple(ratioText(totals.ratio), LogCopy.FACT_RATIO, HeroGlyph.RATIO),
-            ).map { (figure, label, glyph) -> HeroTile(figure, label, glyph, "$label $figure") }
+            // The month's three facts as 설정 › 직원 says them ([monthFacts]): one wording for the count, the distance and the ratio.
+            val facts = monthFacts(monthListed).map { fact -> HeroTile(fact.figure, fact.label, fact.kind.glyph, fact.spoken) }
             val close = HeroButton(LogCopy.closeMonthAction(month, today), HeroAction.CLOSE_MONTH, primary = true)
                 .takeIf { monthStatus(data, month, zone).ready }
             EmptyHero(EmptyHeroCase.ISSUES, LogCopy.EMPTY_ISSUES, "$name$who ${LogCopy.EMPTY_ISSUES}", LogCopy.EMPTY_ISSUES_LINE, facts,
@@ -414,9 +410,10 @@ internal fun reportEmptyHero(data: TripLogData, period: ReportPeriod, today: Loc
  * end. Stacked, the COMPACT look: [HERO_TILE_COMPACT] at least, the disc and the square at the start, the title (titleMedium)
  * over its line, the tag at the end, no picture. The tag is cleared for TalkBack: the spoken form already ends with it
  * (2.15 §9.1). A tile that leads somewhere ([onClick]) ends its line, or its row, in a chevron and is a button that settles to
- * .98 with the press fill (CarCard's), never a ripple; the others are not buttons.
+ * .98 with the press fill (CarCard's), never a ripple; the others are not buttons. 설정 › 직원's tiles before the first employee
+ * ([DriverIntroTiles], §9.5) are these tiles too, at the height the same rule gives them ([heroTileHeight]).
  */
-@Composable private fun HeroTileCard(tile: HeroTile, tall: Boolean, minHeight: Dp, modifier: Modifier, onClick: (() -> Unit)?) {
+@Composable internal fun HeroTileCard(tile: HeroTile, tall: Boolean, minHeight: Dp, modifier: Modifier, onClick: (() -> Unit)?) {
     val glyph = heroGlyph(tile.glyph)
     val large = tall && heroTileLarge(minHeight)
     val chevron: @Composable (Dp) -> Unit = { size ->
@@ -426,7 +423,7 @@ internal fun reportEmptyHero(data: TripLogData, period: ReportPeriod, today: Loc
     CarCard(modifier, onClick = onClick, onClickLabel = tile.clickLabel, description = tile.spoken, padding = 0.dp) {
         if (tall) Box(Modifier.fillMaxWidth().heightIn(min = minHeight).fillMaxHeight()) {
             Column(Modifier.align(Alignment.Center).fillMaxWidth().padding(horizontal = 16.dp, vertical = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                AccentSquare(glyph, large)
+                HeroAccentSquare(glyph, large)
                 Spacer(Modifier.height(if (large) 20.dp else 16.dp))
                 Text(tile.title, style = if (large) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge, color = Scene.text,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
@@ -451,7 +448,7 @@ internal fun reportEmptyHero(data: TripLogData, period: ReportPeriod, today: Loc
                 CarStepDisc(step, done = false)
                 Spacer(Modifier.width(12.dp))
             }
-            AccentSquare(glyph, large = false)
+            HeroAccentSquare(glyph, large = false)
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(tile.title, style = MaterialTheme.typography.titleMedium, color = Scene.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -507,8 +504,11 @@ internal fun reportEmptyHero(data: TripLogData, period: ReportPeriod, today: Loc
     }
 }
 
-/** A tile's glyph on its accent square, onAccent (4.93), as on 홈's tall destination cards: 56 dp (corner 16), or 88 (corner 24) when [large]. Decorative. */
-@Composable private fun AccentSquare(glyph: Painter, large: Boolean) {
+/**
+ * A tile's glyph on its accent square, onAccent (4.93), as on 홈's tall destination cards: 56 dp (corner 16), or 88 (corner 24)
+ * when [large]. Decorative. 설정 › 직원's fact tiles (SettingsFill.kt) take it too, so one square stands for a tile everywhere.
+ */
+@Composable internal fun HeroAccentSquare(glyph: Painter, large: Boolean) {
     val skin = Car.skin
     Box(Modifier.size(if (large) HERO_TILE_ICON_LARGE else HERO_TILE_ICON).clip(RoundedCornerShape(if (large) 24.dp else 16.dp)).background(skin.accent),
         contentAlignment = Alignment.Center) {
@@ -516,8 +516,11 @@ internal fun reportEmptyHero(data: TripLogData, period: ReportPeriod, today: Loc
     }
 }
 
-/** The painter of a [HeroGlyph]: the app's line icons, and Material's for a parked pin, a check, a person and a lock. */
-@Composable private fun heroGlyph(glyph: HeroGlyph): Painter = when (glyph) {
+/**
+ * The painter of a [HeroGlyph]: the app's line icons, and Material's for a parked pin, a check, a person and a lock. 설정 ›
+ * 직원's fact tiles draw theirs from here too ([ShareFactKind.glyph]).
+ */
+@Composable internal fun heroGlyph(glyph: HeroGlyph): Painter = when (glyph) {
     HeroGlyph.DRIVE -> painterResource(R.drawable.ic_vehicle)
     HeroGlyph.PARK -> rememberVectorPainter(Icons.Outlined.LocationOn)
     HeroGlyph.PURPOSE -> rememberVectorPainter(Icons.Outlined.CheckCircle)

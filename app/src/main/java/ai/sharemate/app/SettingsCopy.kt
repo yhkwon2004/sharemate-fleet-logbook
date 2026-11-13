@@ -83,14 +83,14 @@ internal object SettingsCopy {
      * hero's look that say what registering does. They explain and lead nowhere.
      */
     const val DRIVERS_INTRO = "직원을 등록하면"
-    /** The three tiles, each a title over one line: ④ is the logbook form's own column number. */
+    /** The three tiles, each a title over one line: ④ is the logbook form's own column number; 유류비 정산 is the card's own title. */
     val DRIVERS_INTRO_TILES = listOf("④ 사용자 칸" to "운행기록부에 이름이 들어가요", "출발 전 확인" to "하루 한 번 운전자를 물어요",
-        "유류비 정산" to "직원별로 계산해요")
+        ReportCopy.SETTLEMENT_TITLE to "직원별로 계산해요")
     /** What TalkBack hears for each tile, one stop each: the long form, the column number in words. */
     val SPOKEN_DRIVERS_INTRO_TILES = listOf(
         "운행기록부 4번 사용자 칸, 직원의 부서와 성명이 운행기록부에 들어가요",
         "출발 전 확인, 직원이 2명 이상이면 하루 한 번 지금 운전하는 직원이 맞는지 물어요",
-        "유류비 정산, km당 단가를 입력하면 직원별 업무 거리로 정산액을 계산해요",
+        "${ReportCopy.SETTLEMENT_TITLE}, km당 단가를 입력하면 직원별 업무 거리로 정산액을 계산해요",
     )
 
     // ───────────────────────── 정산·세무 ─────────────────────────
@@ -110,9 +110,10 @@ internal object SettingsCopy {
     fun ratioYearTag(year: Int) = "${year}년"
     /**
      * 비용 참고 in 정산·세무 (2.15 §9.5, [taxBars]): before the comparison can be made (no yearly cost, or no trip this year), one
-     * bar stands for the most a car without a logbook is granted a year, with [ReportCopy.TAX_CAP_NOTE] as its line.
+     * bar stands for the most a car without a logbook is granted a year, with [ReportCopy.TAX_CAP_NOTE] as its line. It leads
+     * with the comparison's own label for that case ([ReportCopy.TAX_WITHOUT_LOG]), so the bar keeps its name once a cost exists.
      */
-    const val TAX_LIMIT = "기록부 없을 때 인정 한도"
+    const val TAX_LIMIT = "${ReportCopy.TAX_WITHOUT_LOG} 인정 한도"
     /** One bar as TalkBack hears it in the comparison's one stop: the label and the amount ("기록부 없을 때 15,000,000원"). */
     fun taxBarSpoken(label: String, won: Long) = "$label ${formatWon(won)}"
 

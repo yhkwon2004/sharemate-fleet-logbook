@@ -193,11 +193,12 @@ internal object HomeCopy {
     /**
      * 정보 내보내기's line (2.15 §2.1, §9.7): the [month] the Excel covers, as [monthLabel] names it, "10월 운행기록부 · Excel 5개
      * 시트"; "… · 마감 전 저장" for an earlier month still to close; "… · Excel 저장" for a closed month of [otherYear], whose year
-     * leaves no room for the sheets in the tall card's line ("2026년 12월 운행기록부 · Excel 5개 시트" would ellipsise there).
+     * leaves no room for the sheets in the tall card's line ("2026년 12월 운행기록부 · Excel 5개 시트" would ellipsise there), the
+     * save named as 월 마감 names it ([ReportCopy.EXCEL_SAVE]).
      */
     fun exportLine(month: String, toClose: Boolean, otherYear: Boolean): String = when {
         toClose -> "$month 운행기록부 · 마감 전 저장"
-        otherYear -> "$month 운행기록부 · Excel 저장"
+        otherYear -> "$month 운행기록부 · ${ReportCopy.EXCEL_SAVE}"
         else -> "$month 운행기록부 · Excel 5개 시트"
     }
 
