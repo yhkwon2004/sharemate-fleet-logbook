@@ -362,3 +362,18 @@ phone type an address, six digits and a 64-character key. Asked whether the QR s
   "4분 59초 남음" (`pairingRemainingSpoken`), so "4:59" is never heard as a time of day; it stays silent while it ticks.
 - 홈 no longer shows 차량 기록이 원본이에요 on this card; the 차량 page's card keeps it behind its ⓘ row.
 - Version 2.15.1 (versionCode 27).
+
+### 10.1 As built
+
+- The line at the column's foot follows the tile (`VehicleCopy.pairingQrHint`): 같은 Wi-Fi나 핫스팟에서 찍어요 while the QR
+  shows; 새 번호를 만들면 QR이 다시 나와요 once the code ran out; Wi-Fi나 핫스팟에 연결되면 QR이 나와요 while there is no
+  address yet. It never says to scan a QR that is not there.
+- The narrow threshold grows with the font (`pairingQrAbove(content, qr, fontScale)`: 232 + 24 + 280 × the scale), so the
+  column keeps its 1× room; beside a narrow column the headline takes two lines at the most instead of an ellipsis
+  (`PAIRING_HEADLINE_LINES`). In the FULL column every headline is one line.
+- The 주소 line lists the addresses the QR carries, four at the most.
+- While the server is not running the countdown tag is hidden as well.
+- A whole minute is heard as "5분 남음".
+- Checked on the emulator at 1× by day and by night, at expiry, with a new code, at a 1.3× font (the key wraps to two
+  lines), and on a clean install of the release APK with the pager and the demo strip; the phone read the card's QR from a
+  picture and paired.

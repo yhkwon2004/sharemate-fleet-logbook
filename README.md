@@ -12,9 +12,9 @@ SHAREMATE는 법인 차량을 쓰는 회사의 운전자와 관리자를 위한 
 |---|---|
 | 앱 이름 | SHAREMATE |
 | 한 줄 소개 | 차량이 스스로 쓰는 법인차 운행일지 |
-| 차량용 APK | [apk/SHAREMATE-car-v2.15.0-release.apk](apk/SHAREMATE-car-v2.15.0-release.apk) · Pleos Connect 에뮬레이터와 차량에 설치 · 약 34.6 MB |
-| 휴대폰용 APK | [apk/SHAREMATE-phone-v2.15.0-release.apk](apk/SHAREMATE-phone-v2.15.0-release.apk) · Android 9 이상 휴대폰에 설치 · 약 34.6 MB |
-| 버전 | 2.15.0 (versionCode 26) · 패키지 `ai.sharemate.app` · 두 파일 모두 release 빌드 · 서명됨 |
+| 차량용 APK | [apk/SHAREMATE-car-v2.15.1-release.apk](apk/SHAREMATE-car-v2.15.1-release.apk) · Pleos Connect 에뮬레이터와 차량에 설치 · 약 34.6 MB |
+| 휴대폰용 APK | [apk/SHAREMATE-phone-v2.15.1-release.apk](apk/SHAREMATE-phone-v2.15.1-release.apk) · Android 9 이상 휴대폰에 설치 · 약 34.6 MB |
+| 버전 | 2.15.1 (versionCode 27) · 패키지 `ai.sharemate.app` · 두 파일 모두 release 빌드 · 서명됨 |
 | 에뮬레이터 | Pleos Connect 에뮬레이터 `release_connect_v2.1.0` (Android 14 · API 34 · Automotive · x86_64, 기기 프로필 `Pleos_Connect_v2_0`) |
 | 화면 규격 | 2560 × 1440 px · 160 dpi. 앱 창은 화면 오른쪽 영역 1680 × 1209 dp |
 
@@ -26,7 +26,7 @@ APK는 두 개입니다. **차량용**은 차량 화면을, **휴대폰용**은 
 2. 차량용 APK를 설치합니다.
 
 ```bash
-adb install apk/SHAREMATE-car-v2.15.0-release.apk
+adb install apk/SHAREMATE-car-v2.15.1-release.apk
 ```
 
 3. 하단 막대의 앱 목록(격자 아이콘)을 열고 **앱** 탭에서 **SHAREMATE**를 누릅니다. 처음에는 아래 화면이 열립니다. **시작 설정** 카드의 세 단계(법인·차량 정보 → 직원 등록 → 운전자 선택)를 누르면 해당 설정으로 가고, 직원을 등록하면 운전자 선택이 켜집니다.
@@ -42,14 +42,14 @@ adb install apk/SHAREMATE-car-v2.15.0-release.apk
 - **확인한 환경:** SHAREMATE가 설치되지 않은 Pleos Connect 에뮬레이터에 차량용 APK를 설치해 첫 실행, 시연 체험 여섯 단계, 시연 모드 운행 기록과 목적 확인까지 확인했습니다. 휴대폰용 APK는 SHAREMATE가 없는 Android 휴대폰 에뮬레이터(API 37)에 설치해 로그인, 처음 설정, 차량 연결 화면까지 확인했습니다. 호스트는 Windows 11, Android Emulator 37.2.12(`-gpu host`)입니다.
 - **권한:** 따로 설정할 것이 없습니다. 차량 신호 권한은 설치할 때 함께 허용됩니다. 알림과 충전 상태 권한까지 미리 허용하려면 `adb install -g`로 설치합니다.
 - **계정·서버:** 필요 없습니다. 기록은 차량 안에만 저장됩니다.
-- **휴대폰 앱:** 휴대폰용 APK(`adb install apk/SHAREMATE-phone-v2.15.0-release.apk`)를 Android 9 이상 휴대폰에 설치합니다. 로그인 화면의 **시연 계정으로 둘러보기**로 Google 계정 없이 들어갑니다. 이 버튼은 디버그 빌드와, 제출한 APK처럼 Google 로그인 설정이 없는 빌드에 나옵니다.
+- **휴대폰 앱:** 휴대폰용 APK(`adb install apk/SHAREMATE-phone-v2.15.1-release.apk`)를 Android 9 이상 휴대폰에 설치합니다. 로그인 화면의 **시연 계정으로 둘러보기**로 Google 계정 없이 들어갑니다. 이 버튼은 디버그 빌드와, 제출한 APK처럼 Google 로그인 설정이 없는 빌드에 나옵니다.
 
 ### 더 해 보기
 
 - **소스에서 빌드:** JDK 17로 `gradlew assembleCarRelease assemblePhoneRelease`를 실행하면 차량용과 휴대폰용 APK가 따로 나옵니다(디버그는 `assembleCarDebug` · `assemblePhoneDebug`). Android Studio에서 열어도 됩니다. release는 서명 키를 지정하지 않으면 서명되지 않은 APK가 됩니다.
 - **차량에 다시 설치:** 차량 앱은 차량 사용자(Android user 10)로 실행됩니다. 덮어쓸 때는 `adb install -r --user 10 <APK 파일>`로 설치합니다.
 - **Google 로그인:** Google Cloud에서 OAuth 클라이언트(Android, 웹)를 만들고, 웹 클라이언트 ID를 `local.properties`의 `sharemate.googleWebClientId`에 넣어 빌드합니다. ID가 없으면 Google 버튼이 꺼지고 이유가 화면에 나옵니다.
-- **차량과 휴대폰 연결:** 차량의 설정 › 기록에서 **휴대폰 실시간 연동**을 켜면, 차량 탭의 휴대폰 연결 카드에 QR이 나옵니다. 같은 Wi-Fi나 핫스팟에서 휴대폰 앱의 **QR 찍어서 연결**로 찍으면 연결됩니다. 카드에 함께 나오는 주소·6자리 연결 번호·인증키를 직접 넣어도 됩니다.
+- **차량과 휴대폰 연결:** 차량의 설정 › 기록에서 **휴대폰 실시간 연동**을 켜면, 홈의 휴대폰 연결 카드와 차량 탭에 QR이 나옵니다. 같은 Wi-Fi나 핫스팟에서 휴대폰 앱의 **QR 찍어서 연결**로 찍으면 연결됩니다. 카드에 함께 나오는 주소·6자리 연결 번호·인증키를 직접 넣어도 됩니다.
 
 ---
 
@@ -74,6 +74,8 @@ adb install apk/SHAREMATE-car-v2.15.0-release.apk
 | <img src="docs/screenshots/car-vehicle.jpg" alt="차량: 12GA3456 차량 카드(수신 중, 계기판, 기어 P), 차량 정보와 최근 완료 운행, 차량 관리(정기검사 D-7), 차량 예약, 정비 기록, 사고·특이사항 목록" width="560"> | <img src="docs/screenshots/car-settings.jpg" alt="설정 › 기록: 화면 밝기(자동·낮·밤 중 낮), 기록 및 개인정보의 스위치 네 개와 시연 체험 다시보기, 법인카드 끝 4자리 칸, 운행 비서의 예시 문장과 열기 버튼" width="560"> |
 | **운행기록 · 첫 운행 전** | **차량 › 휴대폰 연결** |
 | <img src="docs/screenshots/car-log-empty.jpg" alt="처음 설치한 차량의 운행기록: ‘아직 운행이 없어요’ 아래 번호가 붙은 큰 카드 세 장(D로 출발 · P로 주차 · 목적 확인, 기어 표시와 목적 칩 그림), 시연 체험 보기와 시연 모드 켜러 가기 버튼, 아래쪽 도시" width="560"> | <img src="docs/screenshots/car-pairing.jpg" alt="차량 › 휴대폰 연결: 흰 바탕의 QR과 ‘휴대폰 앱으로 찍어요’, 남은 시간과 번호 다시 만들기 버튼, 오른쪽에 직접 입력용 주소·6자리 연결 번호·인증키 세 단계" width="560"> |
+| **홈 · 휴대폰 연결** | **월간·Excel · 운행 없는 달** |
+| <img src="docs/screenshots/car-home-pairing.jpg" alt="차량 홈의 휴대폰 연결 카드(낮): 왼쪽에 QR, 오른쪽에 ‘휴대폰 앱으로 찍어요’와 직접 입력용 주소·연결 번호·인증키 세 줄, 남은 시간 표시와 번호 다시 만들기 버튼" width="560"> | <img src="docs/screenshots/car-report-empty.jpg" alt="운행이 없는 달의 월간·Excel: 월 마감 카드 아래 번호가 붙은 카드 세 장(목적 확인 · 월 마감 · Excel 저장)과 마감된 10월로 가는 줄" width="560"> |
 
 ### 휴대폰
 
@@ -109,7 +111,7 @@ adb install apk/SHAREMATE-car-v2.15.0-release.apk
 - **운행기록:** 넓은 창에서는 날짜별 목록 옆에 가장 최근 운행의 상세가 열려 있어, 목적·④ 사용자·비용·⑩ 비고를 바로 고칩니다. 이번 달에 운행이 없으면 운행이 있는 달로 열립니다. 비용은 금액 칸 아래의 최근 금액과 +1,000 · +5,000 · +10,000 버튼으로 키보드 없이 넣을 수 있습니다.
 - **빈 화면 대신 다음 할 일:** 운행이 없는 달이나 처음 설치한 차량에서는 빈 목록 대신 큰 카드 세 장(D로 출발 → P로 주차 → 목적 확인)과 운행이 있는 달로 가는 줄을 보여 줍니다.
 - **월 마감과 Excel:** 목적·사용자·카드 확인이 끝나면 그 달을 마감하고, 운행기록부·직원별 현황·경비원장·차량관리·확인사항 5개 시트의 Excel을 저장합니다. 지난 달이나 지난 해로 넘겨 다시 저장하거나 마감을 풀 수도 있습니다. 검토 탭은 남은 확인 항목을 종류별로 보여 주고, 누르면 해당 운행 목록으로 갑니다.
-- **휴대폰 연결(QR):** 차량 탭의 휴대폰 연결 카드에 QR이 뜹니다. 휴대폰 앱으로 찍으면 주소·연결 번호·인증키가 한 번에 들어갑니다. 번호는 5분 뒤 만료되고, 만료되면 QR도 사라집니다.
+- **휴대폰 연결(QR):** 연동을 켜면 홈의 휴대폰 연결 카드와 차량 탭에 QR이 뜹니다. 휴대폰 앱으로 찍으면 주소·연결 번호·인증키가 한 번에 들어갑니다. 번호는 5분 뒤 만료되고, 만료되면 QR도 사라집니다.
 - **차량 관리 기한:** 정기검사·보험·리스 만기와 정비 주기는 30일 또는 1,000 km 안에 다가오면 홈에서 알려 줍니다. 정비소 카드 결제는 정비 이력으로도 남습니다.
 - **사고·특이사항 원탭:** 홈 맨 아래의 사고 · 파손·긁힘 · 고장·경고 · 특이사항 중 하나를 누르면 시각·계기판·위치·운전자가 기록되고, 확인할 일 맨 앞에 대처 단계가 나옵니다. 잘못 눌렀다면 바로 실행 취소합니다.
 - **운행 비서(로컬 규칙):** 검색 막대를 누르고 “주차비 4,500원 추가해줘”처럼 적으면 목적 기록·비용 추가·요약을 처리합니다. 이해한 내용을 먼저 보여 주고, ‘추가’나 ‘기록’을 눌러야 기록합니다. 차량 안의 한국어 문장 규칙으로 동작하며 네트워크를 쓰지 않습니다.

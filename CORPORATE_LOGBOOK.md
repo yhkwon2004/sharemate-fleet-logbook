@@ -1,6 +1,41 @@
+# SHAREMATE 2.15.1 — 법인차 자동 운행일지
+
+2026-11-14 기준, versionCode 27. 2.15.1은 2.15.0에 한 가지를 더한 버전입니다. 홈의 휴대폰 연결 카드에도 QR이 들어갔습니다(아래 ‘2.15.1 홈의 휴대폰 연결 카드에 QR’). 나머지 화면과 휴대폰 앱은 2.15.0 그대로입니다.
+
+## 2.15.1 홈의 휴대폰 연결 카드에 QR
+
+2.15.0은 QR을 차량 › 휴대폰 연결에만 두었습니다. 연동을 켜고 아직 휴대폰이 없을 때 홈에 뜨는 휴대폰 연결 카드는 여전히 주소와 6자리 번호, 64자 인증키를 보여 주며 휴대폰에서 입력하게 했습니다. ‘홈의 휴대폰 연결 카드에도 QR을 넣을까요?’라는 물음에 ‘네, 넣어 주세요’라는 답을 받아 넣었습니다. 설계 기준은 [docs/design/DESIGN_2_15.md](docs/design/DESIGN_2_15.md) §10입니다.
+
+- **배치(`PairingBody`, `PairingColumn`):** 카드의 제목 줄(휴대폰 연결, 남은 시간 태그, 넘김)은 그대로이고, 그 아래 한 줄에 QR(232 dp)과 오른쪽 열이 놓입니다. 오른쪽 열에는 ‘휴대폰 앱으로 찍어요’, 직접 입력용 주소 · 연결 번호 · 인증키 세 줄, 맨 아래에 ‘같은 Wi-Fi나 핫스팟에서 찍어요’와 번호 다시 만들기가 있습니다. 손으로 넣는 방법도 그대로 남습니다. ‘차량 기록이 원본이에요’ 줄은 홈에서 빠지고 차량 탭 카드의 ⓘ 줄에 남았습니다.
+- **높이(`pairingAnatomy`, `PAIRING_QR_MAX`):** 카드는 제목 줄과 QR 높이로 324 dp(넘김이 있으면 348 dp)이고, 2.15.0의 카드보다 2 dp 큽니다. 홈의 큰 카드 세 장과 큰 사고·특이사항 줄은 그대로입니다. 예산은 QR이 가장 커지는 경우로 잡았습니다. 주소 네 개에 다섯 자리 포트가 붙은 가장 긴 링크는 QR이 260 dp가 되어 카드가 352(376) dp이고, 그때도 홈은 956 dp(시연 띠가 있으면 1,052 dp)로 1,097 dp 안입니다. 이 링크를 실제로 만들어 재는 테스트를 넣었습니다.
+- **QR이 없을 때(`pairingQrHint`):** 번호가 만료되면 QR 자리가 빈 틀로 바뀌고 ‘연결 번호가 만료됐어요’, 연결 번호 칸의 ‘––– –––’, 새 연결 번호 버튼이 남습니다. 아래 줄은 찍으라는 말 대신 ‘새 번호를 만들면 QR이 다시 나와요’로 바뀝니다. 주소가 아직 없으면 ‘Wi-Fi나 핫스팟에 연결되면 QR이 나와요’입니다. 서버가 아직 뜨지 않았으면 빈 틀과 ‘휴대폰 연결을 준비하고 있어요’ 한 줄만 보여 주고 버튼은 없습니다.
+- **좁은 창과 큰 글꼴(`pairingQrAbove`, `PAIRING_HEADLINE_LINES`):** 카드 폭이 536 dp(글꼴이 크면 그만큼 더)보다 좁으면 QR이 위로 올라가고 열이 아래에 놓입니다. 좁은 열에서 긴 제목(‘새 번호로 휴대폰을 더 연결해요’)은 잘리지 않고 두 줄로 넘어갑니다.
+- **남은 시간 읽기(`pairingRemainingSpoken`):** ‘4:59 남음’ 태그를 TalkBack이 시각으로 읽지 않도록 ‘4분 59초 남음’이라는 읽는 말을 붙였습니다. 홈과 차량 탭 모두입니다. 태그는 매초 바뀌어도 알리지 않습니다.
+- **주소 줄:** QR에 들어가는 주소 네 개까지만 보여 줍니다.
+
+### 2.15.1 검증 기록
+
+`gradlew testCarDebugUnitTest testPhoneDebugUnitTest lintCarDebug lintPhoneDebug assembleCarDebug assemblePhoneDebug assembleCarRelease assemblePhoneRelease` 통과: 단위 테스트는 차량용·휴대폰용 빌드 각각 607건 전부 성공(실패 0, 오류 0)으로 2.15.0의 601건에서 6건이 늘었습니다. lint는 두 빌드 모두 오류 0 · 경고 16으로 같습니다. HomeFrameTest는 휴대폰 연결 카드의 높이(324 / 348, 예산 352 / 376)와 가장 긴 링크의 QR 크기, 열의 높이(222 ≤ 232)를, PairingCopyTest는 새 문구의 길이와 QR이 없을 때의 줄을, PairingLinkTest는 남은 시간의 읽는 말을 확인합니다.
+
+구현과 검토: 구현 한 묶음 뒤에 읽기만 하는 검토자 둘(실행 동작과 예산, 문구 · 접근성 · 휴대폰 분리)이 2건을 지적했고 둘 다 고쳤습니다. 좁은 창에서 큰 글꼴일 때 열이 너무 좁아지던 것과, 좁은 열에서 긴 제목이 말줄임표로 잘리던 것입니다. 에뮬레이터에서 제가 찾은 한 건(만료 뒤에도 아래 줄이 ‘찍어요’라고 하던 것)을 더 고쳤습니다.
+
+에뮬레이터에서 확인(Pleos Connect 에뮬레이터 `release_connect_v2.1.0`, 화면 2560 × 1440 px · 160 dpi, 앱 창 1680 × 1209 dp, 전체 창 · 글꼴 1배):
+
+- **홈 카드:** 휴대폰 연결을 풀자 홈에 휴대폰 연결 카드가 떴고, 낮과 밤 모두 QR, ‘휴대폰 앱으로 찍어요’, 주소(10.0.2.15:9247 · 10.0.2.16:9247) · 연결 번호 · 인증키, 번호 다시 만들기가 한 카드에 들어갔습니다. 홈은 스크롤하지 않았고 `HomeFrame`과 `CarLine` 로그는 나오지 않았습니다. 화면 캡처의 QR을 ZXing으로 읽어 `sharemate://pair?v=1&e=10.0.2.15:9247&e=10.0.2.16:9247&c=…&k=…`를 확인했습니다.
+- **만료와 새 번호:** 5분 뒤 QR이 빈 틀로 바뀌고 ‘연결 번호가 만료됐어요’와 새 연결 번호가 남았습니다. 새 연결 번호를 누르니 새 QR과 ‘4:54 남음’이 나왔습니다. 남은 시간 태그의 읽는 말은 ‘4분 4초 남음’이었습니다(화면 정보로 확인, TalkBack은 켜지 않음).
+- **휴대폰으로 연결:** 홈 화면 캡처를 휴대폰 에뮬레이터의 ‘사진에서 QR 읽기’로 골랐습니다. 주소 · 번호 · 인증키가 채워지고 ‘주소를 확인하고 차량과 연결을 눌러 주세요 · 10.0.2.15:9247’이 나왔으며, 차량과 연결을 누르니 ‘차량 연결됨 · 마지막 수신 방금’이 됐습니다. 연결되자 차량 홈의 카드는 최근 운행 카드로 바뀌었습니다.
+- **큰 글꼴(1.3배):** 인증키가 두 줄로 넘어가고 잘리지 않았으며, 넘김과 시연 띠가 있는 상태에서도 카드와 아래 줄이 한 화면에 들어갔습니다.
+
+release APK: `apk/SHAREMATE-car-v2.15.1-release.apk`(34,643,148바이트)와 `apk/SHAREMATE-phone-v2.15.1-release.apk`(34,642,508바이트), 둘 다 v2 서명(CN=SHAREMATE). 차량용은 SHAREMATE를 지운 Pleos Connect 에뮬레이터에 `adb install`로 설치해 앱 목록에서 열었습니다. 첫 실행 홈(시작 설정 0/3), 운행기록의 세 단계 카드, 월간·Excel, 차량, 설정을 넘겨 봤고, 설정 › 기록에서 휴대폰 실시간 연동을 켜니 홈의 확인할 일이 ‘시작 설정 → 휴대폰 연결’ 두 건이 됐습니다. 넘겨서 본 휴대폰 연결 카드(2/2)에 QR이 있었고 캡처에서 읽혔습니다. 만료 뒤에는 ‘새 번호를 만들면 QR이 다시 나와요’가 나왔습니다. 시연 체험 여섯 단계를 끝까지 넘겼고, 시연 모드에서 시연 출발 → 시연 주차 → 목적 확인(일반 업무)까지 했습니다. 휴대폰용은 휴대폰 에뮬레이터(API 37)의 일회용 사본에서 SHAREMATE를 지우고 설치해 로그인 화면 → 시연 계정 → 처음 설정(법인차량 등록 단계의 QR 찍어서 연결 · 사진에서 QR 읽기) → 차량 연결 화면까지 갔습니다.
+
+휴대폰 분리: 같은 휴대폰 에뮬레이터에서 2.15.0과 2.15.1 빌드로 여덟 화면(홈 · 예약 · 운행 · 경비 · 현황 · 운행 비서 · 설정 · 회사 차량)을 찍어 상태 표시줄 아래를 픽셀 단위로 견줬고, 여덟 화면 모두 완전히 같았습니다.
+
+확인하지 못한 것: 실제 카메라로 홈의 QR을 찍어 바로 연결되는 것(에뮬레이터 카메라로는 QR을 비출 수 없어 사진 고르기로만 확인), 실제 Wi-Fi 주소로 연결되는 것, TalkBack으로 직접 듣는 것, 좁은 창에서 QR이 위로 올라가는 배치(단위 테스트로만 확인), 서버가 뜨기 전 상태, 주소가 네 개라 QR이 커지는 경우(단위 테스트로만 확인), 실제 차량.
+
 # SHAREMATE 2.15.0 — 법인차 자동 운행일지
 
-2026-11-13 기준, versionCode 26. 2.15.0은 ‘디자인과 사용자 편의성 UI를 계속 다듬어 달라’는 요청에 따라 차량 화면에서 빈 곳을 없애고 누르는 횟수를 줄인 버전입니다. 2.14.1을 Pleos Connect 에뮬레이터(전체 창 1680 × 1209 dp, 글꼴 1배)에서 다시 돌려 보니, 운행이 없는 달의 운행기록과 월간·Excel은 작은 카드 하나뿐이었고, 지금 열은 화면 끝까지 닿지 않았으며, 경비 금액은 매번 키보드가 필요했고, 휴대폰을 연결하려면 주소와 6자리 번호, 64자 인증키를 손으로 넣어야 했습니다. 설계 기준은 [docs/design/DESIGN_2_15.md](docs/design/DESIGN_2_15.md)이고, 앞선 사양과 다르면 이 문서를 따릅니다. 휴대폰 앱은 차량 연결 카드만 바뀌었습니다.
+2026-11-13 기준, versionCode 26.
+ 2.15.0은 ‘디자인과 사용자 편의성 UI를 계속 다듬어 달라’는 요청에 따라 차량 화면에서 빈 곳을 없애고 누르는 횟수를 줄인 버전입니다. 2.14.1을 Pleos Connect 에뮬레이터(전체 창 1680 × 1209 dp, 글꼴 1배)에서 다시 돌려 보니, 운행이 없는 달의 운행기록과 월간·Excel은 작은 카드 하나뿐이었고, 지금 열은 화면 끝까지 닿지 않았으며, 경비 금액은 매번 키보드가 필요했고, 휴대폰을 연결하려면 주소와 6자리 번호, 64자 인증키를 손으로 넣어야 했습니다. 설계 기준은 [docs/design/DESIGN_2_15.md](docs/design/DESIGN_2_15.md)이고, 앞선 사양과 다르면 이 문서를 따릅니다. 휴대폰 앱은 차량 연결 카드만 바뀌었습니다.
 
 ## 2.15 빈 화면 없이, 덜 누르게
 
@@ -696,7 +731,7 @@ Vehicle SDK 2.3.2의 [누적거리 조회](https://document.pleos.ai/api-referen
 - Android Studio에서 이 폴더를 열고 Gradle Sync 후 `app`을 실행합니다. 자동차 기기는 차량 화면, 일반 Android 기기는 모바일 화면으로 열립니다.
 - 빌드 명령: `gradlew.bat testDebugUnitTest lintDebug assembleDebug`. 2.6.0 기준 단위 테스트 전체 통과, Lint 0 errors / 11 warnings(기존 기준선 유지), `assembleDebug` 성공. 주요 테스트: `CardMatchTest`(알림 파싱·매칭·취소·명세서·저장), `SyncProtocolTest`(명령 왕복·거부·상태 스냅샷·충전 세션·코덱), `TlsIdentityTest`(자체 서명 인증서 검증·재사용).
 - 2.13.0 기준: `gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease` 통과, 단위 테스트 482건 전부 성공, Lint 0 errors / 15 warnings(의존성·버전 안내). 서명한 릴리스 APK는 `apk/SHAREMATE-v2.13.0-release.apk`이고, 서명 키 정보는 `local.properties`의 `sharemate.release.keystoreProperties`가 가리키는 저장소 밖 파일에 있습니다(없으면 서명 없이 빌드).
-- 2.15.0 기준: 2.14.1부터 차량용(car)과 휴대폰용(phone) 빌드가 나뉘어 작업 이름에 `Car` · `Phone`이 붙습니다. `gradlew testCarDebugUnitTest testPhoneDebugUnitTest lintCarDebug lintPhoneDebug assembleCarRelease assemblePhoneRelease` 통과, 단위 테스트 빌드마다 601건 전부 성공, Lint 0 errors / 16 warnings(의존성·버전 안내). 서명한 릴리스 APK는 `apk/SHAREMATE-car-v2.15.0-release.apk`와 `apk/SHAREMATE-phone-v2.15.0-release.apk`입니다. 주요 새 테스트: `EmptyHeroTest`(빈 화면의 모든 경우와 높이 예산), `NowVehicleTest`(차량 타일의 높이와 문구), `PairingLinkTest`(연결 링크 읽기와 믿는 범위), `QrCodeTest`(QR 만들고 다시 읽기).
+- 2.15.0 기준: 2.14.1부터 차량용(car)과 휴대폰용(phone) 빌드가 나뉘어 작업 이름에 `Car` · `Phone`이 붙습니다. `gradlew testCarDebugUnitTest testPhoneDebugUnitTest lintCarDebug lintPhoneDebug assembleCarRelease assemblePhoneRelease` 통과, 단위 테스트 빌드마다 601건 전부 성공, Lint 0 errors / 16 warnings(의존성·버전 안내). 2.15.1(홈의 휴대폰 연결 카드에 QR)은 빌드마다 607건이고, 서명한 릴리스 APK는 `apk/SHAREMATE-car-v2.15.1-release.apk`와 `apk/SHAREMATE-phone-v2.15.1-release.apk`입니다. 주요 새 테스트: `EmptyHeroTest`(빈 화면의 모든 경우와 높이 예산), `NowVehicleTest`(차량 타일의 높이와 문구), `PairingLinkTest`(연결 링크 읽기와 믿는 범위), `QrCodeTest`(QR 만들고 다시 읽기).
 - Pleos 에뮬레이터 실행 시 `ANDROID_AVD_HOME=ui\work\toolchain\avd`, `ANDROID_SDK_ROOT=ui\work\toolchain\android-sdk`가 필요합니다(시스템 이미지가 툴체인 SDK에 있음).
 - API 34 Pleos 2.1.0과 API 37 휴대폰 에뮬레이터를 개발 검증 대상으로 사용합니다. **2.3.0의 최종 테스트 수·Lint·빌드 및 실행 결과는 전달물의 빌드·검증 기록을 확인**하세요. 이 문서는 검증 완료 전의 수치를 미리 확정하지 않습니다.
 - 기존 2.1.0에서 Virtual Console의 P → D → 누적거리 +1km → P에 따른 1km 자동 저장, 플랫폼 화면 차단 중 기록과 강제 종료 후 재실행 보존을 확인했습니다. 이 결과를 실차 검증으로 표시하지 않습니다.
